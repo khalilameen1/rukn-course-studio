@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import Link from "next/link";
+import AuthGuard from "@/components/AuthGuard";
+import LogoutButton from "@/components/LogoutButton";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -46,10 +48,15 @@ export default function RootLayout({
                   </Link>
                 </li>
               ))}
+              <li>
+                <LogoutButton />
+              </li>
             </ul>
           </nav>
         </header>
-        <main className="flex-1">{children}</main>
+        <main className="flex-1">
+          <AuthGuard>{children}</AuthGuard>
+        </main>
       </body>
     </html>
   );

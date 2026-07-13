@@ -3,9 +3,10 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.auth.middleware import AuthMiddleware
 from app.config import settings
 from app.db import init_db
-from app.routers import admin_knowledge, courses, generation, health, jobs, sources
+from app.routers import admin_knowledge, auth, courses, generation, health, jobs, sources
 
 
 @asynccontextmanager
@@ -31,8 +32,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# Registered after CORSMiddleware so CORS stays the outermost layer and
+# preflight requests are never blocked by auth (see app/auth/middleware.py).
+app.add_middleware(AuthMiddleware)
 
 app.include_router(health.router)
+app.include_router(auth.router)
 app.include_router(admin_knowledge.router)
 app.include_router(courses.router)
 app.include_router(sources.router)

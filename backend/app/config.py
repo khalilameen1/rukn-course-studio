@@ -41,5 +41,14 @@ class Settings(BaseSettings):
     anthropic_api_key: str | None = None
     ai_model_name: str = "claude-sonnet-5"
 
+    # Single-admin-user auth for this internal MVP (see app/auth/). No
+    # multi-user accounts, registration, roles, or OAuth - one username/
+    # password pair from the environment, guarding every route except
+    # GET /health and POST /auth/login (see app/auth/middleware.py).
+    auth_enabled: bool = True
+    admin_username: str | None = None
+    admin_password: str | None = None
+    auth_secret_key: str | None = None
+
 
 settings = Settings()

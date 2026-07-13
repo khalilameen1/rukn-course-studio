@@ -190,10 +190,33 @@ End-to-end fake generation scenario (no API key, no network):
 | `backend/.env` | `ENVIRONMENT` | `development` / `production` |
 | `backend/.env` | `ANTHROPIC_API_KEY` | Optional; only for `AnthropicProvider` in tests/manual use |
 | `backend/.env` | `AI_MODEL_NAME` | Model name for `AnthropicProvider` |
+| `backend/.env` | `AUTH_ENABLED` | Defaults to `true` (see [Authentication](#authentication) below) |
+| `backend/.env` | `ADMIN_USERNAME` | The one admin login username |
+| `backend/.env` | `ADMIN_PASSWORD` | The one admin login password |
+| `backend/.env` | `AUTH_SECRET_KEY` | Signs session tokens; any long random string |
 | `frontend/.env.local` | `NEXT_PUBLIC_API_URL` | Backend base URL (default `http://localhost:8000`) |
 
 `.env` / `.env.local` are git-ignored; copy from `.env.example` /
 `.env.local.example`.
+
+## Authentication
+
+Single-admin-user login for this internal tool - no registration, roles,
+or OAuth (see `backend/app/auth/`). `AUTH_ENABLED` defaults to `true`, so
+set `ADMIN_USERNAME`, `ADMIN_PASSWORD`, and `AUTH_SECRET_KEY` in
+`backend/.env` or every login/protected request fails with a clear
+401/503 instead of silently allowing access.
+
+- `POST /auth/login` - checks the username/password against
+  `ADMIN_USERNAME`/`ADMIN_PASSWORD` and returns a signed token (valid 7
+  days).
+- Every other route requires `Authorization: Bearer <token>` **except**
+  `GET /health` and `POST /auth/login`.
+- The frontend stores the token in `localStorage`, attaches it to every
+  API call, and redirects to `/login` if it's missing or the backend
+  returns `401`. Log out from the top nav.
+- To disable auth locally (e.g. quick API testing), set
+  `AUTH_ENABLED=false` in `backend/.env`.
 
 ## Deploying to Render
 

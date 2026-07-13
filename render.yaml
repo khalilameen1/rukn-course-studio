@@ -53,6 +53,16 @@ services:
       # JSON array string, e.g. ["https://rukn-course-studio-frontend.onrender.com"]
       - key: CORS_ORIGINS
         sync: false
+      # Single-admin-user auth (see app/auth/) - required for login to work
+      # at all in production; set all three in the Dashboard, never here.
+      - key: AUTH_ENABLED
+        value: "true"
+      - key: ADMIN_USERNAME
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: AUTH_SECRET_KEY
+        sync: false
 
   - type: web
     name: rukn-course-studio-frontend

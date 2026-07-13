@@ -1,4 +1,5 @@
 import { API_BASE_URL } from "@/lib/config";
+import { clearToken, getToken } from "@/lib/auth";
 import type {
   AdminKnowledgeCreateInput,
   AdminKnowledgeItem,
@@ -10,21 +11,36 @@ import type {
   CourseUpdateInput,
   CourseVersion,
   GenerationJob,
+  LoginResponse,
   Priority,
   SourceCategory,
 } from "@/lib/types";
 
 class ApiError extends Error {}
 
+const LOGIN_PATH = "/auth/login";
+
 async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
   const isFormData = init.body instanceof FormData;
+  const token = getToken();
 
   const res = await fetch(`${API_BASE_URL}${path}`, {
     ...init,
-    headers: isFormData
-      ? init.headers
-      : { "Content-Type": "application/json", ...init.headers },
+    headers: {
+      ...(isFormData ? {} : { "Content-Type": "application/json" }),
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...init.headers,
+    },
   });
+
+  if (res.status === 401 && path !== LOGIN_PATH) {
+    // Expired/invalid session - drop the stale token and send the user
+    // back to /login instead of surfacing a confusing API error.
+    clearToken();
+    if (typeof window !== "undefined") {
+      window.location.href = "/login";
+    }
+  }
 
   if (!res.ok) {
     let detail = res.statusText;
@@ -48,6 +64,13 @@ export function latestDownloadUrl(courseId: number): string {
 }
 
 export const api = {
+  // Auth
+  login: (username: string, password: string) =>
+    apiFetch<LoginResponse>(LOGIN_PATH, {
+      method: "POST",
+      body: JSON.stringify({ username, password }),
+    }),
+
   // Admin knowledge
   listKnowledgeItems: () => apiFetch<AdminKnowledgeItem[]>("/admin/knowledge"),
   createKnowledgeItem: (payload: AdminKnowledgeCreateInput) =>

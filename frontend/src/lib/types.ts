@@ -112,3 +112,8 @@ export interface CourseVersion {
   report_text: string | null;
   created_at: string;
 }
+
+export interface LoginResponse {
+  access_token: string;
+  token_type: string;
+}
