@@ -1,9 +1,10 @@
 from fastapi import APIRouter, HTTPException, Request
 
+from app.auth.diagnostics import build_diagnostics
 from app.auth.service import AuthConfigError, verify_credentials
 from app.auth.tokens import DEFAULT_EXPIRY_DAYS, create_token
 from app.config import settings
-from app.schemas.auth import LoginRequest, LoginResponse, MeResponse
+from app.schemas.auth import DiagnosticsResponse, LoginRequest, LoginResponse, MeResponse
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -42,3 +43,14 @@ def logout() -> None:
     simply discards its token. Kept as an endpoint for a consistent
     frontend logout call / future session storage."""
     return None
+
+
+@router.get("/diagnostics", response_model=DiagnosticsResponse)
+def diagnostics() -> DiagnosticsResponse:
+    """Public, secret-free status check for diagnosing login/CORS/storage
+    misconfiguration in production (e.g. FRONTEND_ORIGIN never set on
+    Render). Deliberately public - see app/auth/middleware.py
+    PUBLIC_ROUTES - since it needs to be reachable even when login itself
+    is broken. See app/auth/diagnostics.py for exactly what is/isn't
+    returned."""
+    return DiagnosticsResponse(**build_diagnostics())

@@ -8,6 +8,9 @@ REPO_ROOT = BACKEND_DIR.parent
 STORAGE_DIR = REPO_ROOT / "storage"
 
 
+DEFAULT_LOCAL_DATABASE_URL = f"sqlite:///{BACKEND_DIR / 'rukn_course_studio.db'}"
+
+
 def build_sqlite_url(db_path: str) -> str:
     """Build a SQLAlchemy `sqlite:///` URL from an absolute POSIX filesystem
     path (e.g. Render's persistent disk mount). Four slashes total: the
@@ -19,6 +22,16 @@ def build_sqlite_url(db_path: str) -> str:
     return f"sqlite:///{path}"
 
 
+def normalize_database_url(url: str) -> str:
+    """SQLAlchemy 1.4+ only recognizes the `postgresql://` dialect name, not
+    the older `postgres://` scheme some providers still hand out - rewrite
+    it defensively so a provider-supplied URL never fails with a
+    `NoSuchModuleError` at engine-creation time."""
+    if url.startswith("postgres://"):
+        return "postgresql://" + url[len("postgres://") :]
+    return url
+
+
 class Settings(BaseSettings):
     """Application configuration, overridable via environment variables or .env."""
 
@@ -27,19 +40,35 @@ class Settings(BaseSettings):
     app_name: str = "Rukn Course Studio API"
     environment: str = "development"
 
-    database_url: str = f"sqlite:///{BACKEND_DIR / 'rukn_course_studio.db'}"
+    # Highest priority: if set, used as-is (after normalizing the
+    # `postgres://` -> `postgresql://` scheme). This is how production talks
+    # to Postgres (e.g. Render's Internal Database URL). Unset locally, so
+    # local dev keeps using plain SQLite - see `_resolve_database_url`.
+    database_url: str | None = None
 
-    # Dedicated single-purpose override for where the SQLite file lives
-    # (e.g. Render's persistent disk, which is mounted at a fixed absolute
-    # path) - simpler than hand-building a `sqlite:///` URL for
-    # DATABASE_URL directly. Unset by default, which leaves local dev's
-    # `database_url` default above completely unchanged.
+    # Fallback-only override for where a local SQLite file lives (e.g.
+    # Render's persistent disk, before this app had Postgres support) -
+    # simpler than hand-building a `sqlite:///` URL. Only takes effect when
+    # DATABASE_URL is unset; ignored otherwise. Unset by default, which
+    # leaves local dev's SQLite default below completely unchanged.
     sqlite_db_path: str | None = None
 
     @model_validator(mode="after")
-    def _apply_sqlite_db_path(self) -> "Settings":
-        if self.sqlite_db_path:
+    def _resolve_database_url(self) -> "Settings":
+        """Priority: DATABASE_URL > SQLITE_DB_PATH > local SQLite default.
+
+        Keeps local dev working with zero configuration (no DATABASE_URL,
+        no SQLITE_DB_PATH -> plain local SQLite file) while letting
+        production set exactly one of DATABASE_URL (Postgres, recommended)
+        or SQLITE_DB_PATH (SQLite-on-disk, temporary/legacy) without either
+        setting silently overriding the other.
+        """
+        if self.database_url:
+            self.database_url = normalize_database_url(self.database_url)
+        elif self.sqlite_db_path:
             self.database_url = build_sqlite_url(self.sqlite_db_path)
+        else:
+            self.database_url = DEFAULT_LOCAL_DATABASE_URL
         return self
 
     cors_origins: list[str] = [
@@ -47,10 +76,38 @@ class Settings(BaseSettings):
         "http://127.0.0.1:3000",
     ]
 
-    storage_uploads_dir: Path = STORAGE_DIR / "uploads"
-    storage_extracted_dir: Path = STORAGE_DIR / "extracted"
-    storage_outputs_dir: Path = STORAGE_DIR / "outputs"
-    storage_templates_dir: Path = STORAGE_DIR / "templates"
+    # Deploy-time convenience for the common single-frontend case - avoids
+    # hand-writing a `CORS_ORIGINS` JSON array just to allow one origin.
+    # Merged into `cors_origins` below if set; `CORS_ORIGINS` still works
+    # as-is (e.g. for allowing more than one origin) and takes precedence
+    # if both happen to be set.
+    frontend_origin: str | None = None
+
+    @model_validator(mode="after")
+    def _merge_frontend_origin(self) -> "Settings":
+        if self.frontend_origin and self.frontend_origin not in self.cors_origins:
+            self.cors_origins = [*self.cors_origins, self.frontend_origin]
+        return self
+
+    # Base directory for all uploaded/extracted/generated files (see the
+    # four *_dir settings below), overridable as a single STORAGE_DIR env
+    # var (e.g. Render's persistent disk mount). Each of the four can still
+    # be overridden individually if ever needed - they only default from
+    # this value when left unset.
+    storage_dir: Path = STORAGE_DIR
+
+    storage_uploads_dir: Path | None = None
+    storage_extracted_dir: Path | None = None
+    storage_outputs_dir: Path | None = None
+    storage_templates_dir: Path | None = None
+
+    @model_validator(mode="after")
+    def _resolve_storage_dirs(self) -> "Settings":
+        self.storage_uploads_dir = self.storage_uploads_dir or self.storage_dir / "uploads"
+        self.storage_extracted_dir = self.storage_extracted_dir or self.storage_dir / "extracted"
+        self.storage_outputs_dir = self.storage_outputs_dir or self.storage_dir / "outputs"
+        self.storage_templates_dir = self.storage_templates_dir or self.storage_dir / "templates"
+        return self
 
     # Which AIProvider implementation the orchestrator uses by default - see
     # app/ai/factory.py `get_ai_provider`. "fake" (the default) needs no

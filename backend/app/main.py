@@ -25,16 +25,25 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title=settings.app_name, lifespan=lifespan)
 
+# Starlette's `add_middleware` prepends to the middleware list, so the
+# LAST middleware added ends up OUTERMOST (it sees the request first and
+# the response last) - registering AuthMiddleware first and CORSMiddleware
+# second (not the other way around) is what actually makes CORS the
+# outermost layer. This matters beyond just preflight: AuthMiddleware can
+# short-circuit with its own 401/503 response *without* calling
+# `call_next`, and only requests that pass through CORSMiddleware get
+# CORS response headers added. With CORS outermost, every response -
+# including auth rejections - gets proper CORS headers, so the browser can
+# actually surface the real status/detail to the frontend instead of a
+# generic "Failed to fetch" network error (see app/auth/middleware.py).
+app.add_middleware(AuthMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
-# Registered after CORSMiddleware so CORS stays the outermost layer and
-# preflight requests are never blocked by auth (see app/auth/middleware.py).
-app.add_middleware(AuthMiddleware)
 
 app.include_router(health.router)
 app.include_router(auth.router)

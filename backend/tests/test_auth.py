@@ -121,3 +121,106 @@ def test_protected_endpoint_still_requires_token_with_double_slash():
     response = client.get("http://testserver//courses")
 
     assert response.status_code == 401
+
+
+def test_options_preflight_for_login_succeeds_from_allowed_origin():
+    """A CORS preflight OPTIONS request must never be blocked by
+    AuthMiddleware, and CORSMiddleware must actually be positioned to
+    handle it (see app/main.py middleware registration order).
+
+    Uses one of the default `cors_origins` (http://localhost:3000) rather
+    than monkeypatching `settings.cors_origins`: CORSMiddleware is
+    constructed once, the first time the shared `client` above handles any
+    request, so changing the setting afterwards has no effect on the
+    already-built middleware - the same reason app/ai/factory.py tests read
+    settings dynamically instead of relying on constructor-time values.
+    """
+    response = client.options(
+        "/auth/login",
+        headers={
+            "Origin": "http://localhost:3000",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "content-type",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "http://localhost:3000"
+
+
+def test_options_preflight_for_protected_route_succeeds_even_without_token():
+    """Preflight for a *protected* route must also succeed - the browser
+    sends OPTIONS before the real (token-carrying) request, and OPTIONS
+    itself never carries the Authorization header."""
+    response = client.options(
+        "/courses",
+        headers={
+            "Origin": "http://localhost:3000",
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "authorization",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "http://localhost:3000"
+
+
+def test_auth_rejected_response_still_carries_cors_headers():
+    """Regression guard for the root cause of the reported login bug: if
+    AuthMiddleware is ever the outermost layer again, a 401 it returns
+    directly (without calling `call_next`) would skip CORSMiddleware
+    entirely, so the browser would see a response with no CORS headers and
+    surface a generic network/CORS error instead of the real 401."""
+    response = client.get("/courses", headers={"Origin": "http://localhost:3000"})
+
+    assert response.status_code == 401
+    assert response.headers["access-control-allow-origin"] == "http://localhost:3000"
+
+
+def test_diagnostics_is_public_even_without_token():
+    response = client.get("/auth/diagnostics")
+
+    assert response.status_code == 200
+
+
+def test_diagnostics_never_exposes_secrets():
+    response = client.get("/auth/diagnostics")
+
+    body = response.json()
+    serialized = response.text
+
+    for secret_field in ("admin_username", "admin_password", "auth_secret_key", "database_url"):
+        assert secret_field not in body
+
+    assert settings.admin_password not in serialized
+    assert settings.auth_secret_key not in serialized
+
+
+def test_diagnostics_reports_configured_booleans_accurately(monkeypatch):
+    monkeypatch.setattr(settings, "frontend_origin", "https://rukn-frontend.onrender.com")
+
+    response = client.get("/auth/diagnostics")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["auth_enabled"] is True
+    assert body["admin_username_configured"] is True
+    assert body["admin_password_configured"] is True
+    assert body["auth_secret_key_configured"] is True
+    assert body["frontend_origin_configured"] is True
+    assert body["frontend_origin_value"] == "https://rukn-frontend.onrender.com"
+    assert body["database_backend"] in ("sqlite", "postgres")
+
+
+def test_diagnostics_reports_unconfigured_admin_credentials(monkeypatch):
+    monkeypatch.setattr(settings, "admin_username", None)
+    monkeypatch.setattr(settings, "admin_password", None)
+    monkeypatch.setattr(settings, "frontend_origin", None)
+
+    response = client.get("/auth/diagnostics")
+
+    body = response.json()
+    assert body["admin_username_configured"] is False
+    assert body["admin_password_configured"] is False
+    assert body["frontend_origin_configured"] is False
+    assert body["frontend_origin_value"] is None

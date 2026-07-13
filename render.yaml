@@ -4,17 +4,23 @@
 #   - rukn-course-studio-backend  (FastAPI, backend/)
 #   - rukn-course-studio-frontend (Next.js, frontend/)
 #
-# The backend keeps its SQLite database and storage/ files on a persistent
-# disk (see docs/BUILD_PLAN.md - no managed DB/cloud storage introduced,
-# per .cursor/rules/v1-architecture-constraints.mdc). Requires a paid plan
-# (disks aren't available on Render's free tier).
+# The backend's database is Postgres via DATABASE_URL (see
+# app/config.py `_resolve_database_url`) - create a separate Postgres
+# instance for this app in the Render Dashboard (New > PostgreSQL); do not
+# reuse/share a database from another project. Uploaded sources and
+# generated DOCX files are plain files, not DB rows, so they still live on
+# a persistent disk regardless of where the database lives (see
+# docs/BUILD_PLAN.md - no managed cloud storage introduced, per
+# .cursor/rules/v1-architecture-constraints.mdc). Requires a paid plan on
+# the backend (disks aren't available on Render's free tier).
 #
-# Secrets (ADMIN_USERNAME, ADMIN_PASSWORD, AUTH_SECRET_KEY, and
-# ANTHROPIC_API_KEY if ever used) and deploy-time values
-# (NEXT_PUBLIC_API_BASE_URL, CORS_ORIGINS) are intentionally left as
+# Secrets (ADMIN_USERNAME, ADMIN_PASSWORD, AUTH_SECRET_KEY, DATABASE_URL,
+# and ANTHROPIC_API_KEY if ever used) and deploy-time values
+# (NEXT_PUBLIC_API_BASE_URL, FRONTEND_ORIGIN) are intentionally left as
 # `sync: false` - set them in the Render Dashboard after the first deploy,
 # never commit them here. See README.md "Deploying to Render" for the full
-# list and exact values.
+# list and exact values, including the SQLite-instead-of-Postgres fallback
+# option.
 
 services:
   - type: web
@@ -34,20 +40,21 @@ services:
         value: 3.12.8
       - key: ENVIRONMENT
         value: production
-      # SQLite file + uploaded/extracted/generated files all live under the
-      # persistent disk mounted above, so they survive redeploys/restarts -
-      # everything else in the service filesystem is ephemeral. See
-      # app/config.py `build_sqlite_url` / app/db.py for how this is used.
-      - key: SQLITE_DB_PATH
-        value: /opt/render/project/src/backend/storage/rukn_course_studio.db
-      - key: STORAGE_UPLOADS_DIR
-        value: /opt/render/project/src/backend/storage/uploads
-      - key: STORAGE_EXTRACTED_DIR
-        value: /opt/render/project/src/backend/storage/extracted
-      - key: STORAGE_OUTPUTS_DIR
-        value: /opt/render/project/src/backend/storage/outputs
-      - key: STORAGE_TEMPLATES_DIR
-        value: /opt/render/project/src/backend/storage/templates
+      # Postgres connection string for a dedicated database created for
+      # this app (Render Dashboard > New > PostgreSQL > copy its "Internal
+      # Database URL") - never a shared/reused database from another
+      # project. Takes priority over SQLITE_DB_PATH; see app/config.py
+      # `_resolve_database_url`. To use SQLite instead (temporary/legacy
+      # option), leave this unset and set SQLITE_DB_PATH here instead - see
+      # README.md "Deploying to Render".
+      - key: DATABASE_URL
+        sync: false
+      # Uploaded/extracted/generated files live under the persistent disk
+      # mounted above, independent of where the database lives, so they
+      # survive redeploys/restarts - everything else in the service
+      # filesystem is ephemeral. See app/config.py `storage_dir`.
+      - key: STORAGE_DIR
+        value: /opt/render/project/src/backend/storage
       # FakeProvider by default for this pass - see app/ai/factory.py. Do
       # not switch to "anthropic" as part of this deploy; if that ever
       # changes, also set ANTHROPIC_API_KEY and AI_MODEL_NAME below.
@@ -57,8 +64,10 @@ services:
         sync: false
       - key: AI_MODEL_NAME
         sync: false
-      # JSON array string, e.g. ["https://rukn-course-studio-frontend.onrender.com"]
-      - key: CORS_ORIGINS
+      # The deployed frontend's URL (no trailing slash) - allows it through
+      # CORS. See app/config.py `frontend_origin`. Use CORS_ORIGINS instead
+      # (JSON array string) if more than one origin is ever needed.
+      - key: FRONTEND_ORIGIN
         sync: false
       # Single-admin-user auth (see app/auth/) - required for login to work
       # at all in production; set all three in the Dashboard, never here.

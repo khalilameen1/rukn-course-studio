@@ -10,28 +10,55 @@ import type {
   CourseSourceNotesInput,
   CourseUpdateInput,
   CourseVersion,
+  DiagnosticsResponse,
   GenerationJob,
+  HealthResponse,
   LoginResponse,
   Priority,
   SourceCategory,
 } from "@/lib/types";
 
-class ApiError extends Error {}
+// `status` is set for any real HTTP response (even error ones), so callers
+// (e.g. /login's diagnostics block) can show the exact status code.
+// `isNetworkError` distinguishes "fetch() itself rejected" - almost always
+// a wrong/unreachable API_BASE_URL or a CORS rejection at the browser level
+// - from a normal HTTP error response, since the browser gives no further
+// detail (no status code, no body) in that case.
+export class ApiError extends Error {
+  status?: number;
+  isNetworkError: boolean;
+
+  constructor(message: string, status?: number, isNetworkError = false) {
+    super(message);
+    this.status = status;
+    this.isNetworkError = isNetworkError;
+  }
+}
 
 const LOGIN_PATH = "/auth/login";
+const NETWORK_ERROR_MESSAGE = "Network/CORS/API URL error";
 
 async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
   const isFormData = init.body instanceof FormData;
   const token = getToken();
 
-  const res = await fetch(`${API_BASE_URL}${path}`, {
-    ...init,
-    headers: {
-      ...(isFormData ? {} : { "Content-Type": "application/json" }),
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...init.headers,
-    },
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE_URL}${path}`, {
+      ...init,
+      headers: {
+        ...(isFormData ? {} : { "Content-Type": "application/json" }),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...init.headers,
+      },
+    });
+  } catch {
+    // fetch() rejects (rather than resolving with an error response) for
+    // network failures, a wrong/unreachable host, and CORS rejections at
+    // the browser level - the browser deliberately gives no more detail
+    // than this for CORS failures.
+    throw new ApiError(NETWORK_ERROR_MESSAGE, undefined, true);
+  }
 
   if (res.status === 401 && path !== LOGIN_PATH) {
     // Expired/invalid session - drop the stale token and send the user
@@ -50,7 +77,7 @@ async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
     } catch {
       // response body wasn't JSON; keep statusText
     }
-    throw new ApiError(detail);
+    throw new ApiError(detail, res.status);
   }
 
   if (res.status === 204) {
@@ -70,6 +97,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ username, password }),
     }),
+  // Public, unauthenticated status checks - used by /login's diagnostics
+  // block (see app/login/page.tsx) to self-diagnose deployment
+  // misconfiguration instead of just showing a generic failure.
+  health: () => apiFetch<HealthResponse>("/health"),
+  diagnostics: () => apiFetch<DiagnosticsResponse>("/auth/diagnostics"),
 
   // Admin knowledge
   listKnowledgeItems: () => apiFetch<AdminKnowledgeItem[]>("/admin/knowledge"),

@@ -5,7 +5,9 @@ from sqlmodel import Session, SQLModel, create_engine
 
 from app.config import settings
 
-if settings.sqlite_db_path:
+if settings.sqlite_db_path and settings.database_url.startswith("sqlite"):
+    # Only relevant when SQLITE_DB_PATH is actually the active backend (i.e.
+    # DATABASE_URL is unset - see app/config.py `_resolve_database_url`).
     # Render's disk is a fresh mount - the directory containing the DB file
     # (e.g. .../backend/storage/) doesn't exist until created. Must happen
     # before create_engine() below, which SQLite otherwise fails against a

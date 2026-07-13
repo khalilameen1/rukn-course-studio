@@ -21,6 +21,10 @@ from app.config import settings
 PUBLIC_ROUTES: set[tuple[str, str]] = {
     ("GET", "/health"),
     ("POST", "/auth/login"),
+    # Must stay public: it's the tool used to diagnose why login itself is
+    # broken (see app/auth/diagnostics.py) - it would be useless if it also
+    # required a token to reach.
+    ("GET", "/auth/diagnostics"),
 }
 
 _REPEATED_SLASHES = re.compile(r"/+")

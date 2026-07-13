@@ -117,3 +117,25 @@ export interface LoginResponse {
   access_token: string;
   token_type: string;
 }
+
+export interface HealthResponse {
+  status: string;
+  environment: string;
+}
+
+// Mirrors backend/app/schemas/auth.py DiagnosticsResponse - see
+// backend/app/auth/diagnostics.py for exactly what is/isn't returned
+// (never a credential, connection string, or API key value).
+export interface DiagnosticsResponse {
+  auth_enabled: boolean;
+  admin_username_configured: boolean;
+  admin_password_configured: boolean;
+  auth_secret_key_configured: boolean;
+  frontend_origin_configured: boolean;
+  frontend_origin_value: string | null;
+  cors_origins: string[];
+  database_backend: string;
+  storage_dir_configured: boolean;
+  storage_dir_exists: boolean;
+  storage_dir_writable: boolean;
+}
