@@ -27,6 +27,14 @@ class Settings(BaseSettings):
     storage_outputs_dir: Path = STORAGE_DIR / "outputs"
     storage_templates_dir: Path = STORAGE_DIR / "templates"
 
+    # Which AIProvider implementation the orchestrator uses by default - see
+    # app/ai/factory.py `get_ai_provider`. "fake" (the default) needs no
+    # further configuration. "anthropic" additionally requires
+    # ANTHROPIC_API_KEY (and, in practice, AI_MODEL_NAME) to be set, or
+    # get_ai_provider raises a clear config error instead of silently
+    # falling back to FakeProvider.
+    ai_provider: str = "fake"
+
     # AnthropicProvider (see app/ai/anthropic_provider.py). `ai_model_name`
     # is the ONLY place a model name should ever be set - never hardcode a
     # model string anywhere else.

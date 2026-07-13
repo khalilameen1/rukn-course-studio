@@ -195,6 +195,26 @@ End-to-end fake generation scenario (no API key, no network):
 `.env` / `.env.local` are git-ignored; copy from `.env.example` /
 `.env.local.example`.
 
+## Deploying to Render
+
+`render.yaml` at the repo root is a Render Blueprint that deploys two
+services from this monorepo: `rukn-course-studio-backend` (FastAPI) and
+`rukn-course-studio-frontend` (Next.js). The backend's SQLite database and
+`storage/` files are kept on a persistent disk so they survive redeploys.
+Requires a paid Render plan (persistent disks aren't on the free tier).
+
+1. In the Render Dashboard: **New > Blueprint**, point it at this repo/branch.
+2. Render reads `render.yaml` and creates both services.
+3. After the first deploy, set these in the Dashboard (never commit secrets):
+   - Backend service: `CORS_ORIGINS` (JSON array, e.g.
+     `["https://rukn-course-studio-frontend.onrender.com"]`), and, only if
+     using real AI, `ANTHROPIC_API_KEY` + `AI_MODEL_NAME` +
+     `AI_PROVIDER=anthropic` (see [Environment Variables](#environment-variables)).
+   - Frontend service: `NEXT_PUBLIC_API_URL` (full URL incl. `https://` of
+     the backend service).
+4. Trigger a manual redeploy on both services after setting those so they
+   pick up the new values.
+
 ## Troubleshooting
 
 - **"Backend unreachable" on the home page:** confirm `uvicorn` is running on

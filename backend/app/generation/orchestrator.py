@@ -2,8 +2,9 @@
 
 `run_generation(session, course_id)` is the only entry point. It runs the
 full 8-stage pipeline synchronously against an `AIProvider` (defaulting to
-`FakeProvider` - no real API calls yet) and returns the finished
-`GenerationJob`.
+whatever `app/ai/factory.py get_ai_provider()` selects via `AI_PROVIDER` -
+`FakeProvider` unless real AI is explicitly configured) and returns the
+finished `GenerationJob`.
 
 Only `GenerationJob.current_stage` and `.progress_percent` are the
 user-visible signal of progress (values match the coarse vocabulary in
@@ -21,7 +22,7 @@ from pathlib import Path
 
 from sqlmodel import Session
 
-from app.ai.fake_provider import FakeProvider
+from app.ai.factory import get_ai_provider
 from app.ai.provider import (
     AIProvider,
     BuildCourseMapInput,
@@ -104,7 +105,13 @@ def run_generation(
     `job.status` rather than relying on an exception, per docs/PRD.md FR-10
     ("clear, actionable error state, not a raw stack trace").
     """
-    provider = provider or FakeProvider()
+    # Explicit `provider` arg (tests, scripts) always wins; otherwise the
+    # default provider is whatever AI_PROVIDER selects (app/ai/factory.py) -
+    # FakeProvider unless real AI is explicitly configured. This can raise
+    # AIProviderConfigError, which deliberately propagates uncaught here
+    # (before any GenerationJob row exists) rather than being absorbed into
+    # a FAILED job - see app/routers/generation.py for how callers handle it.
+    provider = provider or get_ai_provider()
 
     course = courses.get(session, course_id)
     if course is None:

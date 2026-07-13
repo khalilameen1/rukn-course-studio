@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 from sqlmodel import Session
 
+from app.ai.factory import AIProviderConfigError
 from app.crud import course_versions
 from app.db import get_session
 from app.generation.orchestrator import run_generation_job
@@ -30,15 +31,21 @@ def generate_course(course_id: int, session: Session = Depends(get_session)):
 
     On success, this also produces a real .docx (see
     app/services/docx_export.py) and a new CourseVersion, so `/versions`
-    and `/download/latest` are populated afterward. The pipeline itself
-    (docs/ARCHITECTURE.md §6) still runs against FakeProvider - no real AI
-    call happens yet, so the script content is a placeholder.
+    and `/download/latest` are populated afterward. Which AIProvider the
+    pipeline (docs/ARCHITECTURE.md §6) actually runs against - FakeProvider
+    or a real one - is decided by `AI_PROVIDER` (app/ai/factory.py), never
+    exposed here or to the frontend.
     """
     get_course_or_404(session, course_id)
     try:
         return run_generation_job(course_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except AIProviderConfigError as exc:
+        # Server misconfiguration (e.g. AI_PROVIDER=anthropic with no API
+        # key) - a clear, actionable error, not a raw stack trace and not a
+        # silent fallback to a different provider.
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @router.get("/versions", response_model=list[CourseVersionRead])

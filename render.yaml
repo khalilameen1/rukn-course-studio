@@ -1,0 +1,67 @@
+# Render Blueprint for Rukn Course Studio.
+#
+# Deploys two services from this monorepo:
+#   - rukn-course-studio-backend  (FastAPI, backend/)
+#   - rukn-course-studio-frontend (Next.js, frontend/)
+#
+# The backend keeps its SQLite database and storage/ files on a persistent
+# disk (see docs/BUILD_PLAN.md - no managed DB/cloud storage introduced,
+# per .cursor/rules/v1-architecture-constraints.mdc). Requires a paid plan
+# (disks aren't available on Render's free tier).
+#
+# Secrets (ANTHROPIC_API_KEY) and deploy-time values (NEXT_PUBLIC_API_URL,
+# CORS_ORIGINS) are intentionally left as `sync: false` - set them in the
+# Render Dashboard after the first deploy, never commit them here.
+
+services:
+  - type: web
+    name: rukn-course-studio-backend
+    runtime: python
+    plan: starter
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt && python -m app.seed_admin_knowledge
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    disk:
+      name: rukn-course-studio-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      # SQLite file + uploaded/extracted/generated files all live on the
+      # persistent disk mounted above, so they survive redeploys/restarts -
+      # everything else in the service filesystem is ephemeral.
+      - key: DATABASE_URL
+        value: sqlite:////var/data/rukn_course_studio.db
+      - key: STORAGE_UPLOADS_DIR
+        value: /var/data/storage/uploads
+      - key: STORAGE_EXTRACTED_DIR
+        value: /var/data/storage/extracted
+      - key: STORAGE_OUTPUTS_DIR
+        value: /var/data/storage/outputs
+      - key: STORAGE_TEMPLATES_DIR
+        value: /var/data/storage/templates
+      # FakeProvider by default - see app/ai/factory.py. Set to "anthropic"
+      # in the Dashboard (with the two keys below) to use real AI.
+      - key: AI_PROVIDER
+        value: fake
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: AI_MODEL_NAME
+        sync: false
+      # JSON array string, e.g. ["https://rukn-course-studio-frontend.onrender.com"]
+      - key: CORS_ORIGINS
+        sync: false
+
+  - type: web
+    name: rukn-course-studio-frontend
+    runtime: node
+    plan: starter
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    startCommand: npm run start -- -p $PORT
+    envVars:
+      # Full URL incl. https://, e.g. https://rukn-course-studio-backend.onrender.com
+      - key: NEXT_PUBLIC_API_URL
+        sync: false
