@@ -1,0 +1,30 @@
+# Frontend (Next.js)
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/.env*.local
+frontend/*.tsbuildinfo
+frontend/next-env.d.ts
+
+# Backend (Python/FastAPI)
+backend/.venv/
+backend/__pycache__/
+backend/**/__pycache__/
+backend/*.db
+backend/.env
+
+# Storage contents (keep directory structure via .gitkeep)
+storage/uploads/*
+storage/extracted/*
+storage/outputs/*
+storage/templates/*
+!storage/uploads/.gitkeep
+!storage/extracted/.gitkeep
+!storage/outputs/.gitkeep
+!storage/templates/.gitkeep
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

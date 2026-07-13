@@ -1,0 +1,35 @@
+"""SQLModel table models.
+
+Importing this package registers every table on `SQLModel.metadata`, which
+is what `app.db.init_db()` relies on to create all tables on startup.
+"""
+
+from app.models.admin_knowledge import AdminKnowledgeItem
+from app.models.course import Course
+from app.models.course_source import CourseSource
+from app.models.course_version import CourseVersion
+from app.models.enums import (
+    ExplanationLevel,
+    ItemType,
+    JobStatus,
+    Priority,
+    SourceCategory,
+    StructureMode,
+)
+from app.models.generation_job import GenerationJob
+from app.models.source_analysis import SourceAnalysis
+
+__all__ = [
+    "AdminKnowledgeItem",
+    "Course",
+    "CourseSource",
+    "CourseVersion",
+    "GenerationJob",
+    "SourceAnalysis",
+    "ItemType",
+    "StructureMode",
+    "ExplanationLevel",
+    "SourceCategory",
+    "Priority",
+    "JobStatus",
+]

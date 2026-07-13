@@ -1,0 +1,54 @@
+---
+description: Core V1 architecture constraints for Rukn Course Studio (scope, ownership boundaries, and change process)
+alwaysApply: true
+---
+
+# Rukn Course Studio — V1 Architecture Constraints
+
+## No unnecessary dependencies/infra in V1
+
+Do not introduce any of the following unless the user explicitly requests it in the conversation:
+
+- LangChain (or similar LLM orchestration frameworks)
+- Vector databases / embedding stores
+- RAG frameworks
+- Message queues (Celery, RabbitMQ, etc.)
+- Redis
+- Docker / containers
+- Any cloud service (S3, cloud LLM hosting infra, managed DBs, etc.)
+
+Prefer simple Python modules and explicit, readable orchestration code (plain
+functions/classes, explicit control flow) over adding a framework to solve
+orchestration. If a task seems to need one of the above, stop and ask the
+user first instead of adding it.
+
+## Strict frontend/backend ownership boundary
+
+- The frontend (`frontend/`) is UI only. It never calls the AI provider
+  directly and never contains generation logic.
+- The backend (`backend/`) owns **all** generation logic: course map
+  building, reel-by-reel generation, every review stage, and DOCX export.
+- The frontend only talks to our own backend API — never directly to an LLM
+  provider, embeddings API, or any other AI service.
+
+## Never expose internal reel-by-reel generation to the user
+
+- The multi-stage internal pipeline (map → reel-by-reel → per-reel review →
+  every-5-reels review → per-module review → every-2-modules review →
+  full-course review → export) is an internal implementation detail.
+- API responses and UI must never surface individual reel drafts, review
+  verdicts, or per-stage content as the product output.
+- The user-facing result of a generation run is exactly one final DOCX, plus
+  an optional short, coarse status string (e.g. `queued`, `generating`,
+  `reviewing`, `exporting`, `done`, `failed`). Never a per-reel/per-module
+  progress feed.
+
+## Any big change must be broken down and explained first
+
+Before implementing a change that touches multiple files, adds a new
+module/service, or alters the pipeline/data model:
+
+1. Explain the plan in plain language first (what files, why, in what order).
+2. Break the implementation into small, single-purpose files/functions rather
+   than one large file or one large diff.
+3. Only proceed to write code after the plan has been stated.
