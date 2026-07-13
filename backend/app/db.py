@@ -1,8 +1,16 @@
 from collections.abc import Generator
+from pathlib import Path
 
 from sqlmodel import Session, SQLModel, create_engine
 
 from app.config import settings
+
+if settings.sqlite_db_path:
+    # Render's disk is a fresh mount - the directory containing the DB file
+    # (e.g. .../backend/storage/) doesn't exist until created. Must happen
+    # before create_engine() below, which SQLite otherwise fails against a
+    # missing parent directory.
+    Path(settings.sqlite_db_path).parent.mkdir(parents=True, exist_ok=True)
 
 # check_same_thread=False is required for SQLite when accessed from FastAPI's
 # threaded request handling; SQLite itself still serializes writes.

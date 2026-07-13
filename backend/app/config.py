@@ -1,10 +1,22 @@
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 REPO_ROOT = BACKEND_DIR.parent
 STORAGE_DIR = REPO_ROOT / "storage"
+
+
+def build_sqlite_url(db_path: str) -> str:
+    """Build a SQLAlchemy `sqlite:///` URL from an absolute POSIX filesystem
+    path (e.g. Render's persistent disk mount). Four slashes total: the
+    `sqlite://` scheme separator plus the path's own leading `/` - see
+    SQLITE_DB_PATH below."""
+    path = PurePosixPath(db_path)
+    if not path.is_absolute():
+        raise ValueError(f"SQLITE_DB_PATH must be an absolute path, got: {db_path!r}")
+    return f"sqlite:///{path}"
 
 
 class Settings(BaseSettings):
@@ -16,6 +28,19 @@ class Settings(BaseSettings):
     environment: str = "development"
 
     database_url: str = f"sqlite:///{BACKEND_DIR / 'rukn_course_studio.db'}"
+
+    # Dedicated single-purpose override for where the SQLite file lives
+    # (e.g. Render's persistent disk, which is mounted at a fixed absolute
+    # path) - simpler than hand-building a `sqlite:///` URL for
+    # DATABASE_URL directly. Unset by default, which leaves local dev's
+    # `database_url` default above completely unchanged.
+    sqlite_db_path: str | None = None
+
+    @model_validator(mode="after")
+    def _apply_sqlite_db_path(self) -> "Settings":
+        if self.sqlite_db_path:
+            self.database_url = build_sqlite_url(self.sqlite_db_path)
+        return self
 
     cors_origins: list[str] = [
         "http://localhost:3000",

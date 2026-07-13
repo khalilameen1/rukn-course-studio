@@ -92,3 +92,32 @@ def test_health_remains_public():
     response = client.get("/health")
 
     assert response.status_code == 200
+
+
+def test_login_is_public_even_with_double_slash_from_trailing_base_url():
+    """A frontend NEXT_PUBLIC_API_BASE_URL with a trailing slash produces
+    requests like "https://backend/.../auth/login" -> path "//auth/login" -
+    this must still be treated as the public login route, not rejected with
+    a generic 401 before credentials are even checked (see
+    app/auth/middleware.py `_normalize_path`). Must use an absolute URL here:
+    a bare "//auth/login" string is parsed by httpx as protocol-relative
+    (a different host), not as a same-host double-slash path.
+    """
+    response = client.post(
+        "http://testserver//auth/login", json={"username": "admin", "password": "s3cret"}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["access_token"]
+
+
+def test_health_is_public_even_with_double_slash():
+    response = client.get("http://testserver//health")
+
+    assert response.status_code == 200
+
+
+def test_protected_endpoint_still_requires_token_with_double_slash():
+    response = client.get("http://testserver//courses")
+
+    assert response.status_code == 401

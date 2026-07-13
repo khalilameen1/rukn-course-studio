@@ -8,6 +8,8 @@ unprotected as new routers get added.
 
 from __future__ import annotations
 
+import re
+
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -21,9 +23,30 @@ PUBLIC_ROUTES: set[tuple[str, str]] = {
     ("POST", "/auth/login"),
 }
 
+_REPEATED_SLASHES = re.compile(r"/+")
+
+
+def _normalize_path(path: str) -> str:
+    """Collapse repeated/trailing slashes so a misconfigured frontend base
+    URL with a trailing slash (producing e.g. "//auth/login") still matches
+    PUBLIC_ROUTES instead of being wrongly treated as protected."""
+    normalized = _REPEATED_SLASHES.sub("/", path)
+    if len(normalized) > 1:
+        normalized = normalized.rstrip("/")
+    return normalized
+
 
 class AuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
+        # Normalize repeated/trailing slashes on the ASGI scope itself (not
+        # just for the PUBLIC_ROUTES check below) so a misconfigured
+        # frontend base URL with a trailing slash - producing requests like
+        # "//auth/login" - still reaches the right route instead of 404ing
+        # once past this middleware.
+        normalized_path = _normalize_path(request.url.path)
+        if normalized_path != request.url.path:
+            request.scope["path"] = normalized_path
+
         if not settings.auth_enabled:
             return await call_next(request)
 
@@ -32,7 +55,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if request.method == "OPTIONS":
             return await call_next(request)
 
-        if (request.method, request.url.path) in PUBLIC_ROUTES:
+        if (request.method, normalized_path) in PUBLIC_ROUTES:
             return await call_next(request)
 
         if not settings.auth_secret_key:

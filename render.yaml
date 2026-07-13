@@ -9,41 +9,48 @@
 # per .cursor/rules/v1-architecture-constraints.mdc). Requires a paid plan
 # (disks aren't available on Render's free tier).
 #
-# Secrets (ANTHROPIC_API_KEY) and deploy-time values (NEXT_PUBLIC_API_URL,
-# CORS_ORIGINS) are intentionally left as `sync: false` - set them in the
-# Render Dashboard after the first deploy, never commit them here.
+# Secrets (ADMIN_USERNAME, ADMIN_PASSWORD, AUTH_SECRET_KEY, and
+# ANTHROPIC_API_KEY if ever used) and deploy-time values
+# (NEXT_PUBLIC_API_BASE_URL, CORS_ORIGINS) are intentionally left as
+# `sync: false` - set them in the Render Dashboard after the first deploy,
+# never commit them here. See README.md "Deploying to Render" for the full
+# list and exact values.
 
 services:
   - type: web
     name: rukn-course-studio-backend
     runtime: python
-    plan: starter
+    plan: standard
     rootDir: backend
-    buildCommand: pip install -r requirements.txt && python -m app.seed_admin_knowledge
+    buildCommand: pip install -r requirements.txt
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     disk:
       name: rukn-course-studio-data
-      mountPath: /var/data
-      sizeGB: 1
+      mountPath: /opt/render/project/src/backend/storage
+      sizeGB: 10
     envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.8
       - key: ENVIRONMENT
         value: production
-      # SQLite file + uploaded/extracted/generated files all live on the
+      # SQLite file + uploaded/extracted/generated files all live under the
       # persistent disk mounted above, so they survive redeploys/restarts -
-      # everything else in the service filesystem is ephemeral.
-      - key: DATABASE_URL
-        value: sqlite:////var/data/rukn_course_studio.db
+      # everything else in the service filesystem is ephemeral. See
+      # app/config.py `build_sqlite_url` / app/db.py for how this is used.
+      - key: SQLITE_DB_PATH
+        value: /opt/render/project/src/backend/storage/rukn_course_studio.db
       - key: STORAGE_UPLOADS_DIR
-        value: /var/data/storage/uploads
+        value: /opt/render/project/src/backend/storage/uploads
       - key: STORAGE_EXTRACTED_DIR
-        value: /var/data/storage/extracted
+        value: /opt/render/project/src/backend/storage/extracted
       - key: STORAGE_OUTPUTS_DIR
-        value: /var/data/storage/outputs
+        value: /opt/render/project/src/backend/storage/outputs
       - key: STORAGE_TEMPLATES_DIR
-        value: /var/data/storage/templates
-      # FakeProvider by default - see app/ai/factory.py. Set to "anthropic"
-      # in the Dashboard (with the two keys below) to use real AI.
+        value: /opt/render/project/src/backend/storage/templates
+      # FakeProvider by default for this pass - see app/ai/factory.py. Do
+      # not switch to "anthropic" as part of this deploy; if that ever
+      # changes, also set ANTHROPIC_API_KEY and AI_MODEL_NAME below.
       - key: AI_PROVIDER
         value: fake
       - key: ANTHROPIC_API_KEY
@@ -70,8 +77,12 @@ services:
     plan: starter
     rootDir: frontend
     buildCommand: npm install && npm run build
-    startCommand: npm run start -- -p $PORT
+    startCommand: npm start
     envVars:
-      # Full URL incl. https://, e.g. https://rukn-course-studio-backend.onrender.com
-      - key: NEXT_PUBLIC_API_URL
+      # Full URL incl. https://, NO trailing slash, e.g.
+      # https://rukn-course-studio-backend.onrender.com - required at build
+      # time (next.config.ts fails the build if unset); changing this value
+      # requires a rebuild, not just a restart, since Next.js inlines it
+      # into the client bundle.
+      - key: NEXT_PUBLIC_API_BASE_URL
         sync: false
