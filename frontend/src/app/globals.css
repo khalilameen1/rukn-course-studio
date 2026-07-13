@@ -19,6 +19,16 @@
   }
 }
 
+html,
+body {
+  /* Guards against any element pushing the page wider than the device,
+     which otherwise makes the whole site zoom out and look desktop-sized
+     on phones. Components that need internal horizontal scroll (tables,
+     tab bars) opt into it themselves via their own overflow-x-auto. */
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
 body {
   background: var(--background);
   color: var(--foreground);
