@@ -13,6 +13,8 @@ from sqlmodel import Session
 
 from app.crud import admin_knowledge_items
 from app.models.admin_knowledge import AdminKnowledgeItem
+from app.services.admin_knowledge_backup import snapshot_admin_knowledge
+from app.services.audit import record_audit
 
 
 def filter_active_primary(items: list[AdminKnowledgeItem]) -> list[AdminKnowledgeItem]:
@@ -58,31 +60,51 @@ def plan_dedupe_admin_knowledge(session: Session) -> dict[str, Any]:
                 }
             )
 
-    return {
+    report = {
         "dry_run": True,
         "applied": False,
         "would_deactivate_count": len(would_deactivate),
         "would_deactivate": would_deactivate,
         "kept_active": kept,
+        "backup": None,
         "message": (
             f"Dry-run: would deactivate {len(would_deactivate)} duplicate active item(s). "
-            "No changes made. Pass confirm=true to apply."
+            "No changes made. Pass dry_run=false&confirm=true to apply "
+            "(a JSON snapshot is written before mutation)."
         ),
     }
+    record_audit(
+        session,
+        action="admin_knowledge_cleanup",
+        affected_table="admin_knowledge_items",
+        affected_count=len(would_deactivate),
+        dry_run=True,
+        confirmed=False,
+        success=True,
+        details={"would_deactivate_ids": [r["id"] for r in would_deactivate]},
+    )
+    return report
 
 
 def dedupe_admin_knowledge(
-    session: Session, *, dry_run: bool = False, confirm: bool = False
+    session: Session,
+    *,
+    dry_run: bool = False,
+    confirm: bool = False,
+    actor: str | None = None,
 ) -> dict[str, Any]:
     """Deactivate duplicate active items for the same key; keep the newest.
 
     - `dry_run=True` (or missing confirm): report only, no writes.
     - Destructive write requires `confirm=True` and `dry_run=False`.
+    - Before mutation: JSON snapshot under storage/backups/admin_knowledge/.
 
     Does not delete rows (archives remain for history).
     """
     if dry_run or not confirm:
         return plan_dedupe_admin_knowledge(session)
+
+    backup = snapshot_admin_knowledge(session, reason="cleanup_duplicates")
 
     items = admin_knowledge_items.list(session)
     by_key: dict[str, list[AdminKnowledgeItem]] = defaultdict(list)
@@ -112,14 +134,31 @@ def dedupe_admin_knowledge(
                 }
             )
 
-    return {
+    report = {
         "dry_run": False,
         "applied": True,
         "deactivated_count": len(deactivated),
         "deactivated": deactivated,
         "kept_active": kept,
+        "backup": backup,
         "message": (
             f"Deactivated {len(deactivated)} duplicate active item(s). "
+            f"Snapshot saved to {backup['path']}. "
             "Inactive backups stay hidden from the default Admin Knowledge list."
         ),
     }
+    record_audit(
+        session,
+        action="admin_knowledge_cleanup",
+        actor=actor,
+        affected_table="admin_knowledge_items",
+        affected_count=len(deactivated),
+        dry_run=False,
+        confirmed=True,
+        success=True,
+        details={
+            "deactivated_ids": [r["id"] for r in deactivated],
+            "backup_path": backup["path"],
+        },
+    )
+    return report

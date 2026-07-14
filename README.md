@@ -1004,8 +1004,48 @@ cd backend && python -m scripts.dedupe_admin_knowledge --confirm
 ```
 
 `refresh-defaults` / seed paths never overwrite edited Admin Knowledge rows
-for keys that already exist; inactive backups remain in the DB. Always run
-cleanup dry-run (and take a Postgres dump) before `--confirm` in production.
+for keys that already exist (seed is create-missing-only). **`--refresh-defaults
+--confirm` does replace** selected system keys, but keeps prior rows inactive
+and writes a JSON snapshot under `storage/backups/admin_knowledge/` first.
+Custom unique keys are never touched. Always dry-run cleanup (and take a
+Postgres dump) before `--confirm` in production.
+
+### Production deploy safety checklist (DB / schema / cleanup)
+
+Before any Render production deploy that touches the database, schema helpers,
+Admin Knowledge cleanup/refresh, or storage:
+
+1. **Backup Postgres** (`pg_dump` — see above).
+2. **Backup storage** (`uploads/`, `extracted/`, `outputs/`, `backups/`) if
+   cleanup may touch files.
+3. Note the **git commit hash** you are deploying (`git rev-parse HEAD`).
+4. Deploy **backend** first; wait until healthy.
+5. Check `GET /health` (and login via smoke test if needed).
+6. Run **migration/cleanup only after backup**, with dry-run first, then
+   `--confirm` / `confirm=true`.
+7. Deploy **frontend** after backend is healthy.
+8. Test **login**.
+9. Test **one fake generation** (`AI_PROVIDER=fake`) or a tiny course.
+10. Confirm **Teleprompter DOCX** download works.
+
+### Rollback plan
+
+- **Redeploy previous backend image/commit:** in Render, redeploy the prior
+  successful deploy for `rukn-course-studio-backend`, or git-revert to the
+  last known-good commit (see `git log`) and push.
+- **Stop Claude spend immediately:** set Render env `AI_PROVIDER=fake`
+  (leave `ANTHROPIC_API_KEY` unchanged) and **restart** the backend service.
+  New runs use FakeProvider; no code change required. Optional:
+  `AI_RUNAWAY_HARD_CAP_USD` for emergency spend stop mid-run.
+- **Stop a stuck generation:** `POST /courses/{id}/generate/{job_id}/cancel`
+  (auth required) marks the job canceled and releases the lock.
+- **Restore Admin Knowledge after a bad cleanup/refresh:** open the latest
+  file under `STORAGE_DIR/backups/admin_knowledge/*.json` and re-create or
+  re-activate rows from that export (inactive DB backups also remain unless
+  you used `purge=true`). Prefer reactivating archive rows over purge.
+- **Frontend if backend is down:** the Next.js service can stay up; users
+  will see API errors until backend recovers. Do not point
+  `NEXT_PUBLIC_API_BASE_URL` at a broken host — fix/redeploy backend first.
 
 ### Production smoke test
 files. `CORS_ORIGINS` (a JSON array string) still works as an alternative to

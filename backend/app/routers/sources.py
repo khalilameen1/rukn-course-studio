@@ -2,7 +2,7 @@ from dataclasses import asdict
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from sqlmodel import Session
 
 from app.config import settings
@@ -203,13 +203,50 @@ def list_sources(course_id: int, session: Session = Depends(get_session)):
     return course_sources.list(session, course_id=course_id)
 
 
-@router.delete("/{source_id}", status_code=204)
+@router.delete("/{source_id}", status_code=200, response_model=dict)
 def delete_source(
-    course_id: int, source_id: int, session: Session = Depends(get_session)
+    course_id: int,
+    source_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+    confirm: bool = Query(
+        False,
+        description="Required true with dry_run=false to delete the source.",
+    ),
+    dry_run: bool = Query(
+        True,
+        description="Default true: report without deleting.",
+    ),
 ):
+    from app.services.audit import record_audit
+
     source = course_sources.get(session, source_id)
     if source is None or source.course_id != course_id:
         raise HTTPException(status_code=404, detail="Source not found")
+
+    actor = getattr(request.state, "username", None)
+    if dry_run or not confirm:
+        record_audit(
+            session,
+            action="course_source_delete",
+            actor=actor,
+            affected_table="course_sources",
+            affected_count=1,
+            dry_run=True,
+            confirmed=False,
+            success=True,
+            details={"course_id": course_id, "source_id": source_id},
+        )
+        return {
+            "applied": False,
+            "dry_run": True,
+            "course_id": course_id,
+            "source_id": source_id,
+            "message": (
+                f"Dry-run: would delete source {source_id} for course {course_id}. "
+                "Pass confirm=true&dry_run=false to apply."
+            ),
+        }
 
     if source.file_path:
         original = Path(source.file_path)
@@ -221,6 +258,24 @@ def delete_source(
         source_analyses.delete(session, analysis.id)
 
     course_sources.delete(session, source_id)
+    record_audit(
+        session,
+        action="course_source_delete",
+        actor=actor,
+        affected_table="course_sources",
+        affected_count=1,
+        dry_run=False,
+        confirmed=True,
+        success=True,
+        details={"course_id": course_id, "source_id": source_id},
+    )
+    return {
+        "applied": True,
+        "dry_run": False,
+        "course_id": course_id,
+        "source_id": source_id,
+        "message": f"Deleted source {source_id}.",
+    }
 
 
 @router.patch("/{source_id}", response_model=CourseSourceRead)

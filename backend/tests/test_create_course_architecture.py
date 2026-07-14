@@ -14,7 +14,12 @@ from app.schemas.generation import CourseMap, ModulePlan, ReelPlan
 
 
 @pytest.fixture()
-def session(tmp_path):
+def session(tmp_path, monkeypatch):
+    from app import models  # noqa: F401
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "storage_dir", tmp_path / "storage")
+    (tmp_path / "storage").mkdir(parents=True, exist_ok=True)
     engine = create_engine(
         f"sqlite:///{tmp_path / 'arch.db'}",
         connect_args={"check_same_thread": False},

@@ -1,6 +1,6 @@
 """Admin Knowledge Center list/cleanup — global ROKN rules only."""
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlmodel import Session
 
 from app.crud import admin_knowledge_items
@@ -14,8 +14,14 @@ from app.schemas.admin_knowledge import (
     AdminKnowledgeRead,
     AdminKnowledgeUpdate,
 )
+from app.services.admin_knowledge_backup import snapshot_admin_knowledge
+from app.services.audit import record_audit
 
 router = APIRouter(prefix="/admin/knowledge", tags=["admin-knowledge"])
+
+
+def _actor(request: Request) -> str | None:
+    return getattr(request.state, "username", None)
 
 
 @router.get("", response_model=list[AdminKnowledgeRead])
@@ -45,6 +51,7 @@ def list_knowledge_items(
 
 @router.post("/cleanup-duplicates", response_model=dict)
 def cleanup_duplicate_knowledge(
+    request: Request,
     session: Session = Depends(get_session),
     dry_run: bool = Query(
         True,
@@ -60,9 +67,11 @@ def cleanup_duplicate_knowledge(
 
     Default is dry-run (no writes). Destructive apply requires confirm=true.
     Does not delete custom unique keys. Returns a report of what will change
-    or what changed.
+    or what changed. Apply path writes a JSON snapshot first.
     """
-    return dedupe_admin_knowledge(session, dry_run=dry_run, confirm=confirm)
+    return dedupe_admin_knowledge(
+        session, dry_run=dry_run, confirm=confirm, actor=_actor(request)
+    )
 
 
 @router.post("", response_model=AdminKnowledgeRead, status_code=201)
@@ -76,6 +85,7 @@ def create_knowledge_item(
 def update_knowledge_item(
     item_id: int,
     payload: AdminKnowledgeUpdate,
+    request: Request,
     session: Session = Depends(get_session),
 ):
     updated = admin_knowledge_items.update(
@@ -83,24 +93,172 @@ def update_knowledge_item(
     )
     if updated is None:
         raise HTTPException(status_code=404, detail="Knowledge item not found")
+    record_audit(
+        session,
+        action="admin_knowledge_update",
+        actor=_actor(request),
+        affected_table="admin_knowledge_items",
+        affected_count=1,
+        dry_run=False,
+        confirmed=True,
+        success=True,
+        details={"id": item_id, "key": updated.key},
+    )
     return updated
 
 
-@router.delete("/{item_id}", status_code=204)
-def delete_knowledge_item(item_id: int, session: Session = Depends(get_session)):
-    if not admin_knowledge_items.delete(session, item_id):
+@router.delete("/{item_id}", status_code=200, response_model=dict)
+def delete_knowledge_item(
+    item_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+    confirm: bool = Query(
+        False,
+        description="Required true to perform archive (deactivate) or purge.",
+    ),
+    purge: bool = Query(
+        False,
+        description="If true with confirm=true, permanently delete the row. "
+        "Default is soft-archive (is_active=false).",
+    ),
+    dry_run: bool = Query(
+        True,
+        description="Default true: report what would happen without mutating.",
+    ),
+):
+    """Archive (default) or permanently delete an Admin Knowledge row.
+
+    Prefer archive: keeps the row inactive. Permanent purge requires
+    confirm=true&purge=true&dry_run=false and writes a JSON snapshot first.
+    """
+    item = admin_knowledge_items.get(session, item_id)
+    if item is None:
         raise HTTPException(status_code=404, detail="Knowledge item not found")
+
+    plan = {
+        "id": item.id,
+        "key": item.key,
+        "title": item.title,
+        "action": "would_purge" if purge else "would_archive",
+        "dry_run": dry_run or not confirm,
+    }
+    if dry_run or not confirm:
+        record_audit(
+            session,
+            action="admin_knowledge_delete",
+            actor=_actor(request),
+            affected_table="admin_knowledge_items",
+            affected_count=1,
+            dry_run=True,
+            confirmed=False,
+            success=True,
+            details=plan,
+        )
+        return {
+            **plan,
+            "applied": False,
+            "message": (
+                f"Dry-run: would {'permanently delete' if purge else 'archive (deactivate)'} "
+                f"item {item_id} ({item.key}). Pass confirm=true&dry_run=false to apply."
+            ),
+        }
+
+    backup = snapshot_admin_knowledge(
+        session, reason="purge" if purge else "archive_before_delete"
+    )
+    if purge:
+        ok = admin_knowledge_items.delete(session, item_id)
+        if not ok:
+            raise HTTPException(status_code=404, detail="Knowledge item not found")
+        action_done = "purged"
+    else:
+        admin_knowledge_items.update(session, item_id, is_active=False)
+        action_done = "archived"
+
+    record_audit(
+        session,
+        action="admin_knowledge_delete",
+        actor=_actor(request),
+        affected_table="admin_knowledge_items",
+        affected_count=1,
+        dry_run=False,
+        confirmed=True,
+        success=True,
+        details={
+            "id": item_id,
+            "key": item.key,
+            "action": action_done,
+            "backup_path": backup["path"],
+        },
+    )
+    return {
+        "id": item_id,
+        "key": item.key,
+        "applied": True,
+        "action": action_done,
+        "backup": backup,
+        "message": (
+            f"{'Permanently deleted' if purge else 'Archived (deactivated)'} "
+            f"item {item_id}. Snapshot: {backup['path']}"
+        ),
+    }
 
 
 @router.post("/{item_id}/activate", response_model=AdminKnowledgeRead)
-def activate_knowledge_item(item_id: int, session: Session = Depends(get_session)):
+def activate_knowledge_item(
+    item_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+    confirm: bool = Query(
+        False,
+        description="Required true — activate deactivates sibling versions.",
+    ),
+    dry_run: bool = Query(True, description="Default preview; no writes."),
+):
     """Mark this version active and deactivate any other version sharing its key."""
     item = admin_knowledge_items.get(session, item_id)
     if item is None:
         raise HTTPException(status_code=404, detail="Knowledge item not found")
 
-    for sibling in admin_knowledge_items.list(session, key=item.key):
-        if sibling.id != item.id and sibling.is_active:
-            admin_knowledge_items.update(session, sibling.id, is_active=False)
+    siblings = [
+        s for s in admin_knowledge_items.list(session, key=item.key) if s.id != item.id and s.is_active
+    ]
+    if dry_run or not confirm:
+        record_audit(
+            session,
+            action="admin_knowledge_activate",
+            actor=_actor(request),
+            affected_table="admin_knowledge_items",
+            affected_count=1 + len(siblings),
+            dry_run=True,
+            confirmed=False,
+            success=True,
+            details={
+                "id": item_id,
+                "would_deactivate_ids": [s.id for s in siblings],
+            },
+        )
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Dry-run: would activate item {item_id} and deactivate "
+                f"{len(siblings)} sibling(s). Pass confirm=true&dry_run=false."
+            ),
+        )
 
-    return admin_knowledge_items.update(session, item.id, is_active=True)
+    for sibling in siblings:
+        admin_knowledge_items.update(session, sibling.id, is_active=False)
+
+    updated = admin_knowledge_items.update(session, item.id, is_active=True)
+    record_audit(
+        session,
+        action="admin_knowledge_activate",
+        actor=_actor(request),
+        affected_table="admin_knowledge_items",
+        affected_count=1 + len(siblings),
+        dry_run=False,
+        confirmed=True,
+        success=True,
+        details={"id": item_id, "deactivated_ids": [s.id for s in siblings]},
+    )
+    return updated

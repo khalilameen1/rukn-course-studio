@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import FileResponse
 from sqlmodel import Session, select
 
@@ -125,22 +125,37 @@ def generate_course(
 
 @router.post("/generate/{job_id}/cancel", response_model=GenerationJobRead)
 def cancel_generation(
-    course_id: int, job_id: int, session: Session = Depends(get_session)
+    course_id: int, job_id: int, request: Request, session: Session = Depends(get_session)
 ):
     """Mark an active job canceled and release the generation lock."""
+    from app.services.audit import record_audit
+
     get_course_or_404(session, course_id)
     job = generation_jobs.get(session, job_id)
     if job is None or job.course_id != course_id:
         raise HTTPException(status_code=404, detail="Generation job not found")
     if not is_active_lock_status(job.status):
         return job
-    return generation_jobs.update(
+    updated = generation_jobs.update(
         session,
         job_id,
         status=JobStatus.CANCELED,
         current_stage="canceled",
         last_progress_message="Generation canceled",
     )
+    record_audit(
+        session,
+        action="generation_cancel",
+        actor=getattr(request.state, "username", None),
+        affected_table="generation_jobs",
+        affected_count=1,
+        dry_run=False,
+        confirmed=True,
+        success=True,
+        details={"course_id": course_id, "job_id": job_id},
+    )
+    return updated
+
 
 
 @router.get("/ai-usage", response_model=CourseAIUsage)

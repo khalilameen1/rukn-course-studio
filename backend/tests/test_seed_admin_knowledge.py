@@ -21,7 +21,12 @@ from app.seed_admin_knowledge import (
 
 
 @pytest.fixture()
-def session(tmp_path):
+def session(tmp_path, monkeypatch):
+    from app import models  # noqa: F401 — register AuditLog etc.
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "storage_dir", tmp_path / "storage")
+    (tmp_path / "storage").mkdir(parents=True, exist_ok=True)
     engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
     SQLModel.metadata.create_all(engine)
     with Session(engine) as s:
@@ -117,7 +122,7 @@ def test_refresh_defaults_updates_selected_keys_and_keeps_backup(session):
     old = admin_knowledge_items.list(session, key="rukn_forbidden_phrases")[0]
     admin_knowledge_items.update(session, old.id, content_text='{"phrases":[]}')
 
-    refreshed = refresh_defaults(session)
+    refreshed = refresh_defaults(session, confirmed=True)
     assert "rukn_forbidden_phrases" in refreshed
 
     rows = admin_knowledge_items.list(session, key="rukn_forbidden_phrases")
@@ -162,7 +167,7 @@ def test_refresh_defaults_does_not_touch_unrelated_custom_or_core_keys(session):
         is_active=True,
     )
 
-    refresh_defaults(session)
+    refresh_defaults(session, confirmed=True)
 
     core_after = admin_knowledge_items.list(session, key="rukn_core_rules")
     assert len(core_after) == 1

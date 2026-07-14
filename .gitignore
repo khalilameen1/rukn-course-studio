@@ -18,10 +18,12 @@ storage/uploads/*
 storage/extracted/*
 storage/outputs/*
 storage/templates/*
+storage/backups/**
 !storage/uploads/.gitkeep
 !storage/extracted/.gitkeep
 !storage/outputs/.gitkeep
 !storage/templates/.gitkeep
+!storage/backups/.gitkeep
 
 # Editor / OS
 .DS_Store

@@ -161,13 +161,25 @@ export const api = {
         ? "/admin/knowledge?active_only=false&include_inactive=true"
         : "/admin/knowledge",
     ),
-  cleanupKnowledgeDuplicates: () =>
-    apiFetch<{
-      deactivated_count: number;
+  cleanupKnowledgeDuplicates: (opts?: { dryRun?: boolean; confirm?: boolean }) => {
+    const dryRun = opts?.dryRun ?? true;
+    const confirm = opts?.confirm ?? false;
+    const qs = new URLSearchParams({
+      dry_run: String(dryRun),
+      confirm: String(confirm),
+    });
+    return apiFetch<{
+      deactivated_count?: number;
+      would_deactivate_count?: number;
       message: string;
-      deactivated: unknown[];
+      deactivated?: unknown[];
+      would_deactivate?: unknown[];
       kept_active: unknown[];
-    }>("/admin/knowledge/cleanup-duplicates", { method: "POST" }),
+      applied?: boolean;
+      dry_run?: boolean;
+      backup?: { path: string } | null;
+    }>(`/admin/knowledge/cleanup-duplicates?${qs}`, { method: "POST" });
+  },
   createKnowledgeItem: (payload: AdminKnowledgeCreateInput) =>
     apiFetch<AdminKnowledgeItem>("/admin/knowledge", {
       method: "POST",
@@ -178,12 +190,25 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(payload),
     }),
-  deleteKnowledgeItem: (id: number) =>
-    apiFetch<void>(`/admin/knowledge/${id}`, { method: "DELETE" }),
+  deleteKnowledgeItem: (
+    id: number,
+    opts?: { confirm?: boolean; purge?: boolean; dryRun?: boolean },
+  ) => {
+    const qs = new URLSearchParams({
+      dry_run: String(opts?.dryRun ?? false),
+      confirm: String(opts?.confirm ?? true),
+      purge: String(opts?.purge ?? false),
+    });
+    return apiFetch<{ message: string; applied?: boolean; action?: string }>(
+      `/admin/knowledge/${id}?${qs}`,
+      { method: "DELETE" },
+    );
+  },
   activateKnowledgeItem: (id: number) =>
-    apiFetch<AdminKnowledgeItem>(`/admin/knowledge/${id}/activate`, {
-      method: "POST",
-    }),
+    apiFetch<AdminKnowledgeItem>(
+      `/admin/knowledge/${id}/activate?dry_run=false&confirm=true`,
+      { method: "POST" },
+    ),
 
   // Courses
   listCourses: () => apiFetch<Course[]>("/courses"),
@@ -222,7 +247,10 @@ export const api = {
       body: JSON.stringify(payload),
     }),
   deleteSource: (courseId: number, sourceId: number) =>
-    apiFetch<void>(`/courses/${courseId}/sources/${sourceId}`, { method: "DELETE" }),
+    apiFetch<{ message: string; applied?: boolean }>(
+      `/courses/${courseId}/sources/${sourceId}?dry_run=false&confirm=true`,
+      { method: "DELETE" },
+    ),
   updateSourceCategory: (courseId: number, sourceId: number, sourceCategory: SourceCategory) =>
     apiFetch<CourseSource>(`/courses/${courseId}/sources/${sourceId}`, {
       method: "PATCH",

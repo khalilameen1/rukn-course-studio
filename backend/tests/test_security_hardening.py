@@ -190,7 +190,9 @@ def test_cross_course_source_isolation(tmp_path, monkeypatch):
     )
     assert res.status_code == 404
 
-    res_del = client.delete(f"/courses/{b_id}/sources/{src_id}")
+    res_del = client.delete(
+        f"/courses/{b_id}/sources/{src_id}?dry_run=false&confirm=true"
+    )
     assert res_del.status_code == 404
 
     # List on B must not include A's source
@@ -258,10 +260,13 @@ def test_runaway_hard_cap_raises(tmp_path, monkeypatch):
 
 
 def test_cleanup_dry_run_does_not_mutate(tmp_path, monkeypatch):
+    from app import models  # noqa: F401
     from app.crud import admin_knowledge_items
     from app.generation.admin_knowledge_cleanup import dedupe_admin_knowledge
     from app.models.enums import ItemType
 
+    monkeypatch.setattr(settings, "storage_dir", tmp_path / "storage")
+    (tmp_path / "storage").mkdir(parents=True, exist_ok=True)
     engine = create_engine(f"sqlite:///{tmp_path / 'dedupe.db'}")
     SQLModel.metadata.create_all(engine)
     with Session(engine) as session:

@@ -35,11 +35,22 @@ export default function AdminKnowledgePage() {
   }, [refresh]);
 
   async function handleCleanup() {
-    if (!confirm("Deactivate duplicate active Admin Knowledge items (keep newest per key)?")) {
-      return;
-    }
     try {
-      const report = await api.cleanupKnowledgeDuplicates();
+      const preview = await api.cleanupKnowledgeDuplicates({ dryRun: true, confirm: false });
+      const count =
+        preview.would_deactivate_count ?? preview.deactivated_count ?? 0;
+      if (
+        !confirm(
+          `${preview.message}\n\nApply and deactivate ${count} duplicate(s)? ` +
+            "A JSON backup snapshot will be written first.",
+        )
+      ) {
+        return;
+      }
+      const report = await api.cleanupKnowledgeDuplicates({
+        dryRun: false,
+        confirm: true,
+      });
       alert(report.message);
       await refresh();
     } catch (err) {
@@ -66,8 +77,19 @@ export default function AdminKnowledgePage() {
   }
 
   async function handleDelete(item: AdminKnowledgeItem) {
-    if (!confirm(`Delete "${item.title}"? This cannot be undone.`)) return;
-    await api.deleteKnowledgeItem(item.id);
+    if (
+      !confirm(
+        `Archive "${item.title}" (deactivate)? The row is kept as inactive. ` +
+          "Permanent purge is CLI-only with confirm+purge.",
+      )
+    ) {
+      return;
+    }
+    await api.deleteKnowledgeItem(item.id, {
+      confirm: true,
+      dryRun: false,
+      purge: false,
+    });
     if (editingItem?.id === item.id) setEditingItem(null);
     await refresh();
   }

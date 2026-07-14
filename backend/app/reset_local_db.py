@@ -6,11 +6,12 @@ that were added after the file was first created (`create_all` does not alter
 existing tables).
 
 Local dev only: refuses non-SQLite URLs and `ENVIRONMENT=production`.
+Requires `--confirm` (destructive).
 
 Run from `backend/`:
 
-    python -m app.reset_local_db
-    python -m app.reset_local_db --seed
+    python -m app.reset_local_db --confirm
+    python -m app.reset_local_db --confirm --seed
 """
 
 from __future__ import annotations
@@ -38,10 +39,21 @@ def _sqlite_db_path(database_url: str) -> Path:
     return path
 
 
-def reset_local_db(*, seed: bool = False) -> None:
+def reset_local_db(*, seed: bool = False, confirmed: bool = False) -> None:
     if settings.environment.lower() == "production":
         print("Refusing to reset: ENVIRONMENT is production.", file=sys.stderr)
         sys.exit(1)
+
+    if not confirmed:
+        print(
+            "Refusing to reset without --confirm.\n"
+            "This permanently deletes the local SQLite file and recreates empty tables.\n"
+            "Exact command:\n"
+            "  python -m app.reset_local_db --confirm\n"
+            "  python -m app.reset_local_db --confirm --seed",
+            file=sys.stderr,
+        )
+        sys.exit(2)
 
     db_path = _sqlite_db_path(settings.database_url)
 
@@ -72,12 +84,17 @@ def reset_local_db(*, seed: bool = False) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Reset the local SQLite dev database.")
     parser.add_argument(
+        "--confirm",
+        action="store_true",
+        help="Required. Acknowledge permanent deletion of the local SQLite file.",
+    )
+    parser.add_argument(
         "--seed",
         action="store_true",
         help="Re-run python -m app.seed_admin_knowledge after recreating tables.",
     )
     args = parser.parse_args()
-    reset_local_db(seed=args.seed)
+    reset_local_db(seed=args.seed, confirmed=args.confirm)
 
 
 if __name__ == "__main__":

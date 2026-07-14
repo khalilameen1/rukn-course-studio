@@ -1218,8 +1218,11 @@ def seed(session: Session) -> None:
         print(f"seed  {item['key']}")
 
 
-def refresh_defaults(session: Session) -> list[str]:
+def refresh_defaults(session: Session, *, confirmed: bool = False) -> list[str]:
     """Replace selected system defaults with current SEED_ITEMS content.
+
+    Requires `confirmed=True` (CLI `--confirm`). Before mutation, writes a
+    full Admin Knowledge JSON snapshot under storage/backups/admin_knowledge/.
 
     For each refreshable key that exists in SEED_ITEMS:
     - If no row exists yet, create version 1 (same as normal seed).
@@ -1232,6 +1235,16 @@ def refresh_defaults(session: Session) -> list[str]:
     """
     from datetime import datetime, timezone
 
+    from app.services.admin_knowledge_backup import snapshot_admin_knowledge
+    from app.services.audit import record_audit
+
+    if not confirmed:
+        raise RuntimeError(
+            "refresh_defaults requires confirmed=True "
+            "(CLI: --refresh-defaults --confirm)."
+        )
+
+    backup = snapshot_admin_knowledge(session, reason="refresh_defaults")
     refreshed: list[str] = []
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
@@ -1284,6 +1297,18 @@ def refresh_defaults(session: Session) -> list[str]:
         )
         refreshed.append(key)
 
+    record_audit(
+        session,
+        action="admin_knowledge_refresh_defaults",
+        actor="cli",
+        affected_table="admin_knowledge_items",
+        affected_count=len(refreshed),
+        dry_run=False,
+        confirmed=True,
+        success=True,
+        details={"refreshed_keys": refreshed, "backup_path": backup["path"]},
+    )
+    print(f"backup  {backup['path']}")
     return refreshed
 
 
@@ -1330,7 +1355,7 @@ def main(argv: list[str] | None = None) -> int:
                     "  python -m app.seed_admin_knowledge --refresh-defaults --confirm"
                 )
                 return 2
-            refreshed = refresh_defaults(session)
+            refreshed = refresh_defaults(session, confirmed=True)
             print(f"done  refreshed {len(refreshed)} key(s)")
             return 0
 
