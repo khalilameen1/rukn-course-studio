@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { api } from "@/lib/api";
+import { api, formatApiErrorForDisplay } from "@/lib/api";
 import type { AIUsageSummary } from "@/lib/types";
 import Card from "@/components/ui/Card";
 import EmptyState from "@/components/ui/EmptyState";
@@ -21,9 +21,7 @@ export default function AIUsagePage() {
     api
       .getAIUsageSummary()
       .then(setSummary)
-      .catch((err) =>
-        setError(err instanceof Error ? err.message : "Failed to load AI usage"),
-      )
+      .catch((err) => setError(formatApiErrorForDisplay(err)))
       .finally(() => setLoading(false));
   }, []);
 

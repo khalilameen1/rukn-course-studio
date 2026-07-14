@@ -42,6 +42,7 @@ def test_build_info_route_public_even_with_auth(monkeypatch):
     body = response.json()
     assert "git_commit" in body
     assert "database_type" in body
+    assert isinstance(body.get("api_routes"), list)
     assert "ANTHROPIC_API_KEY" not in response.text
     assert "AUTH_SECRET_KEY" not in response.text
     assert "DATABASE_URL" not in response.text

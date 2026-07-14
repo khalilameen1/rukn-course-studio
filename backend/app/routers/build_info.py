@@ -10,7 +10,8 @@ import os
 from datetime import datetime, timezone
 from functools import lru_cache
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
+from starlette.routing import Route
 
 from app.config import settings
 from app.version import get_app_commit
@@ -59,7 +60,23 @@ def build_info_payload() -> dict:
     }
 
 
+def _registered_api_routes(request: Request) -> list[str]:
+    """Method + path templates only — no handler code, secrets, or params."""
+    out: list[str] = []
+    for route in request.app.routes:
+        if not isinstance(route, Route):
+            continue
+        methods = sorted((route.methods or set()) - {"HEAD"})
+        for method in methods:
+            out.append(f"{method} {route.path}")
+    return sorted(out)
+
+
 @router.get("/build-info")
-def build_info() -> dict:
+def build_info(request: Request) -> dict:
     """Liveness + deploy identity. Public and secret-free."""
-    return build_info_payload()
+    payload = build_info_payload()
+    # Safe diagnostic: confirms generate / ai-usage routes are registered
+    # on the live deploy (method + path templates only).
+    payload["api_routes"] = _registered_api_routes(request)
+    return payload

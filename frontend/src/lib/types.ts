@@ -193,6 +193,8 @@ export interface BuildInfoResponse {
   auth_enabled: boolean;
   ai_provider: string;
   frontend_origin_configured: boolean;
+  /** Safe method+path templates from the live backend (no secrets). */
+  api_routes?: string[];
 }
 
 // Mirrors backend/app/schemas/auth.py DiagnosticsResponse - see

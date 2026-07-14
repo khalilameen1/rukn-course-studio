@@ -30,12 +30,57 @@ import type {
 export class ApiError extends Error {
   status?: number;
   isNetworkError: boolean;
+  method: string;
+  path: string;
+  tokenPresent: boolean;
 
-  constructor(message: string, status?: number, isNetworkError = false) {
+  constructor(
+    message: string,
+    options?: {
+      status?: number;
+      isNetworkError?: boolean;
+      method?: string;
+      path?: string;
+      tokenPresent?: boolean;
+    },
+  ) {
     super(message);
-    this.status = status;
-    this.isNetworkError = isNetworkError;
+    this.status = options?.status;
+    this.isNetworkError = options?.isNetworkError ?? false;
+    this.method = options?.method ?? "GET";
+    this.path = options?.path ?? "";
+    this.tokenPresent = options?.tokenPresent ?? false;
   }
+}
+
+/**
+ * User-facing diagnostics for Generation / AI Usage failures.
+ * Never includes token values or secrets — only whether a token was present.
+ */
+export function formatApiErrorForDisplay(err: unknown): string {
+  if (err instanceof ApiError) {
+    if (err.status === 401) {
+      return "Session expired or not authenticated. Please log in again.";
+    }
+    if (err.status === 404) {
+      return `API route not found: ${err.method} ${err.path}`;
+    }
+    if (err.isNetworkError) {
+      return (
+        `Browser could not reach this endpoint. Check CORS/preflight for ` +
+        `${err.method} ${err.path}. (token=${err.tokenPresent})`
+      );
+    }
+    const statusPart = err.status != null ? `status ${err.status}` : "no status";
+    const detail = err.message?.trim() ? err.message : "Request failed";
+    return (
+      `${err.method} ${err.path} — ${statusPart} — token=${err.tokenPresent} — ${detail}`
+    );
+  }
+  if (err instanceof Error) {
+    return err.message;
+  }
+  return "Request failed";
 }
 
 const LOGIN_PATH = "/auth/login";
@@ -43,14 +88,20 @@ const NETWORK_ERROR_MESSAGE = "Network/CORS/API URL error";
 
 async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
   const isFormData = init.body instanceof FormData;
+  const method = (init.method ?? "GET").toUpperCase();
   const token = getToken();
+  const tokenPresent = Boolean(token);
+  // Only set JSON Content-Type when we actually send a JSON body. Putting
+  // application/json on bare GETs forces an unnecessary CORS preflight.
+  const hasJsonBody = init.body != null && !isFormData;
 
   let res: Response;
   try {
     res = await fetch(`${API_BASE_URL}${path}`, {
       ...init,
+      method,
       headers: {
-        ...(isFormData ? {} : { "Content-Type": "application/json" }),
+        ...(hasJsonBody ? { "Content-Type": "application/json" } : {}),
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
         ...init.headers,
       },
@@ -60,7 +111,12 @@ async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
     // network failures, a wrong/unreachable host, and CORS rejections at
     // the browser level - the browser deliberately gives no more detail
     // than this for CORS failures.
-    throw new ApiError(NETWORK_ERROR_MESSAGE, undefined, true);
+    throw new ApiError(NETWORK_ERROR_MESSAGE, {
+      isNetworkError: true,
+      method,
+      path,
+      tokenPresent,
+    });
   }
 
   if (res.status === 401 && path !== LOGIN_PATH) {
@@ -80,7 +136,12 @@ async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
     } catch {
       // response body wasn't JSON; keep statusText
     }
-    throw new ApiError(detail, res.status);
+    throw new ApiError(detail, {
+      status: res.status,
+      method,
+      path,
+      tokenPresent,
+    });
   }
 
   if (res.status === 204) {
@@ -98,7 +159,9 @@ async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
 // expired session surfaces as a normal in-app error instead of a raw
 // browser error page.
 async function downloadFile(path: string, filename: string): Promise<void> {
+  const method = "GET";
   const token = getToken();
+  const tokenPresent = Boolean(token);
 
   let res: Response;
   try {
@@ -106,7 +169,12 @@ async function downloadFile(path: string, filename: string): Promise<void> {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     });
   } catch {
-    throw new ApiError(NETWORK_ERROR_MESSAGE, undefined, true);
+    throw new ApiError(NETWORK_ERROR_MESSAGE, {
+      isNetworkError: true,
+      method,
+      path,
+      tokenPresent,
+    });
   }
 
   if (res.status === 401) {
@@ -114,7 +182,12 @@ async function downloadFile(path: string, filename: string): Promise<void> {
     if (typeof window !== "undefined") {
       window.location.href = "/login";
     }
-    throw new ApiError("Session expired - redirecting to login", 401);
+    throw new ApiError("Session expired - redirecting to login", {
+      status: 401,
+      method,
+      path,
+      tokenPresent,
+    });
   }
 
   if (!res.ok) {
@@ -125,7 +198,12 @@ async function downloadFile(path: string, filename: string): Promise<void> {
     } catch {
       // response body wasn't JSON; keep statusText
     }
-    throw new ApiError(detail, res.status);
+    throw new ApiError(detail, {
+      status: res.status,
+      method,
+      path,
+      tokenPresent,
+    });
   }
 
   const blob = await res.blob();
@@ -194,7 +272,7 @@ export const api = {
     }),
   deleteKnowledgeItem: (
     id: number,
-    opts?: { confirm?: boolean; purge?: boolean; dryRun?: boolean },
+    opts?: { dryRun?: boolean; confirm?: boolean; purge?: boolean },
   ) => {
     const qs = new URLSearchParams({
       dry_run: String(opts?.dryRun ?? false),
@@ -259,7 +337,7 @@ export const api = {
       body: JSON.stringify({ source_category: sourceCategory }),
     }),
 
-  // Generation
+  // Generation — paths must stay aligned with backend/app/routers/generation.py + jobs.py
   generateCourseMap: (courseId: number) =>
     apiFetch<Course>(`/courses/${courseId}/generate-map`, { method: "POST" }),
   generateCourse: (
@@ -282,6 +360,7 @@ export const api = {
     downloadFile(`/jobs/${jobId}/download-partial`, filename),
 
   // AI Usage Center — estimated app usage only (backend labels it the same way)
+  // Paths: GET /ai-usage/summary, GET /courses/{id}/ai-usage
   getAIUsageSummary: () => apiFetch<AIUsageSummary>("/ai-usage/summary"),
   getCourseAIUsage: (courseId: number) =>
     apiFetch<CourseAIUsage>(`/courses/${courseId}/ai-usage`),

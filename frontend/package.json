@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "check:api-client": "node scripts/check-api-client.mjs"
   },
   "dependencies": {
     "next": "16.2.10",

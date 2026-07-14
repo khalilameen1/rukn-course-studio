@@ -1,8 +1,12 @@
 from contextlib import asynccontextmanager
+import logging
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sqlmodel import Session
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
 
 from app.auth.middleware import AuthMiddleware
 from app.config import settings
@@ -19,6 +23,8 @@ from app.routers import (
     sources,
 )
 from app.seed_admin_knowledge import seed as seed_admin_knowledge
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -59,24 +65,44 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title=settings.app_name, lifespan=lifespan)
 
+
+class CatchUnhandledErrorsMiddleware(BaseHTTPMiddleware):
+    """Turn uncaught handler errors into JSON 500s *inside* the CORS stack.
+
+    FastAPI registers `@app.exception_handler(Exception)` on
+    ServerErrorMiddleware, which sits *outside* CORSMiddleware — so a bare
+    Exception handler still yields 500 responses with no Access-Control-*
+    headers, and the browser reports Network/CORS on generation / AI usage
+    failures. Catching here (inside CORS) keeps those headers on the 500.
+    Never include exception text in the body (may leak paths/SQL).
+    """
+
+    async def dispatch(self, request: Request, call_next):
+        try:
+            return await call_next(request)
+        except Exception:
+            logger.exception("Unhandled error on %s %s", request.method, request.url.path)
+            return JSONResponse(
+                status_code=500,
+                content={"detail": "Internal server error"},
+            )
+
+
 # Starlette's `add_middleware` prepends to the middleware list, so the
-# LAST middleware added ends up OUTERMOST (it sees the request first and
-# the response last) - registering AuthMiddleware first and CORSMiddleware
-# second (not the other way around) is what actually makes CORS the
-# outermost layer. This matters beyond just preflight: AuthMiddleware can
-# short-circuit with its own 401/503 response *without* calling
-# `call_next`, and only requests that pass through CORSMiddleware get
-# CORS response headers added. With CORS outermost, every response -
-# including auth rejections - gets proper CORS headers, so the browser can
-# actually surface the real status/detail to the frontend instead of a
-# generic "Failed to fetch" network error (see app/auth/middleware.py).
+# LAST middleware added ends up OUTERMOST among *user* middleware.
+# Order below → request path: CORS → Auth → CatchUnhandled → routes.
+# Auth short-circuit 401s and CatchUnhandled 500s both return through CORS.
+app.add_middleware(CatchUnhandledErrorsMiddleware)
 app.add_middleware(AuthMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type"],
+    # Authorization + JSON Content-Type trigger browser preflight on
+    # protected POSTs (generate) and GETs (ai-usage). Accept is listed
+    # explicitly so Access-Control-Request-Headers including it succeeds.
+    allow_headers=["Authorization", "Content-Type", "Accept"],
 )
 
 app.include_router(health.router)

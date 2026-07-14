@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { api } from "@/lib/api";
+import { api, formatApiErrorForDisplay } from "@/lib/api";
 import type { GenerationJob, GenerationQualityMode } from "@/lib/types";
 import StatusBadge from "@/components/ui/StatusBadge";
 import {
@@ -287,7 +287,7 @@ export default function GeneratePanel({
         pollJob(started.id);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to start generation");
+      setError(formatApiErrorForDisplay(err));
     } finally {
       setStarting(false);
     }

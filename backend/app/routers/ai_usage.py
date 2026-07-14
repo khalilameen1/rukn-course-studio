@@ -22,6 +22,14 @@ from app.schemas.ai_usage import AIUsageSummary
 router = APIRouter(prefix="/ai-usage", tags=["ai-usage"])
 
 
+def _as_utc(dt: datetime) -> datetime:
+    """Normalize DB datetimes so aware/naive mixes never crash the summary
+    endpoint (SQLite often returns naive; Postgres often returns aware)."""
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
 def _day_start(now: datetime) -> datetime:
     return now.replace(hour=0, minute=0, second=0, microsecond=0)
 
@@ -39,13 +47,29 @@ def usage_summary(session: Session = Depends(get_session)) -> AIUsageSummary:
     now = datetime.now(timezone.utc)
     events = list(session.exec(select(AIUsageEvent)))
 
+    day_start = _day_start(now)
+    month_start = _month_start(now)
     today_total = round(
-        sum((e.estimated_cost_usd or 0.0) for e in events if e.created_at >= _day_start(now)), 6
+        sum(
+            (e.estimated_cost_usd or 0.0)
+            for e in events
+            if e.created_at is not None and _as_utc(e.created_at) >= day_start
+        ),
+        6,
     )
     month_total = round(
-        sum((e.estimated_cost_usd or 0.0) for e in events if e.created_at >= _month_start(now)), 6
+        sum(
+            (e.estimated_cost_usd or 0.0)
+            for e in events
+            if e.created_at is not None and _as_utc(e.created_at) >= month_start
+        ),
+        6,
     )
-    latest_event = max(events, key=lambda e: e.created_at, default=None)
+    latest_event = max(
+        events,
+        key=lambda e: _as_utc(e.created_at) if e.created_at else datetime.min.replace(tzinfo=timezone.utc),
+        default=None,
+    )
 
     latest_error_job = session.exec(
         select(GenerationJob)
