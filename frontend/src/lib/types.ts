@@ -182,6 +182,19 @@ export interface HealthResponse {
   environment: string;
 }
 
+/** Safe deploy identity from GET /build-info (no secrets). */
+export interface BuildInfoResponse {
+  app_name: string;
+  environment: string;
+  backend_version: string;
+  git_commit: string;
+  build_time: string;
+  database_type: string;
+  auth_enabled: boolean;
+  ai_provider: string;
+  frontend_origin_configured: boolean;
+}
+
 // Mirrors backend/app/schemas/auth.py DiagnosticsResponse - see
 // backend/app/auth/diagnostics.py for exactly what is/isn't returned
 // (never a credential, connection string, or API key value).

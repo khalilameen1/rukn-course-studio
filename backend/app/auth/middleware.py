@@ -20,6 +20,7 @@ from app.config import settings
 # (method, path) pairs that never require a token.
 PUBLIC_ROUTES: set[tuple[str, str]] = {
     ("GET", "/health"),
+    ("GET", "/build-info"),
     ("POST", "/auth/login"),
     # Must stay public: it's the tool used to diagnose why login itself is
     # broken (see app/auth/diagnostics.py) - it would be useless if it also

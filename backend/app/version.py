@@ -8,6 +8,7 @@ metadata only, never something a run should fail over.
 
 from __future__ import annotations
 
+import os
 import subprocess
 from functools import lru_cache
 
@@ -18,8 +19,16 @@ UNKNOWN_COMMIT = "unknown"
 
 @lru_cache(maxsize=1)
 def get_app_commit() -> str:
-    """Short git commit hash for `REPO_ROOT`, or "unknown" - computed once
-    per process (the commit can't change while a process is running)."""
+    """Short git commit hash, env override (Render/CI), or "unknown".
+
+    Prefer `GIT_COMMIT_SHA` / `RENDER_GIT_COMMIT` when present so deploys
+    without a `.git` directory still report a useful hash.
+    """
+    for key in ("GIT_COMMIT_SHA", "RENDER_GIT_COMMIT"):
+        env_commit = (os.environ.get(key) or "").strip()
+        if env_commit:
+            return env_commit[:40]
+
     try:
         result = subprocess.run(
             ["git", "rev-parse", "--short", "HEAD"],

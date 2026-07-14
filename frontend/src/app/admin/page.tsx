@@ -9,6 +9,7 @@ import KnowledgeItemForm, {
 import KnowledgeItemGrid from "@/components/admin/KnowledgeItemGrid";
 import EmptyState from "@/components/ui/EmptyState";
 import PageHeader from "@/components/ui/PageHeader";
+import DeployDiagnostics from "@/components/admin/DeployDiagnostics";
 
 export default function AdminKnowledgePage() {
   const [items, setItems] = useState<AdminKnowledgeItem[]>([]);
@@ -105,6 +106,8 @@ export default function AdminKnowledgePage() {
         title="Admin Knowledge Center"
         description="This area is for global ROKN rules that apply to all courses. Course-specific PDFs, transcripts, and maps belong on the course — not here."
       />
+
+      <DeployDiagnostics />
 
       {error ? <p className="text-sm text-red-600 dark:text-red-400">{error}</p> : null}
 

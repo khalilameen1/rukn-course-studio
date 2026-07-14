@@ -315,8 +315,8 @@ export default function NewCoursePage() {
       <Card>
         <SectionPanel label="C. Course Map">
           <p className="mb-3 text-xs text-muted">
-            Write the course map yourself, or generate it from the course brief and course
-            sources. This map belongs only to this course.
+            Write the course map yourself, or generate it from the course brief and sources.
+            This map belongs only to this course.
           </p>
           <textarea
             rows={12}

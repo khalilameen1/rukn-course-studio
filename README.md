@@ -1139,6 +1139,17 @@ cd backend  # if the shell doesn't already start there
 python -m app.seed_admin_knowledge
 ```
 
+### Deploy identity (`GET /build-info`)
+
+Public, secret-free: confirms which backend build Render is serving
+(`git_commit`, `database_type` never the URL, `ai_provider` name only).
+Optional env: `GIT_COMMIT_SHA` (or Render’s `RENDER_GIT_COMMIT`).
+
+```powershell
+Invoke-RestMethod https://<your-backend>.onrender.com/health
+Invoke-RestMethod https://<your-backend>.onrender.com/build-info
+```
+
 ### Production smoke test
 
 `backend/scripts/smoke_test.py` checks `/health`, login, and a protected

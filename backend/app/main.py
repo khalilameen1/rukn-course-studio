@@ -11,6 +11,7 @@ from app.routers import (
     admin_knowledge,
     ai_usage,
     auth,
+    build_info,
     courses,
     generation,
     health,
@@ -79,6 +80,7 @@ app.add_middleware(
 )
 
 app.include_router(health.router)
+app.include_router(build_info.router)
 app.include_router(auth.router)
 app.include_router(admin_knowledge.router)
 app.include_router(courses.router)

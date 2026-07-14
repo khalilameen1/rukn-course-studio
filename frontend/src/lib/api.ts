@@ -4,6 +4,7 @@ import type {
   AdminKnowledgeCreateInput,
   AdminKnowledgeItem,
   AdminKnowledgeUpdateInput,
+  BuildInfoResponse,
   Course,
   CourseCreateInput,
   CourseSource,
@@ -152,6 +153,7 @@ export const api = {
   // block (see app/login/page.tsx) to self-diagnose deployment
   // misconfiguration instead of just showing a generic failure.
   health: () => apiFetch<HealthResponse>("/health"),
+  buildInfo: () => apiFetch<BuildInfoResponse>("/build-info"),
   diagnostics: () => apiFetch<DiagnosticsResponse>("/auth/diagnostics"),
 
   // Admin knowledge (default: active primary only)

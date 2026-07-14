@@ -3,9 +3,14 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import type { GenerationJob, GenerationQualityMode } from "@/lib/types";
-import StatusBadge, { type StatusTone } from "@/components/ui/StatusBadge";
+import StatusBadge from "@/components/ui/StatusBadge";
+import {
+  JOB_STATUS_LABEL,
+  JOB_STATUS_TONE,
+  JOB_TERMINAL_STATUSES,
+} from "@/lib/jobStatusMaps";
 
-const TERMINAL_STATUSES = new Set<GenerationJob["status"]>(["completed", "failed", "partial"]);
+const TERMINAL_STATUSES = JOB_TERMINAL_STATUSES;
 
 const STAGE_LABELS: Record<string, string> = {
   queued: "Preparing course",
@@ -18,6 +23,8 @@ const STAGE_LABELS: Record<string, string> = {
   done: "Done",
   failed: "Failed",
   partial: "Stopped early",
+  paused: "Paused",
+  canceled: "Canceled",
 };
 
 const PROGRESS_STEPS: { key: string; label: string }[] = [
@@ -37,14 +44,6 @@ const ERROR_CATEGORY_LABELS: Record<string, string> = {
   malformed_response: "Unusable response",
   context_too_long: "Content too long",
   unknown: "Unexpected error",
-};
-
-const STATUS_TONE: Record<GenerationJob["status"], StatusTone> = {
-  pending: "neutral",
-  running: "info",
-  partial: "warning",
-  failed: "danger",
-  completed: "success",
 };
 
 const QUALITY_MODE_OPTIONS: {
@@ -133,7 +132,8 @@ function ProgressSteps({ job }: { job: GenerationJob }) {
 }
 
 function GenerationStatusPanel({ job }: { job: GenerationJob }) {
-  const showStoppedInfo = job.status === "partial" || job.status === "failed";
+  const showStoppedInfo =
+    job.status === "partial" || job.status === "failed" || job.status === "canceled";
   const partialAvailable =
     job.partial_docx_available ?? Boolean(job.partial_docx_path);
   const isTerminal = TERMINAL_STATUSES.has(job.status);
@@ -145,7 +145,7 @@ function GenerationStatusPanel({ job }: { job: GenerationJob }) {
     <div className="rounded-lg bg-surface-muted p-4 text-sm">
       <p className="mb-2 font-medium text-foreground">Generation Status</p>
       <div className="flex flex-wrap items-center gap-2">
-        <StatusBadge label={job.status} tone={STATUS_TONE[job.status]} />
+        <StatusBadge label={JOB_STATUS_LABEL[job.status]} tone={JOB_STATUS_TONE[job.status]} />
         {job.generation_quality_mode ? (
           <span className="text-xs text-muted">
             {job.generation_quality_mode === "preview" ? "Preview" : "Premium"}
@@ -294,7 +294,9 @@ export default function GeneratePanel({
   }
 
   const isRunning = job ? !TERMINAL_STATUSES.has(job.status) : false;
-  const hasUnresolvedIssue = job ? job.status === "partial" || job.status === "failed" : false;
+  const hasUnresolvedIssue = job
+    ? job.status === "partial" || job.status === "failed" || job.status === "canceled"
+    : false;
 
   return (
     <div className="flex flex-col gap-4">
