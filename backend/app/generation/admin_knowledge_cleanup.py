@@ -29,11 +29,61 @@ def filter_active_primary(items: list[AdminKnowledgeItem]) -> list[AdminKnowledg
     return primary
 
 
-def dedupe_admin_knowledge(session: Session) -> dict[str, Any]:
+def plan_dedupe_admin_knowledge(session: Session) -> dict[str, Any]:
+    """Preview winners/losers without writing. Safe to call anytime."""
+    items = admin_knowledge_items.list(session)
+    by_key: dict[str, list[AdminKnowledgeItem]] = defaultdict(list)
+    for item in items:
+        if item.is_active:
+            by_key[item.key].append(item)
+
+    would_deactivate: list[dict[str, Any]] = []
+    kept: list[dict[str, Any]] = []
+    for key, group in by_key.items():
+        if len(group) <= 1:
+            if group:
+                kept.append({"id": group[0].id, "key": key, "title": group[0].title})
+            continue
+        group_sorted = sorted(group, key=lambda i: (i.updated_at or i.created_at, i.id or 0))
+        winner = group_sorted[-1]
+        kept.append({"id": winner.id, "key": key, "title": winner.title})
+        for loser in group_sorted[:-1]:
+            would_deactivate.append(
+                {
+                    "id": loser.id,
+                    "key": key,
+                    "title": loser.title,
+                    "version": loser.version,
+                    "action": "would_deactivate_duplicate",
+                }
+            )
+
+    return {
+        "dry_run": True,
+        "applied": False,
+        "would_deactivate_count": len(would_deactivate),
+        "would_deactivate": would_deactivate,
+        "kept_active": kept,
+        "message": (
+            f"Dry-run: would deactivate {len(would_deactivate)} duplicate active item(s). "
+            "No changes made. Pass confirm=true to apply."
+        ),
+    }
+
+
+def dedupe_admin_knowledge(
+    session: Session, *, dry_run: bool = False, confirm: bool = False
+) -> dict[str, Any]:
     """Deactivate duplicate active items for the same key; keep the newest.
 
-    Does not delete rows (archives remain for history). Returns a report.
+    - `dry_run=True` (or missing confirm): report only, no writes.
+    - Destructive write requires `confirm=True` and `dry_run=False`.
+
+    Does not delete rows (archives remain for history).
     """
+    if dry_run or not confirm:
+        return plan_dedupe_admin_knowledge(session)
+
     items = admin_knowledge_items.list(session)
     by_key: dict[str, list[AdminKnowledgeItem]] = defaultdict(list)
     for item in items:
@@ -63,6 +113,8 @@ def dedupe_admin_knowledge(session: Session) -> dict[str, Any]:
             )
 
     return {
+        "dry_run": False,
+        "applied": True,
         "deactivated_count": len(deactivated),
         "deactivated": deactivated,
         "kept_active": kept,

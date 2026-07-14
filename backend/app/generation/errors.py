@@ -23,6 +23,7 @@ _CATEGORIES: tuple[str, ...] = (
     "provider_unavailable",
     "malformed_response",
     "context_too_long",
+    "runaway_guard",
     "unknown",
 )
 
@@ -31,6 +32,8 @@ def classify_provider_error(exc: Exception) -> str:
     """One of `_CATEGORIES` above, defaulting to `"unknown"`."""
     haystack = f"{type(exc).__name__} {exc}".lower()
 
+    if "emergencyrunawayguard" in haystack or "runaway guard" in haystack:
+        return "runaway_guard"
     if "rate limit" in haystack or "ratelimit" in haystack or "429" in haystack:
         return "rate_limit"
     if (
@@ -87,6 +90,9 @@ ERROR_CATEGORY_MESSAGES: dict[str, str] = {
         "Generation stopped after saving completed sections — "
         "the course content became too long for the AI provider to process."
     ),
+    "runaway_guard": (
+        "Stopped by emergency runaway guard after saving completed sections."
+    ),
     "unknown": (
         "Generation stopped after saving completed sections — "
         "an unexpected error occurred."
@@ -117,6 +123,7 @@ ERROR_CATEGORY_MESSAGES_NOTHING_SAVED: dict[str, str] = {
         "Generation failed before anything could be saved — "
         "the course content became too long for the AI provider to process."
     ),
+    "runaway_guard": "Stopped by emergency runaway guard.",
     "unknown": "Generation failed before anything could be saved — an unexpected error occurred.",
 }
 

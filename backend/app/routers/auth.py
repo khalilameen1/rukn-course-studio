@@ -12,9 +12,18 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 @router.post("/login", response_model=LoginResponse)
-def login(payload: LoginRequest) -> LoginResponse:
+def login(payload: LoginRequest, request: Request) -> LoginResponse:
     """Check username/password against ADMIN_USERNAME/ADMIN_PASSWORD and
     return a signed token valid for 7 days. Never logs the password."""
+    from app.security.request_throttle import allow_login_attempt
+
+    client_key = request.client.host if request.client else "unknown"
+    if not allow_login_attempt(client_key):
+        raise HTTPException(
+            status_code=429,
+            detail="Too many login attempts. Try again later.",
+        )
+
     try:
         valid = verify_credentials(payload.username, payload.password)
     except AuthConfigError as exc:

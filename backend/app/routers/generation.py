@@ -5,6 +5,7 @@ from fastapi.responses import FileResponse
 from sqlmodel import Session, select
 
 from app.ai.factory import AIProviderConfigError
+from app.config import settings
 from app.crud import ai_usage_events, course_versions, courses, generation_jobs
 from app.db import get_session
 from app.generation.generation_state import ACTIVE_LOCK_STATUSES, is_active_lock_status
@@ -16,6 +17,8 @@ from app.schemas.ai_usage import CourseAIUsage
 from app.schemas.course import CourseRead
 from app.schemas.course_version import CourseVersionRead
 from app.schemas.generation_job import GenerateCourseRequest, GenerationJobRead
+from app.security.request_throttle import allow_generate_start, record_generate_start
+from app.services.upload_safety import assert_path_under_root
 
 router = APIRouter(prefix="/courses/{course_id}", tags=["generation"])
 
@@ -25,6 +28,13 @@ DOCX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingm
 def _get_active_job(session: Session, course_id: int) -> GenerationJob | None:
     statement = select(GenerationJob).where(
         GenerationJob.course_id == course_id,
+        GenerationJob.status.in_(tuple(ACTIVE_LOCK_STATUSES)),
+    )
+    return session.exec(statement).first()
+
+
+def _get_any_active_job(session: Session) -> GenerationJob | None:
+    statement = select(GenerationJob).where(
         GenerationJob.status.in_(tuple(ACTIVE_LOCK_STATUSES)),
     )
     return session.exec(statement).first()
@@ -60,13 +70,36 @@ def generate_course(
 
     Idempotent: if a pending/running/paused job already exists, return it
     (200) instead of starting a duplicate. New runs return 201.
+
+    Also: one active generation globally (optional), soft per-course debounce
+    against double-click cost burn.
     """
-    course = get_course_or_404(session, course_id)
+    get_course_or_404(session, course_id)
     active = _get_active_job(session, course_id)
     if active is not None:
         response.status_code = 200
         return active
 
+    if getattr(settings, "generation_global_lock", True):
+        other = _get_any_active_job(session)
+        if other is not None:
+            response.status_code = 200
+            return other
+
+    min_interval = float(getattr(settings, "generate_min_interval_seconds", 3.0) or 0)
+    if min_interval > 0 and not allow_generate_start(course_id, min_interval_seconds=min_interval):
+        # Soft throttle: still never start a second Claude run; return
+        # latest job for this course if any, else 429 with clear detail.
+        recent = generation_jobs.list(session, course_id=course_id)
+        if recent:
+            response.status_code = 200
+            return max(recent, key=lambda j: j.id)
+        raise HTTPException(
+            status_code=429,
+            detail="Generation requests are temporarily throttled. Retry shortly.",
+        )
+
+    course = get_course_or_404(session, course_id)
     request = body or GenerateCourseRequest()
     updates: dict = {}
     if course.generation_quality_mode != request.generation_quality_mode:
@@ -81,6 +114,7 @@ def generate_course(
             generation_quality_mode=request.generation_quality_mode,
             web_research_mode=request.web_research_mode,
         )
+        record_generate_start(course_id)
         response.status_code = 201
         return job
     except ValueError as exc:
@@ -163,8 +197,9 @@ def download_latest_version(course_id: int, session: Session = Depends(get_sessi
     if not path.exists():
         raise HTTPException(status_code=404, detail="Output file is missing on disk")
 
+    safe = assert_path_under_root(path, Path(settings.storage_outputs_dir))
     return FileResponse(
-        path,
+        safe,
         media_type=DOCX_MEDIA_TYPE,
         filename=f"course_{course_id}_v{latest.version_number}.docx",
     )

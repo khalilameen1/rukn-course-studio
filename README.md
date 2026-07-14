@@ -931,6 +931,12 @@ ANTHROPIC_API_KEY=<secret, set in Render Dashboard - your real Anthropic API key
 AI_MODEL_NAME=<secret, set in Render Dashboard - check Anthropic's current model list for the exact slug>
 # Optional - defaults to 120 if unset:
 # ANTHROPIC_REQUEST_TIMEOUT_SECONDS=120
+# Optional emergency spend kill-switch (USD). Leave empty/unset to disable:
+# AI_RUNAWAY_HARD_CAP_USD=
+# Soft debounce between new generation starts for the same course (seconds):
+# GENERATE_MIN_INTERVAL_SECONDS=3
+# Only one active generation globally (default true):
+# GENERATION_GLOBAL_LOCK=true
 ```
 
 Switching back to the fake provider at any time is just `AI_PROVIDER=fake`
@@ -947,6 +953,61 @@ SQLITE_DB_PATH=/opt/render/project/src/backend/storage/rukn_course_studio.db
 `ENVIRONMENT`, `STORAGE_DIR`, `AI_PROVIDER`, `AUTH_ENABLED`); the vars marked
 "secret" above (including `DATABASE_URL`) need to be set manually in the
 Dashboard - never commit real credentials into `render.yaml` or `.env`
+
+### Backups before real Claude / schema changes
+
+Before enabling `AI_PROVIDER=anthropic` for real runs, or before any manual
+Postgres schema change:
+
+**Postgres (Option A)** — from a Render Shell on the backend, or any machine
+that can reach the DB with the External Database URL:
+
+```bash
+# Logical backup (safe point-in-time dump). Keep the file off the service disk.
+pg_dump "$DATABASE_URL" --format=custom --file="/tmp/rukn_backup_$(date +%Y%m%d).dump"
+
+# Restore (example) into an empty DB only after verifying you need it:
+# pg_restore --clean --if-exists --no-owner --dbname="$DATABASE_URL" /tmp/rukn_backup_YYYYMMDD.dump
+```
+
+Render Postgres also keeps automatic daily backups on paid plans — confirm
+retention in the Render Dashboard → your Postgres → Backups before destructive
+work.
+
+**Uploaded files + generated DOCX (persistent disk)** — files live under
+`STORAGE_DIR` (default on Render:
+`/opt/render/project/src/backend/storage` with `uploads/`, `extracted/`,
+`outputs/`). Copy that tree to durable storage before wiping the disk or
+resizing:
+
+```bash
+# From Render Shell (backend service), archive the disk contents:
+tar -czf "/tmp/rukn_storage_$(date +%Y%m%d).tar.gz" -C "$STORAGE_DIR" .
+
+# Download via Render disk snapshot tools or scp the archive out of the shell.
+# Do not leave the only copy as `/tmp` on an ephemeral shell session.
+```
+
+**Admin Knowledge cleanup** — destructive duplicate cleanup is dry-run by
+default and requires an explicit confirm:
+
+```bash
+# Preview only (no writes):
+curl -X POST "$API/admin/knowledge/cleanup-duplicates?dry_run=true" -H "Authorization: Bearer $TOKEN"
+
+# Apply (deactivates duplicates; does not delete unique custom keys):
+curl -X POST "$API/admin/knowledge/cleanup-duplicates?dry_run=false&confirm=true" -H "Authorization: Bearer $TOKEN"
+
+# CLI:
+cd backend && python -m scripts.dedupe_admin_knowledge --dry-run
+cd backend && python -m scripts.dedupe_admin_knowledge --confirm
+```
+
+`refresh-defaults` / seed paths never overwrite edited Admin Knowledge rows
+for keys that already exist; inactive backups remain in the DB. Always run
+cleanup dry-run (and take a Postgres dump) before `--confirm` in production.
+
+### Production smoke test
 files. `CORS_ORIGINS` (a JSON array string) still works as an alternative to
 `FRONTEND_ORIGIN` if more than one frontend origin is ever needed - see
 `backend/app/config.py`.

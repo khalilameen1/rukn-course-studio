@@ -4,9 +4,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 from sqlmodel import Session
 
+from app.config import settings
 from app.crud import generation_jobs
 from app.db import get_session
 from app.schemas.generation_job import GenerationJobRead
+from app.services.upload_safety import assert_path_under_root
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
@@ -42,8 +44,9 @@ def download_partial(job_id: int, session: Session = Depends(get_session)):
     if not path.exists():
         raise HTTPException(status_code=404, detail="Partial output file is missing on disk")
 
+    safe = assert_path_under_root(path, Path(settings.storage_outputs_dir))
     return FileResponse(
-        path,
+        safe,
         media_type=DOCX_MEDIA_TYPE,
         filename=f"course_{job.course_id}_job_{job.id}_partial.docx",
     )

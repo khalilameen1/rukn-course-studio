@@ -341,9 +341,35 @@ class WikipediaResearchBackend(ResearchBackend):
         except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, KeyError, OSError):
             return []
 
+    # Hard allowlist — Wikipedia API only (no arbitrary user-supplied hosts).
+    _ALLOWED_HOSTS = frozenset({"en.wikipedia.org"})
+
     def _get(self, url: str) -> str:
-        req = urllib.request.Request(url, headers={"User-Agent": self.USER_AGENT})
-        with urllib.request.urlopen(req, timeout=8) as resp:
+        from app.security.url_safety import UnsafeURLError, assert_safe_public_https_url
+
+        try:
+            safe_url = assert_safe_public_https_url(
+                url, allowed_hostnames=self._ALLOWED_HOSTS
+            )
+        except UnsafeURLError as exc:
+            raise urllib.error.URLError(str(exc)) from exc
+
+        req = urllib.request.Request(safe_url, headers={"User-Agent": self.USER_AGENT})
+
+        class _SafeRedirect(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001
+                try:
+                    assert_safe_public_https_url(
+                        newurl, allowed_hostnames=WikipediaResearchBackend._ALLOWED_HOSTS
+                    )
+                except UnsafeURLError as exc:
+                    raise urllib.error.HTTPError(
+                        newurl, 403, f"Blocked redirect: {exc}", headers, fp
+                    ) from exc
+                return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+        opener = urllib.request.build_opener(_SafeRedirect)
+        with opener.open(req, timeout=8) as resp:
             return resp.read().decode("utf-8", errors="replace")
 
 

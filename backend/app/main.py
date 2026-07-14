@@ -22,6 +22,19 @@ from app.seed_admin_knowledge import seed as seed_admin_knowledge
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    env = (settings.environment or "").strip().lower()
+    productionish = env not in {"development", "dev", "test", "local", ""}
+    if productionish and not settings.auth_enabled:
+        raise RuntimeError(
+            "Refusing to start: ENVIRONMENT looks like production but "
+            "AUTH_ENABLED is false. Set AUTH_ENABLED=true before serving."
+        )
+    if productionish and settings.auth_enabled and not settings.auth_secret_key:
+        raise RuntimeError(
+            "Refusing to start: AUTH_SECRET_KEY is required when auth is "
+            "enabled in production."
+        )
+
     for directory in (
         settings.storage_uploads_dir,
         settings.storage_extracted_dir,

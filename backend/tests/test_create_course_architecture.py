@@ -62,7 +62,7 @@ def test_filter_active_primary_hides_duplicates(session):
     assert primary[-1].id == a2.id
     assert inactive.id not in {p.id for p in primary}
 
-    report = dedupe_admin_knowledge(session)
+    report = dedupe_admin_knowledge(session, dry_run=False, confirm=True)
     assert report["deactivated_count"] >= 1
     active = [i for i in admin_knowledge_items.list(session, key="rukn_core_rules") if i.is_active]
     assert len(active) == 1

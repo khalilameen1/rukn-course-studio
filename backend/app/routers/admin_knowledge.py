@@ -44,12 +44,25 @@ def list_knowledge_items(
 
 
 @router.post("/cleanup-duplicates", response_model=dict)
-def cleanup_duplicate_knowledge(session: Session = Depends(get_session)):
+def cleanup_duplicate_knowledge(
+    session: Session = Depends(get_session),
+    dry_run: bool = Query(
+        True,
+        description="Default true: preview deactivations without writing. "
+        "Set dry_run=false&confirm=true to apply.",
+    ),
+    confirm: bool = Query(
+        False,
+        description="Required true (with dry_run=false) to deactivate duplicates.",
+    ),
+):
     """Deactivate duplicate active items per key; keep latest useful active row.
 
-    Does not delete custom unique keys. Returns a report of what changed.
+    Default is dry-run (no writes). Destructive apply requires confirm=true.
+    Does not delete custom unique keys. Returns a report of what will change
+    or what changed.
     """
-    return dedupe_admin_knowledge(session)
+    return dedupe_admin_knowledge(session, dry_run=dry_run, confirm=confirm)
 
 
 @router.post("", response_model=AdminKnowledgeRead, status_code=201)

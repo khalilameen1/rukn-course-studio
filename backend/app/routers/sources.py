@@ -20,6 +20,8 @@ from app.services.source_analysis import CATEGORY_AVOID_POINTS, analyze_source_t
 from app.services.source_status import POOR_EXTRACTION, READY
 from app.services.upload_safety import (
     assert_allowed_extension,
+    assert_content_matches_extension,
+    assert_declared_mime_ok,
     assert_notes_length,
     assert_path_under_root,
     read_upload_capped,
@@ -97,10 +99,12 @@ async def upload_source(
     get_course_or_404(session, course_id)
 
     suffix = assert_allowed_extension(file.filename)
+    assert_declared_mime_ok(file.content_type)
     safe_name = sanitize_filename(file.filename)
     data = await read_upload_capped(
         file, max_bytes=int(getattr(settings, "max_upload_bytes", 25 * 1024 * 1024))
     )
+    assert_content_matches_extension(data, suffix)
 
     course_dir = settings.storage_uploads_dir / str(course_id)
     course_dir.mkdir(parents=True, exist_ok=True)

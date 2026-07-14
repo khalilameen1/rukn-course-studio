@@ -73,9 +73,10 @@ def test_protected_endpoint_succeeds_with_valid_token():
     login_response = client.post("/auth/login", json={"username": "admin", "password": "s3cret"})
     token = login_response.json()["access_token"]
 
-    response = client.get("/courses", headers={"Authorization": f"Bearer {token}"})
+    response = client.get("/auth/me", headers={"Authorization": f"Bearer {token}"})
 
     assert response.status_code == 200
+    assert response.json()["username"] == "admin"
 
 
 def test_me_returns_current_username_with_valid_token():

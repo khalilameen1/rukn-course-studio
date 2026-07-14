@@ -66,8 +66,13 @@ from app.crud import (
     source_analyses,
 )
 from app.db import engine
-from app.generation.budget_guard import compute_budget_warning
+from app.generation.budget_guard import (
+    EmergencyRunawayGuard,
+    check_runaway_hard_cap,
+    compute_budget_warning,
+)
 from app.generation.errors import classify_provider_error, error_message_for
+from app.security.secret_redaction import redact_secrets
 from app.generation.output_scoring import OutputScoreReport, score_final_course
 from app.generation.pricing import estimate_cost_usd
 from app.generation.creator_persona import (
@@ -403,6 +408,9 @@ def run_generation(
         if refresh_usage:
             job_fields["estimated_usage_summary"] = _estimated_usage_summary(session, job.id)
         job = generation_jobs.update(session, job.id, log_json=logs, **job_fields)
+        if refresh_usage:
+            # Optional emergency hard cap (disabled unless AI_RUNAWAY_HARD_CAP_USD set).
+            check_runaway_hard_cap(session, job_id=job.id, course_id=course_id)
 
     try:
         # --- Steps 1-3: load context -----------------------------------
@@ -1088,7 +1096,14 @@ def run_generation(
         )
 
     except Exception as exc:  # noqa: BLE001 - convert any failure into a FAILED/PARTIAL job
-        logs.append({"step": "error", "message": str(exc)[:300]})
+        # Never persist secrets or full private prompts in log_json.
+        logs.append(
+            {
+                "step": "error",
+                "message": redact_secrets(str(exc)[:300]),
+                "error_type": type(exc).__name__,
+            }
+        )
         category = classify_provider_error(exc)
 
         # `job` is kept current by `flush()` (see `nonlocal job` above), so
@@ -1123,17 +1138,32 @@ def run_generation(
                         ],
                     )
                 except Exception as score_exc:  # noqa: BLE001
-                    logs.append({"step": "output_scoring_failed", "message": str(score_exc)[:200]})
+                    logs.append(
+                        {
+                            "step": "output_scoring_failed",
+                            "message": redact_secrets(str(score_exc)[:200]),
+                        }
+                    )
             except Exception as export_exc:  # noqa: BLE001 - a partial-export
                 # failure must never crash the error path itself; the job
                 # still ends PARTIAL (with course_map_json/
                 # completed_reels_json intact), just without a downloadable
                 # file this time.
-                logs.append({"step": "partial_export_failed", "message": str(export_exc)[:200]})
+                logs.append(
+                    {
+                        "step": "partial_export_failed",
+                        "message": redact_secrets(str(export_exc)[:200]),
+                    }
+                )
 
         status = JobStatus.PARTIAL if has_saved_work else JobStatus.FAILED
         # Budget Guard (§6) - same as the success path, observational only.
         budget_warning = compute_budget_warning(session, course_id)
+        if isinstance(exc, EmergencyRunawayGuard):
+            user_error = "Stopped by emergency runaway guard"
+            category = "runaway_guard"
+        else:
+            user_error = error_message_for(category, has_saved_work=has_saved_work)
         flush(
             status=status,
             current_stage="partial" if has_saved_work else "failed",
@@ -1141,13 +1171,13 @@ def run_generation(
                 partial_score_report.model_dump(mode="json") if partial_score_report else None
             ),
             budget_warning=budget_warning,
-            error_message=error_message_for(category, has_saved_work=has_saved_work),
+            error_message=user_error,
             error_category=category,
             partial_docx_path=partial_docx_path,
             last_progress_message=(
                 PROGRESS_PAUSED if has_saved_work else "Generation stopped"
             ),
-            refresh_usage=True,
+            refresh_usage=False,
         )
 
     return job

@@ -152,5 +152,20 @@ class Settings(BaseSettings):
     ai_course_budget_usd: float | None = None
     ai_warn_at_percent: float = 80.0
 
+    # Optional emergency spend kill-switch (bugs only). Empty/None = disabled.
+    # When estimated spend for a job (or process-wide course spend since job
+    # start tracking via AIUsageEvent for the job) reaches this USD total,
+    # generation stops cleanly with PARTIAL + partial DOCX if available.
+    # Env: AI_RUNAWAY_HARD_CAP_USD
+    ai_runaway_hard_cap_usd: float | None = None
+
+    # Soft debounce between *new* generation starts for the same course
+    # (active-job reuse is still immediate). Env: GENERATE_MIN_INTERVAL_SECONDS
+    generate_min_interval_seconds: float = 3.0
+
+    # When True (default), only one generation job may be active globally
+    # across all courses. Env: GENERATION_GLOBAL_LOCK
+    generation_global_lock: bool = True
+
 
 settings = Settings()

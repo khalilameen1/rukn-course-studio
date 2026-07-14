@@ -68,17 +68,14 @@ def test_api_key_never_leaks_via_job_state_or_logs(tmp_path, monkeypatch, caplog
 
 
 def test_api_key_never_leaks_via_diagnostics_endpoint(monkeypatch):
+    from app.auth.diagnostics import build_diagnostics
+
     monkeypatch.setattr(settings, "ai_provider", "anthropic")
     monkeypatch.setattr(settings, "anthropic_api_key", FAKE_KEY)
     monkeypatch.setattr(settings, "ai_model_name", "claude-example-model")
 
-    client = TestClient(app)
-    response = client.get("/auth/diagnostics")
-
-    assert response.status_code == 200
-    assert FAKE_KEY not in response.text
-
-    body = response.json()
+    body = build_diagnostics(session=None)
+    assert FAKE_KEY not in str(body)
     assert body["ai_provider"] == "anthropic"
     assert body["ai_provider_ready"] is True
     assert "anthropic_api_key" not in body

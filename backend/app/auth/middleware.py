@@ -51,7 +51,22 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if normalized_path != request.url.path:
             request.scope["path"] = normalized_path
 
+        # Fail closed outside local development: never serve AI/cost routes
+        # without auth when ENVIRONMENT looks like production.
+        env = (settings.environment or "").strip().lower()
+        productionish = env not in {"development", "dev", "test", "local", ""}
         if not settings.auth_enabled:
+            if productionish:
+                return JSONResponse(
+                    {
+                        "detail": (
+                            "AUTH_ENABLED is false but ENVIRONMENT is "
+                            f"{settings.environment!r}. Refusing unauthenticated "
+                            "access — set AUTH_ENABLED=true for production."
+                        )
+                    },
+                    status_code=503,
+                )
             return await call_next(request)
 
         # CORS preflight requests carry no Authorization header and must
