@@ -111,6 +111,13 @@ from app.generation.market_evergreen import (
     lesson_market_evergreen_instructions,
     rewrite_script_market_evergreen,
 )
+from app.generation.official_tool_docs import (
+    annotate_dependencies_from_map,
+    compile_official_tool_guidance,
+    rewrite_script_official_tool,
+    run_official_tool_docs_pass,
+    tool_memory_excerpts,
+)
 from app.generation.originality_rights import (
     compile_originality_guidance,
     lesson_originality_instructions,
@@ -451,6 +458,18 @@ def run_generation(
                 )
             )
         prefer_fake = (settings.ai_provider or "fake").strip().lower() == "fake"
+        tool_store = run_official_tool_docs_pass(
+            title=course.title,
+            audience=course.audience,
+            outcome=course.outcome,
+            special_notes=course.special_notes,
+            course_domain=getattr(course, "course_domain", None),
+            map_text=course.manual_map_text or "",
+            allow_fetch=False,
+            prefer_fake=True,
+            course_id=course.id,
+            cached=getattr(course, "official_tool_memory_json", None),
+        )
         try:
             if research_mode == WebResearchMode.AUTONOMOUS_GAP_FILL:
                 flush(
@@ -476,6 +495,39 @@ def run_generation(
                 session,
                 course.id,
                 web_source_memory_json=research_result.web_memory.model_dump(mode="json"),
+            )
+            # Official Tool Documentation Gate — detect tools + focused docs memory.
+            source_snips = [
+                (u.course_source.extracted_text or "")[:1200]
+                for u in usable_sources
+                if (u.course_source.extracted_text or "").strip()
+            ]
+            tool_store = run_official_tool_docs_pass(
+                title=course.title,
+                audience=course.audience,
+                outcome=course.outcome,
+                special_notes=course.special_notes,
+                course_domain=getattr(course, "course_domain", None),
+                map_text=course.manual_map_text or "",
+                source_snippets=source_snips,
+                source_texts_for_conflict=source_snips,
+                cached=getattr(course, "official_tool_memory_json", None),
+                course_id=course.id,
+                prefer_fake=prefer_fake,
+                allow_fetch=research_mode != WebResearchMode.DISABLED,
+            )
+            courses.update(
+                session,
+                course.id,
+                official_tool_memory_json=tool_store.model_dump(mode="json"),
+            )
+            logs.append(
+                {
+                    "step": "official_tool_docs",
+                    "tools": [d.tool_name for d in tool_store.tool_dependencies],
+                    "memory_entries": len(tool_store.entries),
+                    "needs": len(tool_store.needs_logged),
+                }
             )
             flush(
                 current_stage="reading_sources",
@@ -529,8 +581,23 @@ def run_generation(
                     "error": str(research_exc)[:200],
                 }
             )
+            # Still attempt official tool detection without network.
+            tool_store = run_official_tool_docs_pass(
+                title=course.title,
+                audience=course.audience,
+                outcome=course.outcome,
+                special_notes=course.special_notes,
+                course_domain=getattr(course, "course_domain", None),
+                map_text=course.manual_map_text or "",
+                cached=getattr(course, "official_tool_memory_json", None),
+                course_id=course.id,
+                prefer_fake=True,
+                allow_fetch=False,
+            )
 
-        web_source_excerpts_all = _web_facts_as_excerpts(research_result.web_excerpts_text)
+        web_source_excerpts_all = _web_facts_as_excerpts(
+            research_result.web_excerpts_text + tool_memory_excerpts(tool_store)
+        )
 
         # Run snapshot metadata (§2 & §3) - immutable once written here,
         # never touched again for the rest of this run. See
@@ -588,6 +655,7 @@ def run_generation(
             "rukn_target_market_runtime": compile_market_guidance(brief.target_market),
             "rukn_originality_runtime": compile_originality_guidance(),
             "rukn_educational_transform_runtime": compile_educational_transform_guidance(),
+            "rukn_official_tool_docs_runtime": compile_official_tool_guidance(tool_store),
         }
         course_map, map_meta = _build_and_review_course_map(
             provider=provider,
@@ -603,6 +671,15 @@ def run_generation(
             session=session,
             job=job,
             preset=preset_value,
+            official_tool_store=tool_store,
+        )
+        tool_store.tool_dependencies = annotate_dependencies_from_map(
+            tool_store.tool_dependencies, course_map
+        )
+        courses.update(
+            session,
+            course.id,
+            official_tool_memory_json=tool_store.model_dump(mode="json"),
         )
         logs.append(
             {
@@ -1502,6 +1579,7 @@ def _build_course_brief(course: Course) -> CourseBrief:
         generation_preset=course.generation_preset,
         manual_map_text=manual_map,
         target_market=getattr(course, "target_market", None) or TargetMarket.EGYPT,
+        course_domain=getattr(course, "course_domain", None),
     )
 
 
@@ -1634,6 +1712,23 @@ def _local_review_single_reel(
             )
         )
 
+    from app.generation.market_evergreen import _FRAGILE_UI, _BUTTON_CLICK_HEAVY
+
+    if _FRAGILE_UI.search(generated.script_text or "") or _BUTTON_CLICK_HEAVY.search(
+        generated.script_text or ""
+    ):
+        actions.append(
+            ReviewAction(
+                action=ReviewActionType.REWRITE,
+                target_id=generated.reel_id,
+                reason_code="official_tool_fragile_ui",
+                instruction=(
+                    "Replace fragile UI button/menu geography with durable goals "
+                    "and feature categories; verify current placement in official help."
+                ),
+            )
+        )
+
     for instruction in lesson_originality_instructions(
         generated.script_text,
         source_texts=source_texts,
@@ -1679,6 +1774,7 @@ def _build_and_review_course_map(
     session: Session | None = None,
     job: GenerationJob | None = None,
     preset: str | None = None,
+    official_tool_store: object | None = None,
 ) -> tuple[CourseMap, dict]:
     """Two-pass Final Course Map before any lesson scripts.
 
@@ -1726,6 +1822,7 @@ def _build_and_review_course_map(
         quality_mode=quality_mode,
         relax_floor=relax,
         target_market=brief.target_market,
+        official_tool_store=official_tool_store,
     )
 
     progress(PROGRESS_MAP_REBUILD)
@@ -1972,6 +2069,7 @@ def _write_and_review_reel(
 
     cleaned = strip_untrusted_fences_for_docx(cleaned)
     cleaned = rewrite_script_market_evergreen(cleaned, target_market=target_market)
+    cleaned = rewrite_script_official_tool(cleaned)
     cleaned = rewrite_script_originality(
         cleaned, source_texts=source_texts, target_market=target_market
     )

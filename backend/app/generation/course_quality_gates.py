@@ -16,6 +16,10 @@ from app.generation.market_evergreen import (
     MARKET_EVERGREEN_DOCX_LEAKS,
     apply_market_evergreen_to_final_course,
 )
+from app.generation.official_tool_docs import (
+    OFFICIAL_TOOL_DOCX_LEAKS,
+    apply_official_tool_to_final_course,
+)
 from app.generation.originality_rights import (
     ORIGINALITY_DOCX_LEAKS,
     apply_originality_to_final_course,
@@ -505,6 +509,41 @@ def _refresh_full_text(course: FinalCourse) -> FinalCourse:
     return course.model_copy(update={"full_text": "\n".join(parts)})
 
 
+def gate_official_tool_docs(
+    course: FinalCourse,
+    brief: CourseBrief,
+    report: CourseGateReport,
+) -> FinalCourse:
+    """Silent Official Tool Documentation Gate — strip leaks, soften fragile UI."""
+    before = course.full_text or ""
+    updated = apply_official_tool_to_final_course(course)
+    hay = (updated.full_text or "").lower()
+    for leak in OFFICIAL_TOOL_DOCX_LEAKS:
+        if leak.lower() in hay:
+            report.issues.append(
+                GateIssue(
+                    gate="official_tool_docs",
+                    code="official_docs_leak",
+                    detail=f"stripped leak cue: {leak}",
+                )
+            )
+            updated = apply_official_tool_to_final_course(updated)
+            break
+    if (updated.full_text or "") != before:
+        report.remediations.append("official_tool_docs_silent_rewrite")
+    # Domain-only signal (internal): tools likely present from title.
+    blob = f"{brief.title} {brief.outcome} {brief.course_domain or ''}".lower()
+    if any(k in blob for k in ("ads", "shopify", "canva", "wordpress", "chatgpt", "claude")):
+        report.issues.append(
+            GateIssue(
+                gate="official_tool_docs",
+                code="tool_course_flag",
+                detail="tool-dependent course — official docs gate applied silently",
+            )
+        )
+    return updated
+
+
 def run_course_quality_gates(
     *,
     final_course: FinalCourse,
@@ -525,6 +564,7 @@ def run_course_quality_gates(
     course = gate_repetition(course, report)
     course = gate_course_ending(course, report)
     course = gate_market_and_evergreen(course, brief, report)
+    course = gate_official_tool_docs(course, brief, report)
     course = gate_originality_rights(
         course, brief, report, source_texts=source_texts
     )
@@ -536,7 +576,7 @@ def run_course_quality_gates(
             i.code
             for i in report.issues
             if i.code
-            not in {"spoken_rewrite_applied"}  # remediation ack, not a blocker signal
+            not in {"spoken_rewrite_applied", "tool_course_flag"}  # soft signals
         }
     )
     # Deduplicate rebuilt ids

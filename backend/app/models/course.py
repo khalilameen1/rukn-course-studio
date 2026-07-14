@@ -65,6 +65,10 @@ class Course(SQLModel, table=True):
     web_source_memory_json: Optional[dict[str, Any]] = Field(
         default=None, sa_column=Column(JSON, nullable=True)
     )
+    # Official Tool Documentation Gate memory (internal) — tools + docs notes.
+    official_tool_memory_json: Optional[dict[str, Any]] = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
     status: str = Field(default="draft")
     active_rules_snapshot_json: Optional[dict[str, Any]] = Field(
         default=None, sa_column=Column(JSON, nullable=True)

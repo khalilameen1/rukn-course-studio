@@ -171,8 +171,14 @@ def local_map_review_feedback(
     quality_mode: GenerationQualityMode,
     relax_floor: bool,
     target_market: TargetMarket = TargetMarket.EGYPT,
+    official_tool_store: object | None = None,
 ) -> list[str]:
     """Compact Student / Critic / Mentor shaped map feedback (no essays)."""
+    from app.generation.official_tool_docs import (
+        OfficialToolMemoryStore,
+        map_official_tool_feedback,
+    )
+
     feedback: list[str] = []
     report = analyze_map_duration(
         course_map, quality_mode=quality_mode, relax_floor=relax_floor
@@ -181,6 +187,11 @@ def local_map_review_feedback(
     feedback.extend(
         map_market_evergreen_feedback(course_map, target_market=target_market)
     )
+    store = official_tool_store
+    if isinstance(store, dict):
+        store = OfficialToolMemoryStore.model_validate(store)
+    if isinstance(store, OfficialToolMemoryStore):
+        feedback.extend(map_official_tool_feedback(course_map, store))
 
     # Student Confusion Layer — progression / prerequisites.
     if len(course_map.modules) >= 2:

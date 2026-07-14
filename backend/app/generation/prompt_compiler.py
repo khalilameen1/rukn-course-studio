@@ -87,6 +87,7 @@ _STAGE_RULE_KEYS: dict[PipelineStage, tuple[str, ...]] = {
         "rukn_student_confusion_layer",
         "rukn_master_mentor_engine",
         "rukn_market_evergreen_gates",
+        "rukn_official_tool_docs_gate",
         "rukn_originality_rights_gate",
         "rukn_cost_hygiene_trusted_knowledge",
     ),
@@ -102,6 +103,7 @@ _STAGE_RULE_KEYS: dict[PipelineStage, tuple[str, ...]] = {
         "rukn_master_mentor_engine",
         "rukn_teleprompter_docx_contract",
         "rukn_market_evergreen_gates",
+        "rukn_official_tool_docs_gate",
         "rukn_originality_rights_gate",
         "rukn_cost_hygiene_trusted_knowledge",
     ),
@@ -116,6 +118,7 @@ _STAGE_RULE_KEYS: dict[PipelineStage, tuple[str, ...]] = {
         "rukn_forbidden_phrases",
         "rukn_quality_rubric",
         "rukn_market_evergreen_gates",
+        "rukn_official_tool_docs_gate",
         "rukn_originality_rights_gate",
         "rukn_cost_hygiene_trusted_knowledge",
     ),
@@ -130,6 +133,7 @@ _STAGE_RULE_KEYS: dict[PipelineStage, tuple[str, ...]] = {
         "rukn_forbidden_phrases",
         "rukn_quality_rubric",
         "rukn_market_evergreen_gates",
+        "rukn_official_tool_docs_gate",
         "rukn_originality_rights_gate",
     ),
     PipelineStage.REVIEW_MODULE: (
@@ -143,6 +147,7 @@ _STAGE_RULE_KEYS: dict[PipelineStage, tuple[str, ...]] = {
         "rukn_forbidden_phrases",
         "rukn_quality_rubric",
         "rukn_market_evergreen_gates",
+        "rukn_official_tool_docs_gate",
         "rukn_originality_rights_gate",
     ),
     PipelineStage.REVIEW_TWO_MODULES: (
@@ -156,6 +161,7 @@ _STAGE_RULE_KEYS: dict[PipelineStage, tuple[str, ...]] = {
         "rukn_forbidden_phrases",
         "rukn_quality_rubric",
         "rukn_market_evergreen_gates",
+        "rukn_official_tool_docs_gate",
         "rukn_originality_rights_gate",
     ),
     PipelineStage.FINAL_REVIEW: (
@@ -169,6 +175,7 @@ _STAGE_RULE_KEYS: dict[PipelineStage, tuple[str, ...]] = {
         "rukn_master_mentor_engine",
         "rukn_teleprompter_docx_contract",
         "rukn_market_evergreen_gates",
+        "rukn_official_tool_docs_gate",
         "rukn_originality_rights_gate",
     ),
     PipelineStage.REBUILD_FINAL_COURSE: (
@@ -182,6 +189,7 @@ _STAGE_RULE_KEYS: dict[PipelineStage, tuple[str, ...]] = {
         "rukn_forbidden_phrases",
         "rukn_teleprompter_docx_contract",
         "rukn_market_evergreen_gates",
+        "rukn_official_tool_docs_gate",
         "rukn_originality_rights_gate",
     ),
 }
@@ -227,6 +235,7 @@ STABLE_RULE_KEYS: tuple[str, ...] = (
     "rukn_student_confusion_layer",
     "rukn_master_mentor_engine",
     "rukn_market_evergreen_gates",
+        "rukn_official_tool_docs_gate",
     "rukn_originality_rights_gate",
 )
 

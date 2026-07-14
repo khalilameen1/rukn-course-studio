@@ -148,6 +148,7 @@ def _ensure_course_columns() -> None:
         "target_market": "TEXT DEFAULT 'egypt'",
         "web_source_memory_json": "TEXT",
         "course_domain": "TEXT",
+        "official_tool_memory_json": "TEXT",
     }
     try:
         inspector = inspect(engine)

@@ -114,7 +114,36 @@ def generate_and_save_course_map(
         cached_web_memory=getattr(course, "web_source_memory_json", None),
         course_id=course.id,
     )
-    web_excerpts = _web_facts_as_excerpts(research_result.web_excerpts_text)
+    from app.generation.official_tool_docs import (
+        annotate_dependencies_from_map,
+        compile_official_tool_guidance,
+        run_official_tool_docs_pass,
+        tool_memory_excerpts,
+    )
+
+    source_snips = [m.summary for m in memory_items]
+    tool_store = run_official_tool_docs_pass(
+        title=course.title,
+        audience=course.audience,
+        outcome=course.outcome,
+        special_notes=course.special_notes,
+        course_domain=getattr(course, "course_domain", None),
+        map_text=course.manual_map_text or "",
+        source_snippets=source_snips,
+        cached=getattr(course, "official_tool_memory_json", None),
+        course_id=course.id,
+        prefer_fake=prefer_fake,
+        allow_fetch=research_mode != WebResearchMode.DISABLED,
+    )
+    courses.update(
+        session,
+        course_id,
+        web_source_memory_json=research_result.web_memory.model_dump(mode="json"),
+        official_tool_memory_json=tool_store.model_dump(mode="json"),
+    )
+    web_excerpts = _web_facts_as_excerpts(
+        research_result.web_excerpts_text + tool_memory_excerpts(tool_store)
+    )
     # Clear manual map so the provider builds from brief+sources (two-pass).
     brief = _build_course_brief(course)
     brief = brief.model_copy(update={"manual_map_text": None})
@@ -132,6 +161,7 @@ def generate_and_save_course_map(
         "rukn_target_market_runtime": compile_market_guidance(brief.target_market),
         "rukn_originality_runtime": compile_originality_guidance(),
         "rukn_educational_transform_runtime": compile_educational_transform_guidance(),
+        "rukn_official_tool_docs_runtime": compile_official_tool_guidance(tool_store),
     }
     course_map, _meta = _build_and_review_course_map(
         provider=provider,
@@ -140,8 +170,17 @@ def generate_and_save_course_map(
         rules_context=map_rules,
         course_creator_persona=compact_course_persona(persona),
         quality_mode=quality_mode,
+        official_tool_store=tool_store,
+    )
+    tool_store.tool_dependencies = annotate_dependencies_from_map(
+        tool_store.tool_dependencies, course_map
     )
     map_text = format_course_map_text(course_map)
-    course = courses.update(session, course_id, manual_map_text=map_text)
+    course = courses.update(
+        session,
+        course_id,
+        manual_map_text=map_text,
+        official_tool_memory_json=tool_store.model_dump(mode="json"),
+    )
     assert course is not None
     return course, map_text

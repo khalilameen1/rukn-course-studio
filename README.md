@@ -423,7 +423,10 @@ Before DOCX export, Rukn runs local gates (no new agents):
    budgets, WhatsApp/FB/IG; no US/EU-translated fluff (unless market is global/custom)
 8. **Evergreen durability** — principles over exact salaries/prices/dates/UI
    button positions; demos support lessons, they are not button-click tutorials
-9. **Originality + rights** — sources are knowledge only (facts/concepts), never
+9. **Official Tool Documentation Gate** — tool-dependent courses consult
+   current official docs/help (not old courses/blogs) before finalizing the
+   map and tool lessons; Official Tool Memory is reused; DOCX stays clean
+10. **Originality + rights** — sources are knowledge only (facts/concepts), never
    writing templates; no close paraphrase, catchphrases, distinctive examples,
    or creator imitation; free/public sources still not free to copy
 

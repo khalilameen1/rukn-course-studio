@@ -44,6 +44,7 @@ class CourseBrief(BaseModel):
     generation_preset: GenerationPreset = GenerationPreset.BALANCED
     manual_map_text: str | None = None
     target_market: TargetMarket = TargetMarket.EGYPT
+    course_domain: str | None = None
 
 
 class SourceExcerpt(BaseModel):

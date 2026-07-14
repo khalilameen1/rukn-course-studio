@@ -263,6 +263,37 @@ class FakeResearchBackend(ResearchBackend):
         if WEAK_CLAIM_CUES.search(query):
             return []
         authority = "high" if sensitive else "standard"
+        q = (query or "").lower()
+        if "official documentation" in q or "help center" in q:
+            tool = "the platform"
+            for name in (
+                "meta ads",
+                "google ads",
+                "tiktok",
+                "shopify",
+                "canva",
+                "wordpress",
+                "chatgpt",
+                "claude",
+            ):
+                if name in q:
+                    tool = name.title() if name != "meta ads" else "Meta Ads"
+                    break
+            return [
+                WebFact(
+                    title=f"{tool} Help Center — current workflow",
+                    summary=(
+                        f"Official current guidance for {tool}: create work from the "
+                        f"primary campaign/create area; use Objectives and settings "
+                        f"categories rather than memorizing button geography. Some older "
+                        f"manual multi-step flows are automated or renamed — teach the "
+                        f"goal and where to verify in Help, not obsolete click paths."
+                    ),
+                    url="https://docs.example.official/help",
+                    authority="high",
+                    query=query,
+                )
+            ]
         return [
             WebFact(
                 title=f"Trusted overview: {query}",

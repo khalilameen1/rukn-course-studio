@@ -97,6 +97,12 @@ TELEPROMPTER_FORBIDDEN_SUBSTRINGS: tuple[str, ...] = (
     "originality note",
     "copyright note",
     "paraphrased from",
+    "official docs",
+    "official documentation",
+    "according to official",
+    "help center says",
+    "official tool memory",
+    "tool_dependencies",
     # V1: no Production Pack / asset / design leakage
     "production pack",
     "asset brief",

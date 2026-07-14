@@ -1086,6 +1086,38 @@ DOCX = title + module/lesson headings + spoken transcript only.
 """,
     },
     {
+        "key": "rukn_official_tool_docs_gate",
+        "title": "ROKN Official Tool Documentation Gate",
+        "item_type": ItemType.MARKDOWN,
+        "content_text": """# Official Tool Documentation Gate
+
+When a course depends on a current tool/platform (Meta Ads, Google Ads,
+TikTok Ads, Canva, Shopify, WooCommerce, WordPress, CapCut, Notion,
+ChatGPT, Claude, etc.), current official documentation is the authority
+for tool behavior — not old uploaded courses, books, blogs, or YouTube.
+
+## Before finalizing the course map
+- Detect tool dependencies from title, brief, course_domain, sources, map.
+- Create focused Official Docs Research Needs (tool + feature area only).
+- Prefer official docs / help center / changelog / academy over blogs/forums.
+- If old sources teach outdated workflows: remove, merge, shorten, or reframe
+  lessons around durable principles and current official behavior.
+- Do not spend whole modules on steps the platform now automates.
+
+## Before writing tool-dependent lessons
+- Reuse Official Tool Memory when fresh for the same tool/feature.
+- Teach goals + feature categories + how to verify in Help if UI moves.
+- Forbidden in spoken script: exact fragile button geography, docs URLs,
+  “according to official docs”, research notes, citations.
+
+## Authority
+Official current docs beat old courses/PDFs/tutorials/model memory for
+current tool facts. Old sources may still donate principles only.
+
+Silent influence only — Teleprompter DOCX remains spoken transcript.
+""",
+    },
+    {
         "key": "rukn_originality_rights_gate",
         "title": "ROKN Originality + Rights Gate",
         "item_type": ItemType.MARKDOWN,
@@ -1170,6 +1202,7 @@ REQUIRED_KEYS: set[str] = {
     "rukn_student_confusion_layer",
     "rukn_master_mentor_engine",
     "rukn_market_evergreen_gates",
+    "rukn_official_tool_docs_gate",
     "rukn_originality_rights_gate",
     "rukn_cost_hygiene_trusted_knowledge",
     "rukn_generation_presets",
@@ -1189,6 +1222,7 @@ REFRESHABLE_DEFAULT_KEYS: tuple[str, ...] = (
     "rukn_master_mentor_engine",
     "rukn_teleprompter_docx_contract",
     "rukn_market_evergreen_gates",
+    "rukn_official_tool_docs_gate",
     "rukn_originality_rights_gate",
     "rukn_cost_hygiene_trusted_knowledge",
     "rukn_source_authority_firewall",
