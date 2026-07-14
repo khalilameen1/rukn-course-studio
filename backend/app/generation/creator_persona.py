@@ -82,7 +82,8 @@ def plan_course_creator_persona(
         ),
         things_this_persona_would_never_do=(
             "Imitate a named creator; copy catchphrases or signature lines; clone "
-            "hook/ending formulas; turn flow_reference into a template; overhype "
+            "hook/ending formulas; turn Natural Colloquial Calibration "
+            "(flow_reference) into a hook/viral/structure/pacing template; overhype "
             "ordinary points; announce next-reel cliffhangers; sell the course."
         ),
         common_bad_advice_to_challenge_if_true=(
@@ -207,7 +208,8 @@ def plan_lesson_persona_state(
     )
     fake_risk = (
         "Overhyping an ordinary spine lesson; AI slang; named-creator mimicry; "
-        "sales urgency; forced cliffhangers; copying flow_reference catchphrases."
+        "sales urgency; forced cliffhangers; copying Natural Colloquial Calibration "
+        "catchphrases or openings."
     )
 
     return LessonPersonaState(

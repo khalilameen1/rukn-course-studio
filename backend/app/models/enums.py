@@ -32,11 +32,14 @@ class SourceCategory(str, Enum):
       extract, summarize, and rephrase into Rukn's style. Preserve factual
       accuracy; never copy long passages verbatim. Replaces the old
       MAIN_CONTENT and SUPPORTING categories (the "what" of a course).
-    - FLOW_REFERENCE: a style/flow/speaking reference - it's about HOW
-      something is said, not WHAT is said (hook pattern, pacing,
-      transitions, escalation, ending style, human-naturalness). Never
-      treated as a factual source; never copied verbatim, including
-      catchphrases/signature lines. Replaces the old SPOKEN_STYLE category.
+    - FLOW_REFERENCE: Natural Colloquial Calibration (storage key stays
+      `flow_reference`). Off-topic / unrelated spoken samples used only to
+      calibrate natural Egyptian/Arabic speech so scripts do not sound
+      translated, stiff, robotic, or artificial. NOT a professional speaking
+      reference, flow/structure reference, teaching ideal, hook/pacing model,
+      or course-planning input. Never facts/claims/examples/terminology;
+      never assume the speaker is good; never copy messy structure.
+      Replaces the old SPOKEN_STYLE category.
     - OLD_COURSE: a previous course, to understand its structure/strengths/
       weaknesses. Reuse what's useful, avoid its weak parts; don't blindly
       summarize it. Prep for future fusion logic, but no fusion logic

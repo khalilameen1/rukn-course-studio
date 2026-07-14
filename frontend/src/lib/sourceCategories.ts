@@ -18,8 +18,9 @@ export const SOURCE_CATEGORY_OPTIONS: SourceCategoryOption[] = [
   },
   {
     value: "flow_reference",
-    label: "Flow / style reference",
-    helper: "A speaking/flow example — used for pacing and tone only, never treated as facts.",
+    label: "Natural spoken language sample",
+    helper:
+      "Use this when the transcript may be unrelated to the course. It only helps the script sound naturally spoken, not translated or robotic. It will not be used for facts, hooks, course structure, or examples.",
   },
   {
     value: "old_course",

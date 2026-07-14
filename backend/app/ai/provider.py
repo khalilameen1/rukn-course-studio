@@ -55,16 +55,13 @@ class SourceExcerpt(BaseModel):
 
     `text` is the compact content field - extracted-knowledge
     summary/chunks for `scientific_reference`/`old_course`/`raw_material`,
-    a serialized flow profile for `flow_reference`, full text for
+    a serialized Natural Colloquial Calibration profile for `flow_reference`, full text for
     `user_notes`. `allowed_use`/`disallowed_use`/`style_contamination_warning`
     are the "Source Authority Firewall" metadata (see
-    app/generation/prompt_compiler.py): they label exactly what a source
-    may and may never be used for, so no uploaded source can ever define
-    Rukn's language, format, or structure - that authority comes only from
-    Admin Knowledge and explicit user instructions. All three default to
-    "nothing set" so existing callers/tests that build a `SourceExcerpt`
-    directly (without going through `compile_source_context`) keep working
-    unchanged.
+    app/generation/prompt_compiler.py). `authority_type` is the Knowledge
+    Priority Ladder lane (`product_output` / `factual_domain` / `user_intent` /
+    `natural_colloquial_calibration`) so sources are never blended as equal authority.
+    All of these default to empty/None so existing callers keep working.
     """
 
     source_id: int
@@ -74,6 +71,7 @@ class SourceExcerpt(BaseModel):
     allowed_use: list[str] = Field(default_factory=list)
     disallowed_use: list[str] = Field(default_factory=list)
     style_contamination_warning: str | None = None
+    authority_type: str | None = None
 
 
 class PriorReelSummary(BaseModel):

@@ -119,7 +119,8 @@ def check_creator_persona_script(
                 target_id=reel_id,
                 detail=(
                     f"Flow/template residue '{hit}' must not appear in spoken script; "
-                    "flow_reference informs mechanics only."
+                    "Natural Colloquial Calibration (flow_reference) informs language "
+                    "naturalness only — never hooks, pacing models, or structure."
                 ),
             )
         )

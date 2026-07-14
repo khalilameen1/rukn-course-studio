@@ -124,6 +124,7 @@ class OfficialToolMemoryStore(BaseModel):
     entries: list[OfficialToolMemoryEntry] = Field(default_factory=list)
     needs_logged: list[dict[str, Any]] = Field(default_factory=list)
     outdated_source_flags: list[dict[str, Any]] = Field(default_factory=list)
+    authority_conflicts: list[dict[str, Any]] = Field(default_factory=list)
 
     def find(
         self, tool_name: str, feature_area: str = ""
@@ -416,21 +417,35 @@ def map_official_tool_feedback(
             lower = blob.lower()
             if _FRAGILE_UI.search(blob) or _BUTTON_CLICK_HEAVY.search(blob):
                 if any(t in lower for t in tool_names):
+                    from app.generation.knowledge_priority_ladder import (
+                        preserve_user_intent_correct_outdated_tool,
+                    )
+
+                    guidance, conflict = preserve_user_intent_correct_outdated_tool(
+                        user_intent=reel.purpose or course_map.main_thread or "learner outcome",
+                        outdated_detail=f"fragile UI path in lesson '{reel.title}'",
+                        current_behavior_hint=(
+                            "current official workflow principles for the tool"
+                        ),
+                    )
+                    store.authority_conflicts = list(store.authority_conflicts or []) + [
+                        conflict.model_dump(mode="json")
+                    ]
                     feedback.append(
-                        f"Rebuild lesson '{reel.title}': replace fragile UI/menu paths "
-                        "with current official workflow principles for the tool; "
-                        "shorten or merge steps the platform now automates."
+                        f"Rebuild lesson '{reel.title}': {guidance}"
                     )
             # Exact "legacy / old dashboard" teaching as permanent module.
             if re.search(r"\b(old dashboard|legacy ads manager|classic editor only)\b", blob, re.I):
                 feedback.append(
                     f"Reframe or remove outdated tool lesson '{reel.title}' "
-                    "— prefer current official workflow."
+                    "— prefer current official workflow. Preserve user intent; "
+                    "do not copy the outdated step."
                 )
     if store.outdated_source_flags:
         feedback.append(
             "Uploaded old-course material conflicts with official tool docs for some UI steps — "
-            "keep principles only; rebuild map lessons from current official behavior."
+            "keep principles only; rebuild map lessons from current official behavior. "
+            "Official docs win; never mention the conflict in DOCX."
         )
     return feedback
 
@@ -447,6 +462,8 @@ def lesson_official_tool_instructions(store: OfficialToolMemoryStore | None) -> 
 
 def rewrite_script_official_tool(script: str) -> str:
     """Silent rewrite: strip docs leaks + soften fragile UI positions."""
+    from app.generation.knowledge_priority_ladder import strip_conflict_notes_from_script
+
     text = script or ""
     for leak in OFFICIAL_TOOL_DOCX_LEAKS:
         text = re.sub(re.escape(leak), "", text, flags=re.IGNORECASE)
@@ -471,6 +488,7 @@ def rewrite_script_official_tool(script: str) -> str:
     ]
     for pattern, repl in replacements:
         text = pattern.sub(repl, text)
+    text = strip_conflict_notes_from_script(text)
     text = re.sub(r"\n{3,}", "\n\n", text)
     text = re.sub(r"[ \t]{2,}", " ", text)
     return text.strip()
@@ -531,6 +549,14 @@ def run_official_tool_docs_pass(
     store.outdated_source_flags = flag_outdated_old_course_overlap(
         source_texts=source_texts_for_conflict or source_snippets or [],
         memory=store,
+    )
+    from app.generation.knowledge_priority_ladder import (
+        conflicts_from_outdated_tool_flags,
+        conflicts_to_log_dicts,
+    )
+
+    store.authority_conflicts = conflicts_to_log_dicts(
+        conflicts_from_outdated_tool_flags(store.outdated_source_flags)
     )
 
     backend = research_backend

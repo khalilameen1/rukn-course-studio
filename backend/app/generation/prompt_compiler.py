@@ -5,20 +5,19 @@
   prompt regardless of relevance.
 - `compile_source_context`: turns raw source material into a bounded list
   of `SourceExcerpt`s, with category-aware handling (factual extraction vs.
-  a style/flow heuristic profile vs. verbatim user notes) and a simple
-  total-character budget so a handful of huge/low-priority sources can
-  never blow up prompt size.
+  a Natural Colloquial Calibration heuristic profile vs. verbatim user notes)
+  and a simple total-character budget so a handful of huge/low-priority
+  sources can never blow up prompt size.
 
 Both functions are pure (no DB session, no I/O, no orchestrator import) so
 they're trivially unit-testable. `app/generation/orchestrator.py` imports
 this module - this module never imports the orchestrator.
 
-`flow_reference` handling is a deliberately plain heuristic (regex/stdlib
-string analysis only, no ML/NLP libraries) that describes a source's
-*rhythm and delivery pattern* instead of summarizing its content - good
-enough for the fake-provider era. A real AI provider could eventually
-replace `_build_flow_profile_text` with genuine stylistic analysis without
-changing this module's public interface.
+`flow_reference` (Natural Colloquial Calibration) handling is a deliberately
+plain heuristic (regex/stdlib string analysis only, no ML/NLP libraries)
+that estimates natural spoken Egyptian/Arabic language signals — never
+hooks, viral structure, reel/map structure, teaching methodology, pacing
+models, facts, or wording. Good enough for the fake-provider era.
 
 ## Source Authority Firewall
 
@@ -36,25 +35,32 @@ through in full below). `compile_source_context` enforces this two ways:
    `DISALLOWED_USE_BY_CATEGORY` / `STYLE_CONTAMINATION_WARNING_BY_CATEGORY`
    below) - a narrow, explicit, per-category label of what a source may and
    may never be used for, sent alongside its content so a provider is
-   always told "knowledge, not tone" / "flow mechanics, not a template".
+   always told "knowledge, not tone" / "colloquial calibration, not teaching".
 2. The returned list is ordered by a fixed authority hierarchy
    (`user_notes` > `scientific_reference` > `flow_reference` > `old_course`
    > `raw_material`), independent of the existing high/medium/low
    `priority` field (which remains a secondary signal used only for budget
    trimming, see `_trim_order`/`_apply_budget`).
 
-`flow_reference` in particular is never allowed to become a format/content
-template: it is reduced to a bounded, qualitative "flow profile"
-(`build_flow_profile`) describing *how* a source is delivered - never its
-actual wording, and never a summary of what it says.
+`flow_reference` is Natural Colloquial Calibration only — not a
+professional speaking / flow / teaching / hook reference. It helps final
+scripts avoid translated, stiff, robotic, or unnatural Arabic. It must
+never weaken ROKN quality, structure, clarity, or educational discipline,
+and has zero factual authority (including tool behavior).
 """
 
 from __future__ import annotations
 
 import re
+from collections import Counter
 from dataclasses import dataclass
 
 from app.ai.provider import SourceExcerpt
+from app.generation.knowledge_priority_ladder import (
+    authority_label_for_category,
+    authority_type_for_category,
+    stage_authority_pack_hint,
+)
 from app.models.enums import SourceCategory
 from app.prompts.prompt_registry import PipelineStage
 from app.services.source_analysis import SHORT_SOURCE_MAX_CHARS, select_relevant_chunks
@@ -68,7 +74,7 @@ DEFAULT_MAX_TOTAL_CHARS = 6000
 # for traceability - so an old run's snapshot can be compared against
 # whatever version is active today. Not read by anything at runtime other
 # than the snapshot builder.
-PROMPT_COMPILER_VERSION = "2.5"
+PROMPT_COMPILER_VERSION = "2.8"
 
 # Stage -> the admin-knowledge keys actually relevant to it. Missing/
 # inactive keys are simply omitted (never an error) - see
@@ -90,6 +96,7 @@ _STAGE_RULE_KEYS: dict[PipelineStage, tuple[str, ...]] = {
         "rukn_official_tool_docs_gate",
         "rukn_originality_rights_gate",
         "rukn_cost_hygiene_trusted_knowledge",
+        "rukn_knowledge_priority_ladder",
     ),
     PipelineStage.WRITE_SINGLE_REEL: (
         "rukn_core_rules",
@@ -106,6 +113,7 @@ _STAGE_RULE_KEYS: dict[PipelineStage, tuple[str, ...]] = {
         "rukn_official_tool_docs_gate",
         "rukn_originality_rights_gate",
         "rukn_cost_hygiene_trusted_knowledge",
+        "rukn_knowledge_priority_ladder",
     ),
     PipelineStage.REVIEW_SINGLE_REEL: (
         "rukn_writing_style",
@@ -121,6 +129,7 @@ _STAGE_RULE_KEYS: dict[PipelineStage, tuple[str, ...]] = {
         "rukn_official_tool_docs_gate",
         "rukn_originality_rights_gate",
         "rukn_cost_hygiene_trusted_knowledge",
+        "rukn_knowledge_priority_ladder",
     ),
     PipelineStage.REVIEW_FIVE_REELS: (
         "rukn_writing_style",
@@ -135,6 +144,7 @@ _STAGE_RULE_KEYS: dict[PipelineStage, tuple[str, ...]] = {
         "rukn_market_evergreen_gates",
         "rukn_official_tool_docs_gate",
         "rukn_originality_rights_gate",
+        "rukn_knowledge_priority_ladder",
     ),
     PipelineStage.REVIEW_MODULE: (
         "rukn_writing_style",
@@ -149,6 +159,7 @@ _STAGE_RULE_KEYS: dict[PipelineStage, tuple[str, ...]] = {
         "rukn_market_evergreen_gates",
         "rukn_official_tool_docs_gate",
         "rukn_originality_rights_gate",
+        "rukn_knowledge_priority_ladder",
     ),
     PipelineStage.REVIEW_TWO_MODULES: (
         "rukn_writing_style",
@@ -163,6 +174,7 @@ _STAGE_RULE_KEYS: dict[PipelineStage, tuple[str, ...]] = {
         "rukn_market_evergreen_gates",
         "rukn_official_tool_docs_gate",
         "rukn_originality_rights_gate",
+        "rukn_knowledge_priority_ladder",
     ),
     PipelineStage.FINAL_REVIEW: (
         "rukn_forbidden_phrases",
@@ -177,6 +189,7 @@ _STAGE_RULE_KEYS: dict[PipelineStage, tuple[str, ...]] = {
         "rukn_market_evergreen_gates",
         "rukn_official_tool_docs_gate",
         "rukn_originality_rights_gate",
+        "rukn_knowledge_priority_ladder",
     ),
     PipelineStage.REBUILD_FINAL_COURSE: (
         "rukn_writing_style",
@@ -191,15 +204,22 @@ _STAGE_RULE_KEYS: dict[PipelineStage, tuple[str, ...]] = {
         "rukn_market_evergreen_gates",
         "rukn_official_tool_docs_gate",
         "rukn_originality_rights_gate",
+        "rukn_knowledge_priority_ladder",
     ),
 }
 
 
 def select_rules_for_stage(all_rules: dict[str, str], stage: PipelineStage) -> dict[str, str]:
     """Only the keys in `all_rules` relevant to `stage` - a missing key is
-    just omitted, never an error (an admin may not have activated it)."""
+    just omitted, never an error (an admin may not have activated it).
+
+    Also injects a compact stage authority-pack hint so prompts never treat
+    all sources as equal authority (Knowledge Priority Ladder).
+    """
     keys = _STAGE_RULE_KEYS.get(stage, ())
-    return {key: all_rules[key] for key in keys if key in all_rules}
+    selected = {key: all_rules[key] for key in keys if key in all_rules}
+    selected["rukn_authority_pack_hint"] = stage_authority_pack_hint(stage)
+    return selected
 
 
 def select_packed_rules_for_stage(
@@ -235,8 +255,9 @@ STABLE_RULE_KEYS: tuple[str, ...] = (
     "rukn_student_confusion_layer",
     "rukn_master_mentor_engine",
     "rukn_market_evergreen_gates",
-        "rukn_official_tool_docs_gate",
+    "rukn_official_tool_docs_gate",
     "rukn_originality_rights_gate",
+    "rukn_knowledge_priority_ladder",
 )
 
 
@@ -291,12 +312,13 @@ ALLOWED_USE_BY_CATEGORY: dict[str, list[str]] = {
         "rephrase_into_rukn_style",
     ],
     SourceCategory.FLOW_REFERENCE.value: [
-        "analyze_speech_mechanics",
-        "identify_idea_progression",
-        "identify_pacing",
-        "identify_escalation_and_tension",
-        "identify_example_integration",
-        "identify_natural_speech_patterns",
+        "calibrate_natural_spoken_egyptian_arabic",
+        "detect_colloquial_connectors",
+        "detect_non_translated_arabic_signals",
+        "detect_spoken_sentence_length_feel",
+        "detect_natural_soften_clarify_repeat",
+        "flag_ai_smoothness_and_over_formal_risk",
+        "list_expressions_not_to_imitate",
     ],
     SourceCategory.OLD_COURSE.value: [
         "reuse_useful_structure_or_content",
@@ -333,13 +355,35 @@ DISALLOWED_USE_BY_CATEGORY: dict[str, list[str]] = {
     SourceCategory.FLOW_REFERENCE.value: [
         "summarize_as_factual_content",
         "use_as_course_knowledge",
+        "support_factual_claims",
+        "learn_hooks_from_transcript",
+        "learn_reel_openings",
+        "learn_endings",
+        "learn_viral_tactics",
+        "learn_lesson_structure",
+        "learn_course_map_structure",
+        "learn_pacing_model",
+        "learn_teaching_methodology",
+        "learn_professional_speaking_framework",
+        "learn_ending_style",
         "copy_wording",
         "copy_catchphrases_or_signature_lines",
+        "copy_exact_sentence_patterns",
         "copy_exact_hook_structure",
         "copy_verbal_style_or_creator_identity",
+        "imitate_creator",
+        "use_examples_as_content",
+        "use_facts_claims_or_recommendations",
+        "use_domain_terminology_from_transcript",
+        "use_topic_knowledge",
+        "use_tool_behavior_from_transcript",
         "copy_distinctive_examples",
         "treat_as_rukn_format",
         "treat_as_reel_template",
+        "treat_as_hook_or_viral_reference",
+        "treat_as_ideal_teaching_or_flow_reference",
+        "assume_speaker_is_good_or_professional",
+        "copy_messy_or_rambling_structure",
         "force_same_section_order",
     ],
     SourceCategory.OLD_COURSE.value: [
@@ -364,10 +408,18 @@ STYLE_CONTAMINATION_WARNING_BY_CATEGORY: dict[str, str | None] = {
         "are still not free to copy."
     ),
     SourceCategory.FLOW_REFERENCE.value: (
-        "Style/flow reference only - never a format or knowledge source. Use for "
-        "pacing, progression, tension, transitions, and human rhythm only. Do not "
-        "copy wording, catchphrases, distinctive examples, verbal style, or creator "
-        "identity, and it never overrides Rukn's own lesson/reel structure."
+        "Natural Colloquial Calibration only — not a professional speaking, flow, "
+        "teaching, hook, or structure reference. "
+        "This transcript is only for natural colloquial calibration. Use it only to "
+        "avoid translated, stiff, robotic, or unnatural Arabic. Do not learn facts, "
+        "hooks, structure, pacing, examples, endings, claims, terminology, or style "
+        "imitation from it. Do not assume the speaker is good or that the transcript "
+        "is worth copying. ROKN writing rules stay higher authority; official docs "
+        "stay factual authority. This sample can never support an important claim."
+    ),
+    SourceCategory.TRANSCRIPT.value: (
+        "Course transcript — extract teaching value only; rephrase into Rukn style. "
+        "Do not copy filler, wording, tone, or structure."
     ),
     SourceCategory.OLD_COURSE.value: (
         "Previous course/attempt - may be outdated; reuse selectively, verify before reuse."
@@ -472,30 +524,53 @@ def _factual_excerpt_text(source: SourceForCompiler, query_text: str) -> str:
     return text[:SHORT_SOURCE_MAX_CHARS]
 
 
-# --- flow_reference heuristic profile ---------------------------------
+# --- flow_reference = Natural Colloquial Calibration profile ------------
 #
-# Plain stdlib string/regex analysis only - no ML/NLP libraries - matching
-# the rest of app/services/source_analysis.py. This describes *how* a
-# source is delivered (pacing, opening/ending pattern, transitions,
-# escalation, naturalness) without ever quoting it verbatim, per the "do
-# not copy catchphrases/signature lines" requirement for style references.
+# Plain stdlib heuristics only. This is NOT a flow / teaching / pacing /
+# professional-speaking reference. It only estimates whether spoken Arabic
+# signals lean colloquial vs stiff/translated/AI-smooth — never WHAT is said,
+# never structure, never hooks, and never "copy this speaker".
 
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?\u061F])\s+")
-_CONNECTOR_WORDS = ("لكن", "بس", "طيب", "لما", "but", "however", "so", "and")
-_INSTRUCTION_MARKERS = (
-    "خد",
-    "جرب",
-    "ابدأ",
-    "افعل",
-    "قم ب",
-    "let's",
-    "try",
-    "start",
-    "do this",
-    "go ahead",
+# Colloquial / soft spoken connectors (Egyptian + light bilingual fillers).
+_CONNECTOR_WORDS = (
+    "لكن",
+    "بس",
+    "طيب",
+    "لما",
+    "يعني",
+    "كده",
+    "عشان",
+    "خلاصة",
+    "كمان",
+    "مش",
+    "اهو",
+    "but",
+    "so",
+    "and",
+)
+# Stiff / MSA-leaning markers that often signal translation or textbook tone.
+_STIFF_MARKERS = (
+    "بالإضافة إلى",
+    "من الجدير بالذكر",
+    "في الختام",
+    "furthermore",
+    "moreover",
+    "it is worth noting",
+    "in conclusion",
 )
 _SHORT_SENTENCE_WORD_THRESHOLD = 9
-_CONNECTOR_DENSITY_THRESHOLD = 0.15
+_CONNECTOR_DENSITY_THRESHOLD = 0.12
+
+# Required fence when Natural Colloquial Calibration enters a prompt.
+NATURAL_COLLOQUIAL_CALIBRATION_LABEL = (
+    "This transcript is only for natural colloquial calibration. "
+    "Use it only to avoid translated, stiff, robotic, or unnatural Arabic. "
+    "Do not learn facts, hooks, structure, pacing, examples, endings, claims, "
+    "terminology, or style imitation from it."
+)
+# Backward-compatible alias for older tests/imports.
+HUMAN_EXPLANATION_REFERENCE_LABEL = NATURAL_COLLOQUIAL_CALIBRATION_LABEL
 
 
 def _split_sentences(text: str) -> list[str]:
@@ -511,197 +586,163 @@ def _avg_words_per_sentence(sentences: list[str]) -> float:
     return sum(len(sentence.split()) for sentence in sentences) / len(sentences)
 
 
-def _pacing_description(avg_words: float) -> str:
-    if avg_words <= _SHORT_SENTENCE_WORD_THRESHOLD:
-        return "short, punchy sentences"
-    return "longer, flowing sentences"
-
-
-def _classify_sentence_pattern(sentence: str, position: str) -> str:
-    """`position` is "opening" or "ending" - only changes the phrasing,
-    not the underlying (question / instruction / statement) heuristic."""
-    is_question = bool(sentence) and ("؟" in sentence or "?" in sentence)
-    is_instruction = bool(sentence) and any(marker in sentence for marker in _INSTRUCTION_MARKERS)
-
-    if position == "opening":
-        if is_question:
-            return "opens with a question"
-        if is_instruction:
-            return "opens with an instruction/call to action"
-        return "opens with a direct statement, no greeting"
-
-    if is_question:
-        return "ends on a question"
-    if is_instruction:
-        return "ends on an instruction/call to action"
-    return "ends on a direct statement, no sign-off"
-
-
 def _connector_count(text: str) -> int:
     lowered = (text or "").lower()
     return sum(lowered.count(word) for word in _CONNECTOR_WORDS)
 
 
-def _transition_style(text: str, sentence_count: int) -> str:
-    density = _connector_count(text) / max(sentence_count, 1)
-    if density >= _CONNECTOR_DENSITY_THRESHOLD:
-        return "frequent conversational transitions between ideas"
-    return "minimal transitions - ideas move directly from one to the next"
+def _stiff_marker_count(text: str) -> int:
+    lowered = (text or "").lower()
+    return sum(lowered.count(m.lower()) for m in _STIFF_MARKERS)
 
 
-def _naturalness_note(text: str, sentence_count: int) -> str:
-    density = _connector_count(text) / max(sentence_count, 1)
-    if density >= _CONNECTOR_DENSITY_THRESHOLD:
-        return "sounds conversational and natural, with frequent casual connector words"
-    return "more formal/structured phrasing, with fewer casual connector words"
-
-
-def _escalation_pattern(sentences: list[str]) -> str:
-    if len(sentences) < 3:
-        return "steady pacing throughout"
-
-    third = max(1, len(sentences) // 3)
-    first_avg = _avg_words_per_sentence(sentences[:third])
-    last_avg = _avg_words_per_sentence(sentences[-third:])
-    if last_avg < first_avg * 0.75:
-        return "builds up then lands on short, punchy closing lines"
-    return "steady pacing throughout"
-
-
-def _opening_energy(first_sentence: str) -> str:
-    words = len(first_sentence.split())
-    if words <= _SHORT_SENTENCE_WORD_THRESHOLD:
-        return "high energy - short, punchy opening line"
-    return "calmer, more measured opening line"
-
-
-def _idea_progression(avg_words: float, sentence_count: int) -> str:
+def _spoken_sentence_length_feel(avg_words: float) -> str:
     if avg_words <= _SHORT_SENTENCE_WORD_THRESHOLD:
-        return f"moves through many short ideas in quick succession ({sentence_count} short beats)"
-    return f"develops fewer ideas at greater length before moving on ({sentence_count} longer beats)"
+        return f"shorter spoken lengths (avg {avg_words:.1f} words) — feel conversational, not essay-like"
+    return f"longer spoken clauses (avg {avg_words:.1f} words) — keep clarity; do not turn into textbook paragraphs"
 
 
-def _split_thirds(sentences: list[str]) -> tuple[list[str], list[str], list[str]]:
-    third = max(1, len(sentences) // 3)
-    first = sentences[:third]
-    last = sentences[-third:]
-    middle = sentences[third : len(sentences) - third]
-    return first, middle or first, last
+def _colloquial_connector_presence(text: str, sentence_count: int) -> str:
+    density = _connector_count(text) / max(sentence_count, 1)
+    if density >= _CONNECTOR_DENSITY_THRESHOLD:
+        return "colloquial connectors appear at a natural spoken rate (sample only — do not copy wording)"
+    return "few soft connectors — prefer natural spoken softener words over stiff MSA transitions"
 
 
-def _tension_curve(sentences: list[str]) -> str:
-    if len(sentences) < 6:
-        return "too short for a clear tension arc - stays level throughout"
-
-    first, middle, last = _split_thirds(sentences)
-    first_avg = _avg_words_per_sentence(first)
-    mid_avg = _avg_words_per_sentence(middle)
-    last_avg = _avg_words_per_sentence(last)
-    if mid_avg >= first_avg and last_avg < mid_avg * 0.8:
-        return "rises through the middle then sharply releases near the end"
-    if last_avg < first_avg * 0.75:
-        return "gradually tightens toward a punchier ending"
-    return "stays relatively level, no sharp rise-and-release"
+def _non_translated_arabic_signal(text: str, sentence_count: int) -> str:
+    stiff = _stiff_marker_count(text)
+    connectors = _connector_count(text)
+    if stiff >= 2 and connectors < stiff:
+        return "leans translated/stiff — calibrate final script away from textbook/MSA smoothness"
+    if connectors >= max(2, sentence_count // 8):
+        return "leans non-translated spoken Arabic — use as language naturalness only"
+    return "mixed signals — prefer ROKN colloquial writing rules; avoid literal English→Arabic feel"
 
 
-def _climax_or_turning_point(sentences: list[str]) -> str:
-    """Position-based only (never the sentence's actual wording): flags
-    *where* the shortest, punchiest interior line sits, not what it says."""
+def _natural_soften_clarify_repeat(sentences: list[str]) -> str:
+    if len(sentences) < 3:
+        return "too short to judge soften/clarify habits — keep soft, natural clarifiers when needed"
+    dense_then_short = sum(
+        1
+        for prev, nxt in zip(sentences, sentences[1:])
+        if len(prev.split()) >= 14 and len(nxt.split()) <= _SHORT_SENTENCE_WORD_THRESHOLD
+    )
+    words: list[str] = []
+    for s in sentences:
+        words.extend(w.lower() for w in s.split() if len(w) >= 4)
+    repeats = sum(1 for c in Counter(words).values() if c >= 3) if words else 0
+    if dense_then_short or repeats:
+        return (
+            "sample shows natural soften/clarify/light restatement — allow gentle clarity "
+            "in final script; never copy repeated phrases as catchphrases"
+        )
+    return "little soften/clarify signal — final script may still clarify lightly under ROKN rules"
+
+
+def _ai_smoothness_and_formal_risk(sentences: list[str], text: str) -> str:
+    stiff = _stiff_marker_count(text)
     if len(sentences) < 4:
-        return "no distinct single climax - too short for a turning point"
-
-    interior = sentences[1:-1]
-    shortest_idx = min(range(len(interior)), key=lambda i: len(interior[i].split()))
-    relative_pos = (shortest_idx + 1) / len(sentences)
-    if relative_pos < 0.4:
-        return "a short, punchy turning-point line appears early, before the main build-up"
-    if relative_pos > 0.7:
-        return "a short, punchy turning-point line appears late, near the ending"
-    return "a short, punchy turning-point line appears roughly in the middle"
-
-
-def _example_integration(sentences: list[str]) -> str:
-    count = sum(1 for s in sentences if any(marker in s for marker in _INSTRUCTION_MARKERS))
-    density = count / max(len(sentences), 1)
-    if density == 0:
-        return "stays conceptual throughout - no concrete instruction/example markers detected"
-    if density >= 0.3:
-        return "frequent concrete examples/instructions woven throughout"
-    return "occasional concrete examples/instructions, not the main structure"
+        return "too short — still avoid over-polished AI smoothness and over-formal transitions"
+    lengths = [len(s.split()) for s in sentences]
+    mean = sum(lengths) / len(lengths)
+    variance = sum((x - mean) ** 2 for x in lengths) / len(lengths)
+    if stiff >= 2:
+        return "stiff/formal transition risk high — prefer ordinary spoken links, not ceremony"
+    if variance < 8:
+        return "even lengths risk AI-smooth delivery — keep human unevenness without becoming messy"
+    return "length variety resists robotic evenness — keep that naturalness only, not the content"
 
 
-# Generic, category-level reminders only - deliberately never populated
-# from the source's actual text, so this list itself can never leak a
-# catchphrase/signature line/exact wording back out.
+def _messy_transcript_quality_guard(sentences: list[str], text: str) -> str:
+    """Messy samples must not make the final script messy."""
+    if len(sentences) < 6:
+        return (
+            "Do not assume this speaker is good or professional. "
+            "Ignore any weakness; extract only broad colloquial signals."
+        )
+    lengths = [len(s.split()) for s in sentences]
+    mega = sum(1 for n in lengths if n >= 35)
+    ultra_short = sum(1 for n in lengths if n <= 2)
+    fillerish = text.count("يعني") + text.count("اهم") + text.lower().count("um ")
+    if mega >= 3 or ultra_short >= max(4, len(sentences) // 4) or fillerish >= 12:
+        return (
+            "Sample looks messy/rambling — IGNORE its structure, repetition, and weak phrasing. "
+            "Extract only broad natural colloquial signals. "
+            "Never make the final script messy because this transcript was messy. "
+            "ROKN clarity and educational discipline win."
+        )
+    return (
+        "Do not assume the speaker is good or worth copying. "
+        "Ignore internal architecture of the transcript. "
+        "ROKN writing rules remain higher authority."
+    )
+
+
+# Category-level reminders — never populated from source wording.
 _THINGS_NOT_TO_COPY: tuple[str, ...] = (
-    "this source's exact opening line wording",
-    "any repeated catchphrases or signature lines",
-    "this source's overall section order",
-    "verbal style or creator identity",
-    "distinctive examples or signature teaching moves",
-    "any phrasing that would imitate the source author",
+    "facts, claims, recommendations, topic knowledge, or tool behavior",
+    "examples as content or domain terminology",
+    "hooks, reel openings, endings, pacing models, or lesson/course-map structure",
+    "teaching methodology or professional speaking frameworks",
+    "catchphrases, signature expressions, repeated templates, or creator identity",
+    "messy/rambling structure or weak phrasing from this sample",
+    "any phrasing that would imitate this speaker",
 )
 
 _FLOW_PROFILE_FIELD_ORDER: tuple[str, ...] = (
-    "opening_energy",
-    "hook_mechanism",
-    "pacing",
-    "transition_style",
-    "idea_progression",
-    "escalation_pattern",
-    "tension_curve",
-    "climax_or_turning_point",
-    "example_integration",
-    "ending_motion",
-    "natural_speech_notes",
+    "spoken_sentence_length_feel",
+    "colloquial_connector_presence",
+    "non_translated_arabic_signal",
+    "natural_soften_clarify_repeat",
+    "ai_smoothness_and_formal_risk",
+    "messy_transcript_quality_guard",
 )
 
 
 def build_flow_profile(text: str) -> dict[str, object]:
-    """The full 12-field heuristic "flow profile" for one `flow_reference`
-    source: describes HOW it's delivered (energy/hook/pacing/transitions/
-    idea progression/escalation/tension/climax/examples/ending/
-    naturalness), never WHAT it says. Every value is a qualitative
-    description built purely from sentence-length stats and regex-detected
-    connector/instruction/question markers (stdlib `re` only, no ML/NLP) -
-    never a literal phrase lifted from `text`, so it can never itself leak
-    a catchphrase or become a content/format template.
+    """Natural Colloquial Calibration profile for one `flow_reference` source.
 
-    Bounded output size regardless of input length/structure: values are
-    fixed category labels (occasionally with a small count baked in), not
-    proportional excerpts of the source.
+    Language naturalness signals only — never facts, hooks, pacing models,
+    teaching methodology, structure, or speaker imitation. Messy transcripts
+    must not make the final script messy.
     """
     sentences = _split_sentences(text)
     if not sentences:
-        empty_note = "no analyzable text - nothing to profile"
+        empty_note = "no analyzable text - nothing to calibrate"
         return {field: empty_note for field in _FLOW_PROFILE_FIELD_ORDER} | {
             "things_not_to_copy": list(_THINGS_NOT_TO_COPY)
         }
 
     avg_words = _avg_words_per_sentence(sentences)
-
     return {
-        "opening_energy": _opening_energy(sentences[0]),
-        "hook_mechanism": _classify_sentence_pattern(sentences[0], "opening"),
-        "pacing": f"{_pacing_description(avg_words)} (avg {avg_words:.1f} words/sentence)",
-        "transition_style": _transition_style(text, len(sentences)),
-        "idea_progression": _idea_progression(avg_words, len(sentences)),
-        "escalation_pattern": _escalation_pattern(sentences),
-        "tension_curve": _tension_curve(sentences),
-        "climax_or_turning_point": _climax_or_turning_point(sentences),
-        "example_integration": _example_integration(sentences),
-        "ending_motion": _classify_sentence_pattern(sentences[-1], "ending"),
-        "natural_speech_notes": _naturalness_note(text, len(sentences)),
+        "spoken_sentence_length_feel": _spoken_sentence_length_feel(avg_words),
+        "colloquial_connector_presence": _colloquial_connector_presence(
+            text, len(sentences)
+        ),
+        "non_translated_arabic_signal": _non_translated_arabic_signal(
+            text, len(sentences)
+        ),
+        "natural_soften_clarify_repeat": _natural_soften_clarify_repeat(sentences),
+        "ai_smoothness_and_formal_risk": _ai_smoothness_and_formal_risk(
+            sentences, text
+        ),
+        "messy_transcript_quality_guard": _messy_transcript_quality_guard(
+            sentences, text
+        ),
         "things_not_to_copy": list(_THINGS_NOT_TO_COPY),
     }
+
+
+build_colloquial_calibration_profile = build_flow_profile
 
 
 def _serialize_flow_profile(profile: dict[str, object]) -> str:
     fields_text = "; ".join(f"{field}: {profile[field]}" for field in _FLOW_PROFILE_FIELD_ORDER)
     things_not_to_copy = "; ".join(profile["things_not_to_copy"])
     return (
-        "Flow/style reference (heuristic profile, not a factual excerpt or quote of "
-        "the source, and never a format/structure template): "
+        "Natural Colloquial Calibration (language naturalness sample only — "
+        "NOT a flow, teaching, pacing, hook, or professional speaking reference): "
+        f"{NATURAL_COLLOQUIAL_CALIBRATION_LABEL} "
         f"{fields_text}. Things not to copy from this source: {things_not_to_copy}."
     )
 
@@ -714,10 +755,10 @@ def _build_excerpt(source: SourceForCompiler, query_text: str) -> SourceExcerpt:
     from app.generation.source_isolation import wrap_untrusted
 
     if source.category == SourceCategory.FLOW_REFERENCE.value:
-        # Flow profile is derived heuristics — still untrusted as style orders.
+        # Natural colloquial calibration — still untrusted; never structure/facts.
         text = wrap_untrusted(
             _build_flow_profile_text(source),
-            label=f"flow_profile:{source.source_id}",
+            label=f"colloquial_calibration:{source.source_id}",
         )
     elif source.category == SourceCategory.USER_NOTES.value:
         # Notes are highest-priority data but still fenced — never override Admin.
@@ -733,6 +774,15 @@ def _build_excerpt(source: SourceForCompiler, query_text: str) -> SourceExcerpt:
             label=f"{source.category}:{source.source_id}",
         )
 
+    auth_type = authority_type_for_category(source.category)
+    auth_label = authority_label_for_category(source.category)
+    base_warning = STYLE_CONTAMINATION_WARNING_BY_CATEGORY.get(source.category)
+    combined_warning = (
+        f"{auth_label} {base_warning}".strip()
+        if base_warning
+        else auth_label
+    )
+
     return SourceExcerpt(
         source_id=source.source_id,
         category=source.category,
@@ -740,7 +790,8 @@ def _build_excerpt(source: SourceForCompiler, query_text: str) -> SourceExcerpt:
         text=text,
         allowed_use=list(ALLOWED_USE_BY_CATEGORY.get(source.category, [])),
         disallowed_use=list(DISALLOWED_USE_BY_CATEGORY.get(source.category, [])),
-        style_contamination_warning=STYLE_CONTAMINATION_WARNING_BY_CATEGORY.get(source.category),
+        style_contamination_warning=combined_warning,
+        authority_type=auth_type.value,
     )
 
 
@@ -788,6 +839,7 @@ def _apply_budget(excerpts: list[SourceExcerpt], max_total_chars: int) -> list[S
             allowed_use=excerpt.allowed_use,
             disallowed_use=excerpt.disallowed_use,
             style_contamination_warning=excerpt.style_contamination_warning,
+            authority_type=excerpt.authority_type,
         )
         for i, excerpt in enumerate(excerpts)
     ]

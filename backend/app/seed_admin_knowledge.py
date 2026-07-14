@@ -534,12 +534,14 @@ A reel fails quality if:
 
 - Scientific sources provide **knowledge only** - they must not influence
   language, tone, or structure.
-- Flow references provide **human speech mechanics only** (`human_flow_profile`) -
-  never factual summaries, never reusable format templates, never copied
-  catchphrases. They may be from another domain or long-form content.
+- Flow references (`flow_reference`) are **Natural Colloquial Calibration** —
+  language naturalness samples only. Help scripts avoid translated / stiff /
+  robotic Arabic. Never flow/teaching/hook/pacing/map references; never facts;
+  never assume the speaker is good; never copy messy structure. ROKN writing
+  rules stay higher authority; official docs stay factual authority.
 - Rukn style comes from Admin Knowledge. Rukn format comes from the
-  teleprompter DOCX contract. Naturalness comes from high-level flow analysis,
-  not copying.
+  teleprompter DOCX contract. Naturalness calibration must not weaken quality,
+  structure, clarity, or educational discipline.
 """
 
 DYNAMIC_TEACHING_CURVE = """# ROKN Dynamic Teaching Curve
@@ -590,8 +592,9 @@ a top-tier viral educational content creator in the course domain, combined
 with a serious teacher who can build a strong connected course.
 
 Never imitate a named creator. Never copy catchphrases, signature lines,
-repeated formulas, or exact hook/ending structures. Never turn
-`flow_reference` into a creator template. Rukn style stays Admin Knowledge.
+repeated formulas, or exact hook/ending structures. Never turn a
+`flow_reference` (Natural Colloquial Calibration) into a hook/viral/structure
+template. Rukn style stays Admin Knowledge.
 
 ## Identity (internal state)
 
@@ -1138,10 +1141,13 @@ Free/public sources are still not free to copy.
 - building the course as a disguised rewrite of one source
 - imitating named creators
 
-## Flow references
-May teach pacing, progression, tension, transitions, human rhythm, attention
-movement only — never verbal style, catchphrases, distinctive examples, or
-creator identity.
+## Natural Colloquial Calibration (`flow_reference`)
+Language naturalness sample only — natural Egyptian/Arabic feel, colloquial
+connectors, anti-translation / anti-stiff / anti-AI-smoothness. Never hooks,
+openings, endings, pacing models, lesson/map structure, teaching methodology,
+professional speaking frameworks, facts, examples-as-content, claims,
+terminology, tool behavior, catchphrases, or creator identity. Do not assume
+the speaker is good; ignore messy structure.
 
 ## Web research
 May fill missing facts. Must not steal article structure, copy examples,
@@ -1184,6 +1190,57 @@ Compact structured reviews. No essay debates. Max 2 rebuilds. No identical retri
 Final DOCX: title + headings + spoken transcript only.
 """,
     },
+    {
+        "key": "rukn_knowledge_priority_ladder",
+        "title": "ROKN Knowledge Priority Ladder",
+        "item_type": ItemType.MARKDOWN,
+        "content_text": """# Knowledge Priority Ladder / Conflict Resolution
+
+Do not mix authority types. Do not blend conflicting sources randomly.
+
+## Authority types
+A. **Product/output** — final DOCX format & ROKN style
+B. **Factual/domain** — what is true / current
+C. **User intent** — what course the user wants
+D. **Natural Colloquial Calibration** — language naturalness only (not teaching/flow)
+
+## Product/output order
+1. System/developer rules
+2. ROKN Admin Knowledge
+3. Teleprompter DOCX contract
+4. Course-specific user preferences
+5. AI judgment
+
+No upload may override: final DOCX format, no internal notes, no citations,
+no reviewer comments, no Production Pack, ROKN writing rules.
+
+## Factual/domain order
+1. Current official documentation of the tool/platform
+2. Trusted Research Memory (authoritative)
+3. Course scientific_reference / reliable user_notes
+4. Old course — still-valid principles only (not current UI)
+5. Model common knowledge (safe only)
+6. Natural Colloquial Calibration — **zero factual authority**
+
+If official docs conflict with old courses/books/transcripts: official docs win;
+update the map; remove/reframe outdated lessons; never mention the conflict in DOCX.
+
+## User intent
+Brief/map define learner, promise, direction, market, outcome.
+User intent does **not** override truth, official docs, safety, DOCX contract,
+or ROKN quality. Preserve intent; rewrite outdated tool steps.
+
+## Natural Colloquial Calibration
+Language naturalness only (avoid translated/stiff/robotic Arabic).
+Never facts, hooks, course map, lesson structure, pacing models, examples-as-content,
+terminology, tool behavior, claims, or recommendations. Never assume the speaker
+is good. ROKN writing rules remain higher authority.
+
+## Conflicts (internal only)
+Store conflict_type, conflicting_sources, winning_authority, action_taken
+(keep/remove/narrow/rewrite/research_official_docs), reason — never in DOCX.
+""",
+    },
 ]
 
 # Required core keys that must exist after seeding (includes the high-signal
@@ -1205,6 +1262,7 @@ REQUIRED_KEYS: set[str] = {
     "rukn_official_tool_docs_gate",
     "rukn_originality_rights_gate",
     "rukn_cost_hygiene_trusted_knowledge",
+    "rukn_knowledge_priority_ladder",
     "rukn_generation_presets",
 }
 
@@ -1225,6 +1283,7 @@ REFRESHABLE_DEFAULT_KEYS: tuple[str, ...] = (
     "rukn_official_tool_docs_gate",
     "rukn_originality_rights_gate",
     "rukn_cost_hygiene_trusted_knowledge",
+    "rukn_knowledge_priority_ladder",
     "rukn_source_authority_firewall",
     "rukn_flow_reference_guide",
 )

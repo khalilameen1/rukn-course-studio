@@ -20,6 +20,10 @@ from app.generation.official_tool_docs import (
     OFFICIAL_TOOL_DOCX_LEAKS,
     apply_official_tool_to_final_course,
 )
+from app.generation.knowledge_priority_ladder import (
+    KNOWLEDGE_PRIORITY_DOCX_LEAKS,
+    strip_conflict_notes_from_script,
+)
 from app.generation.originality_rights import (
     ORIGINALITY_DOCX_LEAKS,
     apply_originality_to_final_course,
@@ -544,6 +548,37 @@ def gate_official_tool_docs(
     return updated
 
 
+def gate_knowledge_priority(
+    course: FinalCourse,
+    report: CourseGateReport,
+) -> FinalCourse:
+    """Strip Knowledge Priority Ladder conflict vocabulary from scripts."""
+    before = course.full_text or ""
+    modules = []
+    for mod in course.modules:
+        reels = []
+        for reel in mod.reels:
+            cleaned = strip_conflict_notes_from_script(reel.script_text or "")
+            reels.append(reel.model_copy(update={"script_text": cleaned}))
+        modules.append(mod.model_copy(update={"reels": reels}))
+    updated = course.model_copy(update={"modules": modules})
+    updated = _refresh_full_text(updated)
+    hay = (updated.full_text or "").lower()
+    for leak in KNOWLEDGE_PRIORITY_DOCX_LEAKS:
+        if leak.lower() in hay:
+            report.issues.append(
+                GateIssue(
+                    gate="knowledge_priority",
+                    code="authority_conflict_leak",
+                    detail=f"stripped conflict cue: {leak}",
+                )
+            )
+            break
+    if (updated.full_text or "") != before:
+        report.remediations.append("knowledge_priority_conflict_strip")
+    return updated
+
+
 def run_course_quality_gates(
     *,
     final_course: FinalCourse,
@@ -565,6 +600,7 @@ def run_course_quality_gates(
     course = gate_course_ending(course, report)
     course = gate_market_and_evergreen(course, brief, report)
     course = gate_official_tool_docs(course, brief, report)
+    course = gate_knowledge_priority(course, report)
     course = gate_originality_rights(
         course, brief, report, source_texts=source_texts
     )

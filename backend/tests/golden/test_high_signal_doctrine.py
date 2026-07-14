@@ -95,7 +95,8 @@ def test_flow_reference_catchphrase_not_copied_into_profile():
     excerpts = compile_source_context([source], query_text="opening energy")
     assert len(excerpts) == 1
     assert catchphrase not in excerpts[0].text
-    assert "human_flow" in excerpts[0].text.lower() or "pacing" in excerpts[0].text.lower()
+    blob = excerpts[0].text.lower()
+    assert "natural colloquial calibration" in blob or "spoken_sentence_length_feel" in blob
 
 
 def test_clean_local_high_signal_script_passes():

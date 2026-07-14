@@ -101,10 +101,12 @@ def build_stage_rules_pack(
     pack_body = "\n\n".join(parts).strip()
     out: dict[str, str] = {pack_name: pack_body} if pack_body else {}
 
-    # Pass through compact runtime keys unchanged.
+    # Pass through compact runtime keys and authority-pack hints unchanged.
     for key, content in selected_rules.items():
         if key.endswith("_runtime") and content:
             out[key] = content[:1200]
+        elif key == "rukn_authority_pack_hint" and content:
+            out[key] = content[:800]
     return out
 
 

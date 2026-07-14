@@ -9,6 +9,7 @@ from app.generation.prompt_compiler import (
     build_flow_profile,
     compile_source_context,
     select_rules_for_stage,
+    _serialize_flow_profile,
 )
 from app.prompts.prompt_registry import PipelineStage
 
@@ -273,7 +274,7 @@ def test_scientific_reference_excerpt_carries_allowed_and_disallowed_use():
     assert len(excerpt.text) < len(long_academic_text)
 
 
-def test_flow_reference_produces_all_twelve_profile_fields_non_empty():
+def test_flow_reference_produces_all_colloquial_calibration_fields_non_empty():
     source_text = (
         "هل جربت قبل كده تصميم إعلان في خمس دقايق؟ خد بالك من الخطوة الأولى "
         "كويس، بس المهم إنك تبدأ فعليا من غير تفكير كتير. لو الألوان مش واضحة "
@@ -284,17 +285,12 @@ def test_flow_reference_produces_all_twelve_profile_fields_non_empty():
     profile = build_flow_profile(source_text)
 
     expected_fields = {
-        "opening_energy",
-        "hook_mechanism",
-        "pacing",
-        "transition_style",
-        "idea_progression",
-        "escalation_pattern",
-        "tension_curve",
-        "climax_or_turning_point",
-        "example_integration",
-        "ending_motion",
-        "natural_speech_notes",
+        "spoken_sentence_length_feel",
+        "colloquial_connector_presence",
+        "non_translated_arabic_signal",
+        "natural_soften_clarify_repeat",
+        "ai_smoothness_and_formal_risk",
+        "messy_transcript_quality_guard",
         "things_not_to_copy",
     }
     assert set(profile.keys()) == expected_fields
@@ -306,6 +302,88 @@ def test_flow_reference_produces_all_twelve_profile_fields_non_empty():
     assert isinstance(profile["things_not_to_copy"], list)
     assert len(profile["things_not_to_copy"]) > 0
     assert all(item.strip() for item in profile["things_not_to_copy"])
+    blob = " ".join(expected_fields)
+    assert "hook" not in blob
+    assert "pacing" not in blob
+    assert "opening" not in blob
+    assert "idea_connection" not in blob
+    assert "abstract_to_practical" not in blob
+
+
+def test_natural_colloquial_calibration_label_and_blocked_uses():
+    source = SourceForCompiler(
+        source_id=20,
+        category="flow_reference",
+        priority="medium",
+        text=(
+            "LISTEN UP this is my signature viral hook openers forever. "
+            "In this reel we crush three modules then cliffhanger. " * 5
+        ),
+    )
+    excerpts = compile_source_context([source], query_text="")
+    text = excerpts[0].text
+    assert "Natural Colloquial Calibration" in text
+    assert (
+        "This transcript is only for natural colloquial calibration. "
+        "Use it only to avoid translated, stiff, robotic, or unnatural Arabic. "
+        "Do not learn facts, hooks, structure, pacing, examples, endings, claims, "
+        "terminology, or style imitation from it."
+    ) in text
+    lowered = text.lower()
+    assert "hook_mechanism" not in lowered
+    assert "spoken_sentence_rhythm" not in lowered
+    assert "listen up this is my signature" not in lowered
+
+    dis = excerpts[0].disallowed_use
+    for code in (
+        "learn_hooks_from_transcript",
+        "learn_pacing_model",
+        "learn_teaching_methodology",
+        "learn_course_map_structure",
+        "support_factual_claims",
+        "assume_speaker_is_good_or_professional",
+        "treat_as_ideal_teaching_or_flow_reference",
+    ):
+        assert code in dis
+
+    warning = excerpts[0].style_contamination_warning or ""
+    assert "natural colloquial calibration" in warning.lower()
+    assert excerpts[0].authority_type == "natural_colloquial_calibration"
+
+
+def test_messy_transcript_quality_guard_does_not_teach_structure():
+    messy = (
+        "يعني يعني يعني. " * 20
+        + ("وهنا الجملة الطويلة جدا جدا جدا اللي بتلف وتدور بدون أي فائدة عملية على الإطلاق وبتكرر نفس الفكرة. ") * 8
+        + "اه. اه. اه. اه. "
+    )
+    profile = build_flow_profile(messy)
+    guard = str(profile["messy_transcript_quality_guard"]).lower()
+    assert "ignore" in guard
+    assert "messy" in guard
+    assert "structure" in guard
+    serialized = _serialize_flow_profile(profile).lower()
+    assert "hook_mechanism" not in serialized
+    assert "idea_connection_style" not in serialized
+
+
+def test_off_topic_long_transcript_does_not_dictate_hook_fields():
+    """Long lecture-like off-topic text must not produce hook/opening profile fields."""
+    lecture = (
+        "Today we open with a shocking question that hooks every viewer. "
+        "Module one covers history. Module two covers theory. "
+        "Here is my catchphrase forever champions rise. "
+        "Then we escalate tension to a climax ending. "
+    ) * 40
+    profile = build_flow_profile(lecture)
+    assert "hook_mechanism" not in profile
+    assert "opening_energy" not in profile
+    assert "spoken_sentence_length_feel" in profile
+    serialized = _serialize_flow_profile(profile).lower()
+    assert "hook_mechanism" not in serialized
+    assert "opens with a question" not in serialized
+    assert "forever champions rise" not in serialized
+    assert "natural colloquial calibration" in serialized
 
 
 def test_flow_reference_never_copies_a_planted_catchphrase_verbatim():

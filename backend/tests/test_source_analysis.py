@@ -40,7 +40,8 @@ def test_avoid_points_are_category_driven():
     raw = analyze_source_text("some text", "raw_material")
     scientific = analyze_source_text("some text", "scientific_reference")
 
-    assert "factual source" in flow.avoid_points[0]
+    assert "Natural Colloquial" in flow.avoid_points[0] or "colloquial" in flow.avoid_points[0].lower()
+    assert "hooks" in flow.avoid_points[0].lower() or "structure" in flow.avoid_points[0].lower() or "facts" in flow.avoid_points[0].lower()
     assert "outdated" in old.avoid_points[0]
     assert "uncertain" in raw.avoid_points[0]
     assert scientific.avoid_points == []

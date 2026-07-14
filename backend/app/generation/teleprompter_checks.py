@@ -103,6 +103,11 @@ TELEPROMPTER_FORBIDDEN_SUBSTRINGS: tuple[str, ...] = (
     "help center says",
     "official tool memory",
     "tool_dependencies",
+    "conflict_type",
+    "winning_authority",
+    "knowledge priority ladder",
+    "authority conflict",
+    "source conflict resolved",
     # V1: no Production Pack / asset / design leakage
     "production pack",
     "asset brief",
