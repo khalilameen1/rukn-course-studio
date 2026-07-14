@@ -108,6 +108,12 @@ TELEPROMPTER_FORBIDDEN_SUBSTRINGS: tuple[str, ...] = (
     "knowledge priority ladder",
     "authority conflict",
     "source conflict resolved",
+    # Stage directions — teleprompter formatting must never speak these.
+    "[pause]",
+    "[breath]",
+    "[silence]",
+    "(pause)",
+    "(breath)",
     # V1: no Production Pack / asset / design leakage
     "production pack",
     "asset brief",

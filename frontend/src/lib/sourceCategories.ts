@@ -23,9 +23,16 @@ export const SOURCE_CATEGORY_OPTIONS: SourceCategoryOption[] = [
       "Use this when the transcript may be unrelated to the course. It only helps the script sound naturally spoken, not translated or robotic. It will not be used for facts, hooks, course structure, or examples.",
   },
   {
+    value: "mixed_quality_ai_course_draft",
+    label: "Previous mixed-quality AI course draft",
+    helper:
+      "Use this for previous AI-generated course drafts that may contain useful ideas but also defects. The system will extract useful candidates, detect defects, verify claims elsewhere, and rebuild the course in ROKN quality. (مسودة كورس سابقة مختلطة الجودة)",
+  },
+  {
     value: "old_course",
-    label: "Previous course/attempt",
-    helper: "An earlier version of this course — reused selectively, not blindly repeated.",
+    label: "Previous course/attempt (legacy)",
+    helper:
+      "Same mixed-quality draft handling as “Previous mixed-quality AI course draft” — useful candidates + defects; not a quality reference. Prefer the dedicated mixed-quality type for new uploads.",
   },
   {
     value: "user_notes",

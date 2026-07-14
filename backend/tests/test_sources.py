@@ -80,8 +80,17 @@ def test_delete_source_removes_row_and_file(client):
     file_path = Path(uploaded["file_path"])
     assert file_path.exists()
 
-    delete_response = test_client.delete(f"/courses/{course_id}/sources/{source_id}")
-    assert delete_response.status_code == 204
+    # Default call is a dry run: nothing deleted yet.
+    dry_response = test_client.delete(f"/courses/{course_id}/sources/{source_id}")
+    assert dry_response.status_code == 200
+    assert dry_response.json()["applied"] is False
+    assert file_path.exists()
+
+    delete_response = test_client.delete(
+        f"/courses/{course_id}/sources/{source_id}?confirm=true&dry_run=false"
+    )
+    assert delete_response.status_code == 200
+    assert delete_response.json()["applied"] is True
     assert not file_path.exists()
 
     list_response = test_client.get(f"/courses/{course_id}/sources")

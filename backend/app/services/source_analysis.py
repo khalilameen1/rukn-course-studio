@@ -31,7 +31,14 @@ CATEGORY_AVOID_POINTS: dict[str, list[str]] = {
     "flow_reference": [
         "Natural Colloquial Calibration only — language naturalness sample, not facts/hooks/structure.",
     ],
-    "old_course": ["May be outdated - verify before reusing any specific facts."],
+    "old_course": [
+        "Mixed-quality previous draft — candidates only; do not copy hooks/loops/wording; verify claims elsewhere.",
+    ],
+    "mixed_quality_ai_course_draft": [
+        "Mixed-quality previous AI course draft — extract useful candidates only; never quality reference; rebuild in ROKN.",
+        "Do not copy wording, hooks, artificial loops, or examples verbatim.",
+        "Important claims from this draft alone are ungrounded until verified elsewhere.",
+    ],
     "raw_material": ["Mixed/unclear material - treat as uncertain, verify before reuse."],
     "transcript": ["Spoken transcript — extract teaching value; do not copy filler or verbatim rambles."],
 }

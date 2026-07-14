@@ -49,6 +49,61 @@ FLOW_TEMPLATE_LEAK_PATTERNS: tuple[str, ...] = (
     r"following the creator template",
 )
 
+# Course-seller / enrollment bait (not educational creator voice).
+COURSE_SELLER_PATTERNS: tuple[str, ...] = (
+    r"اشترك في الكورس",
+    r"سجل دلوقتي",
+    r"احجز مقعدك",
+    r"العرض محدود",
+    r"عرض لفترة محدودة",
+    r"buy this course",
+    r"enroll now",
+    r"limited time offer",
+    r"احصل على الكورس",
+    r"سعر الكورس",
+)
+
+# Generic AI / textbook lecturer tone markers.
+GENERIC_AI_TEACHER_PATTERNS: tuple[str, ...] = (
+    r"\bfurthermore\b",
+    r"\bmoreover\b",
+    r"\bin conclusion\b",
+    r"it is important to note",
+    r"من المهم أن نلاحظ",
+    r"في الختام",
+    r"مما لا شك فيه",
+    r"بشكل عام يمكن القول",
+    r"as an ai language model",
+    r"as a language model",
+)
+
+# Invented instructor biography unless user supplied it.
+FAKE_PERSONAL_EXPERIENCE_PATTERNS: tuple[str, ...] = (
+    r"لما كنت بشتغل في",
+    r"أنا شخصياً عملت",
+    r"في تجربتي الشخصية",
+    r"when i worked at",
+    r"when i personally managed",
+    r"i personally ran campaigns for",
+    r"عميل كنت بخدمه",
+)
+
+# Field-aware practical explanation markers (positive heuristic).
+FIELD_AWARE_MARKERS: tuple[str, ...] = (
+    r"عمليًا",
+    r"في الشغل الحقيقي",
+    r"ميزانية",
+    r"عميل",
+    r"واتساب",
+    r"فيسبوك",
+    r"انستجرام",
+    r"beginner",
+    r"budget",
+    r"client",
+    r"decision rule",
+    r"common mistake",
+)
+
 
 @dataclass
 class CreatorPersonaIssue:
@@ -125,6 +180,42 @@ def check_creator_persona_script(
             )
         )
 
+    for hit in _find_all(COURSE_SELLER_PATTERNS, text):
+        issues.append(
+            CreatorPersonaIssue(
+                reason_code="course_seller_tone",
+                target_id=reel_id,
+                detail=(
+                    f"Course-seller cue '{hit}' — instructor is a practitioner-educator, "
+                    "not selling enrollment inside the lesson."
+                ),
+            )
+        )
+
+    for hit in _find_all(GENERIC_AI_TEACHER_PATTERNS, text):
+        issues.append(
+            CreatorPersonaIssue(
+                reason_code="generic_ai_teacher_tone",
+                target_id=reel_id,
+                detail=(
+                    f"Generic AI/lecture phrasing '{hit}' — use warm spoken Egyptian "
+                    "practitioner voice, not template essay tone."
+                ),
+            )
+        )
+
+    for hit in _find_all(FAKE_PERSONAL_EXPERIENCE_PATTERNS, text):
+        issues.append(
+            CreatorPersonaIssue(
+                reason_code="fake_personal_experience",
+                target_id=reel_id,
+                detail=(
+                    f"Invented personal story cue '{hit}' — show field judgment only; "
+                    "never claim the instructor did things unless the user provided them."
+                ),
+            )
+        )
+
     if lesson_persona is not None:
         intent = lesson_persona.viral_intent
         hyped = any(re.search(p, text, re.I) for p in OVERHYPED_PATTERNS)
@@ -180,3 +271,24 @@ def flat_machine_script_flagged(reels: list[GeneratedReel]) -> bool:
     if mean > 0 and max(abs(c - mean) / mean for c in word_counts) < 0.08:
         return True
     return False
+
+
+def script_has_field_aware_practical_tone(script_text: str) -> bool:
+    """True when script shows practitioner judgment, not summary-only teaching."""
+    text = script_text or ""
+    return any(re.search(p, text, re.I) for p in FIELD_AWARE_MARKERS)
+
+
+def script_passes_educational_creator_warmth(script_text: str) -> bool:
+    """Warm spoken voice without costume slang or seller/AI cues."""
+    text = script_text or ""
+    if not text.strip():
+        return False
+    issues = check_creator_persona_script(text)
+    blocked = {
+        "fake_egyptian_ai_tone",
+        "course_seller_tone",
+        "generic_ai_teacher_tone",
+        "named_creator_imitation",
+    }
+    return not any(i.reason_code in blocked for i in issues)

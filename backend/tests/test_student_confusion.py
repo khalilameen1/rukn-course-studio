@@ -22,9 +22,9 @@ def test_write_prompt_includes_student_layer_before_specialist_and_master():
     review = load_prompt(PipelineStage.REVIEW_SINGLE_REEL).lower()
     assert "first_draft" in write
     assert "final_master" in write
-    assert "student confusion" in review
+    assert "student agent" in review
     assert "80%" in review or "80 percent" in review or "~80%" in review
-    assert "student_" in review or "student confusion" in review
+    assert "student_" in review or "student agent" in review
     assert text_index_student_before_specialist(review)
     assert "ignore" in review and "edge" in review
     assert "master version" in write or "final master" in write

@@ -119,7 +119,7 @@ def test_build_prompt_includes_template_and_context():
 
     prompt = provider._build_prompt(PipelineStage.REVIEW_SINGLE_REEL, input_model)
 
-    assert "Task: Review a Single Reel" in prompt
+    assert "Task: Review a Completed Reel Draft" in prompt
     assert '"reel_id": "r1"' in prompt
     assert "rukn-core" in prompt
 
@@ -391,7 +391,7 @@ VALID_FINAL_COURSE = {
             "review_result",
             VALID_REVIEW_RESULT,
             ReviewResult,
-            "Review a Single Reel",
+            "Review a Completed Reel Draft",
         ),
         (
             "review_five_reels",

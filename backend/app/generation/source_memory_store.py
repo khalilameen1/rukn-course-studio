@@ -282,6 +282,8 @@ def build_source_memory_payload(
 
     old_course_lessons: list[str] | None = None,
 
+    course_promise: dict[str, Any] | None = None,
+
 ) -> dict[str, Any]:
 
     """One-time persistent memory dict stored on SourceAnalysis.source_memory_json."""
@@ -408,21 +410,85 @@ def build_source_memory_payload(
 
 
 
-    if category == "old_course":
+    from app.generation.mixed_draft_memory import (
 
-        lessons = list(old_course_lessons or [])
+        build_mixed_draft_memory,
 
-        if not lessons and chunks:
+        is_mixed_quality_draft_category,
 
-            lessons = [
+    )
 
-                (c.get("heading") or f"Lesson {i+1}")
 
-                for i, c in enumerate(chunks[:20])
 
-            ]
+    if is_mixed_quality_draft_category(category):
 
-        memory["old_course_lessons"] = lessons
+        md = build_mixed_draft_memory(
+
+            source_hash=source_hash,
+
+            text=text,
+
+            title=title or "Mixed-quality AI course draft",
+
+            course_promise=course_promise,
+
+        )
+
+        memory["mixed_draft_memory"] = md
+
+        memory["candidate_only"] = True
+
+        memory["not_quality_reference"] = True
+
+        # Topic hints only — never the final course map.
+
+        memory["map_hints_not_authority"] = list(md.get("map_hints_not_authority") or [])
+
+        memory["useful_candidates"] = list(md.get("useful_candidates") or [])
+
+        # Prefer candidate bags over raw fact dumps for this category.
+
+        cand_facts = list(
+
+            (md.get("core_candidates") or [])
+
+            + (md.get("supporting_candidates") or [])
+
+            + (md.get("useful_candidates") or [])
+
+        )[:MAX_KEY_POINTS]
+
+        if cand_facts:
+
+            memory["extracted_facts"] = cand_facts
+
+            memory["facts"] = cand_facts
+
+        warn = list(memory.get("warnings_or_uncertainties") or [])
+
+        for w in md.get("creator_warnings") or []:
+
+            if w not in warn:
+
+                warn.append(w)
+
+        memory["warnings_or_uncertainties"] = warn[:16]
+
+        if category == "old_course":
+
+            lessons = list(old_course_lessons or [])
+
+            if not lessons and chunks:
+
+                lessons = [
+
+                    (c.get("heading") or f"Lesson {i+1}")
+
+                    for i, c in enumerate(chunks[:20])
+
+                ]
+
+            memory["old_course_lessons"] = lessons
 
 
 
@@ -447,6 +513,22 @@ def format_memory_snippet(
 ) -> str:
 
     """Compact prompt material: facts / examples / terms / relevant snippets only."""
+
+    from app.generation.mixed_draft_memory import (
+
+        format_mixed_draft_snippet,
+
+        is_mixed_quality_draft_category,
+
+    )
+
+
+
+    if is_mixed_quality_draft_category(str(memory.get("source_type") or memory.get("category") or "")):
+
+        return format_mixed_draft_snippet(memory, max_chars=max_chars)
+
+
 
     parts: list[str] = []
 
@@ -607,6 +689,36 @@ def compiler_text_from_memory(
     if category == "user_notes":
 
         return fallback_text or ""
+
+
+
+    from app.generation.mixed_draft_memory import (
+
+        format_mixed_draft_snippet,
+
+        is_mixed_quality_draft_category,
+
+    )
+
+
+
+    if is_mixed_quality_draft_category(category):
+
+        # Never resend the full mixed-quality draft into lesson prompts.
+
+        if memory and (memory.get("mixed_draft_memory") or memory.get("kind") == "mixed_draft_memory"):
+
+            return format_mixed_draft_snippet(memory)
+
+        if memory:
+
+            return format_memory_snippet(memory, query_text=query_text, chunks=None)
+
+        return format_mixed_draft_snippet(
+
+            {"prompt_label": "mixed quality draft", "useful_candidates": [], "creator_warnings": []}
+
+        )
 
 
 

@@ -89,6 +89,15 @@ def _apply_teleprompter_formatting(document: DocxDocument) -> None:
         _set_style_font(styles[style_name], size)
 
 
+def _add_script_lines(document: DocxDocument, script_text: str) -> None:
+    """Write spoken transcript lines; preserve blank lines as pause spacing."""
+    for line in (script_text or "").splitlines():
+        if line.strip():
+            _set_rtl(document.add_paragraph(line.strip()))
+        else:
+            _set_rtl(document.add_paragraph(""))
+
+
 def render_final_course_docx(final_course: FinalCourse) -> DocxDocument:
     """Build the in-memory python-docx Document. Split out from saving so
     the rendering logic is testable without touching the filesystem."""
@@ -105,9 +114,7 @@ def render_final_course_docx(final_course: FinalCourse) -> DocxDocument:
 
         for lesson_index, reel in enumerate(module.reels, start=1):
             _set_rtl(document.add_heading(f"Lesson {lesson_index} — {reel.title}", level=2))
-            for line in (reel.script_text or "").splitlines():
-                if line.strip():
-                    _set_rtl(document.add_paragraph(line))
+            _add_script_lines(document, reel.script_text or "")
         # V1: never render bridge_project / Project blocks into the DOCX.
 
     return document
@@ -226,9 +233,7 @@ def render_partial_course_docx(final_course: FinalCourse) -> DocxDocument:
 
         for lesson_index, reel in enumerate(module.reels, start=1):
             _set_rtl(document.add_heading(f"Lesson {lesson_index} — {reel.title}", level=2))
-            for line in (reel.script_text or "").splitlines():
-                if line.strip():
-                    _set_rtl(document.add_paragraph(line))
+            _add_script_lines(document, reel.script_text or "")
         # V1: never render bridge_project / Project blocks into the DOCX.
 
     return document

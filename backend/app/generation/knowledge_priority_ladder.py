@@ -112,6 +112,7 @@ _CATEGORY_AUTHORITY_TYPE: dict[str, AuthorityType] = {
     SourceCategory.SCIENTIFIC_REFERENCE.value: AuthorityType.FACTUAL_DOMAIN,
     SourceCategory.TRANSCRIPT.value: AuthorityType.FACTUAL_DOMAIN,
     SourceCategory.OLD_COURSE.value: AuthorityType.FACTUAL_DOMAIN,
+    SourceCategory.MIXED_QUALITY_AI_COURSE_DRAFT.value: AuthorityType.FACTUAL_DOMAIN,
     SourceCategory.RAW_MATERIAL.value: AuthorityType.FACTUAL_DOMAIN,
     SourceCategory.USER_NOTES.value: AuthorityType.USER_INTENT,
     SourceCategory.FLOW_REFERENCE.value: AuthorityType.NATURAL_COLLOQUIAL,
@@ -126,6 +127,7 @@ _FACTUAL_RANK: dict[str, int] = {
     "scientific_reference_or_reliable_user_notes": 2,
     "old_course": 3,
     "old_course_still_valid_principles": 3,
+    "mixed_quality_ai_course_draft": 3,
     "model_common_knowledge": 4,
     "natural_colloquial_calibration": 5,
     "human_explanation_reference": 5,
@@ -195,10 +197,15 @@ def authority_label_for_category(category: str) -> str:
             "intent; may not override truth, official docs, safety, or DOCX contract."
         )
     if kind == AuthorityType.FACTUAL_DOMAIN:
-        if category == SourceCategory.OLD_COURSE.value:
+        if category in (
+            SourceCategory.OLD_COURSE.value,
+            SourceCategory.MIXED_QUALITY_AI_COURSE_DRAFT.value,
+        ):
             return (
-                "[authority=factual_domain:old_course] Still-valid principles only — "
-                "current tool behavior loses to official docs."
+                "[authority=factual_domain:mixed_quality_ai_course_draft] "
+                "Candidate-only mixed-quality previous AI course draft — useful "
+                "ideas may be rebuilt; defects discarded; never a quality "
+                "reference; claims lose to official docs / grounded sources."
             )
         if category == SourceCategory.FLOW_REFERENCE.value:
             return (
@@ -271,6 +278,7 @@ def resolve_factual_conflict(
     if winner == "official_tool_docs" and loser in (
         "old_course",
         "old_course_still_valid_principles",
+        "mixed_quality_ai_course_draft",
         "flow_reference",
         "human_explanation_reference",
         "natural_colloquial_calibration",
@@ -464,7 +472,8 @@ def compile_knowledge_priority_guidance(
         "course user preferences > AI judgment. No upload overrides DOCX/format/citations/"
         "review notes/Production Pack/ROKN writing rules.",
         "B) Factual/domain: official tool docs > trusted Research Memory > "
-        "scientific_reference/user_notes (if reliable) > old_course principles only > "
+        "scientific_reference/user_notes (if reliable) > mixed_quality_ai_course_draft "
+        "candidates only (never quality reference) > "
         "model common knowledge. Natural Colloquial Calibration = zero factual authority.",
         "C) User intent: brief/map set learner, promise, direction, market, outcome — "
         "but never override truth, official docs, safety, DOCX contract, or ROKN quality.",

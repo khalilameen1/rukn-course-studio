@@ -217,6 +217,7 @@ from app.validators import (
     check_opening,
     check_repetition,
 )
+from app.validators.anti_patterns_checker import check_anti_patterns_script
 from app.validators.creator_persona_checker import check_creator_persona_script
 
 # Usable extraction outcomes - see app/services/extraction.py. Anything else
@@ -1334,8 +1335,14 @@ def _load_usable_sources_with_memory(
     """Load usable sources and ensure persistent Source Memory exists once.
 
     Unchanged source_hash ⇒ reuse memory (no re-extract / no full re-read).
+    Mixed-quality drafts also re-run the Course Promise Relevance Gate when
+    the current course brief changes (promise fingerprint mismatch).
     """
     from app.generation.cost_hygiene import WasteWarningTracker
+    from app.generation.mixed_draft_memory import (
+        course_promise_from_course,
+        is_mixed_quality_draft_category,
+    )
     from app.generation.source_memory_store import (
         compute_source_hash,
         memory_matches_hash,
@@ -1343,6 +1350,10 @@ def _load_usable_sources_with_memory(
 
     tele = SourceMemoryTelemetry()
     waste = WasteWarningTracker()
+    course = courses.get(session, course_id)
+    promise = course_promise_from_course(course)
+    promise_dict = promise.as_dict()
+    promise_fp = compute_source_hash(promise.blob() or "")
     sources = course_sources.list(session, course_id=course_id)
     usable = [
         source
@@ -1357,30 +1368,50 @@ def _load_usable_sources_with_memory(
         analysis = analyses[0] if analyses else None
         text = source.extracted_text or ""
         current_hash = compute_source_hash(text)
+        category = source.source_category.value
+        mixed = is_mixed_quality_draft_category(category)
+
+        promise_ok = True
+        if mixed and analysis and analysis.source_memory_json:
+            existing_fp = (analysis.source_memory_json or {}).get("promise_fingerprint")
+            md = (analysis.source_memory_json or {}).get("mixed_draft_memory") or {}
+            if not existing_fp:
+                existing_fp = (md or {}).get("promise_fingerprint")
+            promise_ok = existing_fp == promise_fp
 
         if (
             analysis
             and analysis.source_memory_json
             and memory_matches_hash(analysis.source_memory_json, text)
+            and promise_ok
         ):
             tele.reused_source_memory_count += 1
             result.append(UsableSource(course_source=source, analysis=analysis))
             continue
 
+        memory_kwargs = dict(
+            title=source.original_filename or f"source-{source.id}",
+            category=category,
+            extracted_text=text,
+            priority=source.priority.value,
+            include_in_generation=getattr(source, "include_in_generation", True),
+            course_promise=promise_dict if mixed else None,
+        )
+
         if analysis and analysis.source_memory_json:
-            # Hash changed — rebuild memory from text (still no file re-read).
+            # Hash or course-promise fingerprint changed — rebuild memory.
             waste.add("source_hash_changed_rebuild")
             memory = build_source_memory_payload(
-                title=source.original_filename or f"source-{source.id}",
-                category=source.source_category.value,
-                extracted_text=text,
+                **memory_kwargs,
                 summary=analysis.source_summary,
                 chunks=analysis.chunks_json,
                 key_points=analysis.key_points_json,
                 avoid_points=analysis.avoid_points_json,
-                priority=source.priority.value,
-                include_in_generation=getattr(source, "include_in_generation", True),
             )
+            if mixed:
+                memory["promise_fingerprint"] = promise_fp
+                if isinstance(memory.get("mixed_draft_memory"), dict):
+                    memory["mixed_draft_memory"]["promise_fingerprint"] = promise_fp
             source_analyses.update(
                 session,
                 analysis.id,
@@ -1395,16 +1426,16 @@ def _load_usable_sources_with_memory(
             tele.repeated_source_extraction_warnings += 1
             waste.add("duplicate_source_extraction")
             memory = build_source_memory_payload(
-                title=source.original_filename or f"source-{source.id}",
-                category=source.source_category.value,
-                extracted_text=text,
+                **memory_kwargs,
                 summary=analysis.source_summary,
                 chunks=analysis.chunks_json,
                 key_points=analysis.key_points_json,
                 avoid_points=analysis.avoid_points_json,
-                priority=source.priority.value,
-                include_in_generation=getattr(source, "include_in_generation", True),
             )
+            if mixed:
+                memory["promise_fingerprint"] = promise_fp
+                if isinstance(memory.get("mixed_draft_memory"), dict):
+                    memory["mixed_draft_memory"]["promise_fingerprint"] = promise_fp
             source_analyses.update(
                 session,
                 analysis.id,
@@ -1421,19 +1452,19 @@ def _load_usable_sources_with_memory(
 
             from app.services.source_analysis import analyze_source_text
 
-            built = analyze_source_text(text, source.source_category.value)
+            built = analyze_source_text(text, category)
             chunks = [asdict(c) for c in built.chunks]
             memory = build_source_memory_payload(
-                title=source.original_filename or f"source-{source.id}",
-                category=source.source_category.value,
-                extracted_text=text,
+                **memory_kwargs,
                 summary=built.source_summary,
                 chunks=chunks,
                 key_points=built.key_points,
                 avoid_points=built.avoid_points,
-                priority=source.priority.value,
-                include_in_generation=getattr(source, "include_in_generation", True),
             )
+            if mixed:
+                memory["promise_fingerprint"] = promise_fp
+                if isinstance(memory.get("mixed_draft_memory"), dict):
+                    memory["mixed_draft_memory"]["promise_fingerprint"] = promise_fp
             analysis = source_analyses.create(
                 session,
                 source_id=source.id,
@@ -1676,6 +1707,18 @@ def _local_review_single_reel(
         )
 
     for issue in check_high_signal(generated.script_text):
+        actions.append(
+            ReviewAction(
+                action=ReviewActionType.REWRITE,
+                target_id=generated.reel_id,
+                reason_code=issue.reason_code,
+                instruction=issue.detail,
+            )
+        )
+
+    for issue in check_anti_patterns_script(
+        generated.script_text, reel_id=generated.reel_id
+    ):
         actions.append(
             ReviewAction(
                 action=ReviewActionType.REWRITE,

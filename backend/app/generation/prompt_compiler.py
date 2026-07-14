@@ -74,7 +74,7 @@ DEFAULT_MAX_TOTAL_CHARS = 6000
 # for traceability - so an old run's snapshot can be compared against
 # whatever version is active today. Not read by anything at runtime other
 # than the snapshot builder.
-PROMPT_COMPILER_VERSION = "2.8"
+PROMPT_COMPILER_VERSION = "2.14"
 
 # Stage -> the admin-knowledge keys actually relevant to it. Missing/
 # inactive keys are simply omitted (never an error) - see
@@ -97,6 +97,8 @@ _STAGE_RULE_KEYS: dict[PipelineStage, tuple[str, ...]] = {
         "rukn_originality_rights_gate",
         "rukn_cost_hygiene_trusted_knowledge",
         "rukn_knowledge_priority_ladder",
+        "rukn_interpretation_guardrails",
+        "rukn_educational_creator_standard",
     ),
     PipelineStage.WRITE_SINGLE_REEL: (
         "rukn_core_rules",
@@ -114,6 +116,9 @@ _STAGE_RULE_KEYS: dict[PipelineStage, tuple[str, ...]] = {
         "rukn_originality_rights_gate",
         "rukn_cost_hygiene_trusted_knowledge",
         "rukn_knowledge_priority_ladder",
+        "rukn_grounded_claims_gate",
+        "rukn_interpretation_guardrails",
+        "rukn_educational_creator_standard",
     ),
     PipelineStage.REVIEW_SINGLE_REEL: (
         "rukn_writing_style",
@@ -130,6 +135,9 @@ _STAGE_RULE_KEYS: dict[PipelineStage, tuple[str, ...]] = {
         "rukn_originality_rights_gate",
         "rukn_cost_hygiene_trusted_knowledge",
         "rukn_knowledge_priority_ladder",
+        "rukn_interpretation_guardrails",
+        "rukn_educational_creator_standard",
+        "rukn_anti_patterns_quality_checks",
     ),
     PipelineStage.REVIEW_FIVE_REELS: (
         "rukn_writing_style",
@@ -145,6 +153,9 @@ _STAGE_RULE_KEYS: dict[PipelineStage, tuple[str, ...]] = {
         "rukn_official_tool_docs_gate",
         "rukn_originality_rights_gate",
         "rukn_knowledge_priority_ladder",
+        "rukn_interpretation_guardrails",
+        "rukn_educational_creator_standard",
+        "rukn_anti_patterns_quality_checks",
     ),
     PipelineStage.REVIEW_MODULE: (
         "rukn_writing_style",
@@ -160,6 +171,9 @@ _STAGE_RULE_KEYS: dict[PipelineStage, tuple[str, ...]] = {
         "rukn_official_tool_docs_gate",
         "rukn_originality_rights_gate",
         "rukn_knowledge_priority_ladder",
+        "rukn_interpretation_guardrails",
+        "rukn_educational_creator_standard",
+        "rukn_anti_patterns_quality_checks",
     ),
     PipelineStage.REVIEW_TWO_MODULES: (
         "rukn_writing_style",
@@ -175,6 +189,9 @@ _STAGE_RULE_KEYS: dict[PipelineStage, tuple[str, ...]] = {
         "rukn_official_tool_docs_gate",
         "rukn_originality_rights_gate",
         "rukn_knowledge_priority_ladder",
+        "rukn_interpretation_guardrails",
+        "rukn_educational_creator_standard",
+        "rukn_anti_patterns_quality_checks",
     ),
     PipelineStage.FINAL_REVIEW: (
         "rukn_forbidden_phrases",
@@ -190,6 +207,10 @@ _STAGE_RULE_KEYS: dict[PipelineStage, tuple[str, ...]] = {
         "rukn_official_tool_docs_gate",
         "rukn_originality_rights_gate",
         "rukn_knowledge_priority_ladder",
+        "rukn_grounded_claims_gate",
+        "rukn_interpretation_guardrails",
+        "rukn_educational_creator_standard",
+        "rukn_anti_patterns_quality_checks",
     ),
     PipelineStage.REBUILD_FINAL_COURSE: (
         "rukn_writing_style",
@@ -205,6 +226,10 @@ _STAGE_RULE_KEYS: dict[PipelineStage, tuple[str, ...]] = {
         "rukn_official_tool_docs_gate",
         "rukn_originality_rights_gate",
         "rukn_knowledge_priority_ladder",
+        "rukn_grounded_claims_gate",
+        "rukn_interpretation_guardrails",
+        "rukn_educational_creator_standard",
+        "rukn_anti_patterns_quality_checks",
     ),
 }
 
@@ -214,11 +239,18 @@ def select_rules_for_stage(all_rules: dict[str, str], stage: PipelineStage) -> d
     just omitted, never an error (an admin may not have activated it).
 
     Also injects a compact stage authority-pack hint so prompts never treat
-    all sources as equal authority (Knowledge Priority Ladder).
+    all sources as equal authority (Knowledge Priority Ladder), and the
+    teleprompter readability formatting rule on write/final/rebuild stages.
     """
+    from app.generation.teleprompter_readability import TELEPROMPTER_READABILITY_PROMPT_RULE
+
     keys = _STAGE_RULE_KEYS.get(stage, ())
     selected = {key: all_rules[key] for key in keys if key in all_rules}
     selected["rukn_authority_pack_hint"] = stage_authority_pack_hint(stage)
+    if "rukn_teleprompter_docx_contract" in keys:
+        selected["rukn_teleprompter_readability_runtime"] = (
+            TELEPROMPTER_READABILITY_PROMPT_RULE
+        )
     return selected
 
 
@@ -258,6 +290,10 @@ STABLE_RULE_KEYS: tuple[str, ...] = (
     "rukn_official_tool_docs_gate",
     "rukn_originality_rights_gate",
     "rukn_knowledge_priority_ladder",
+    "rukn_grounded_claims_gate",
+    "rukn_interpretation_guardrails",
+    "rukn_educational_creator_standard",
+    "rukn_anti_patterns_quality_checks",
 )
 
 
@@ -323,6 +359,16 @@ ALLOWED_USE_BY_CATEGORY: dict[str, list[str]] = {
     SourceCategory.OLD_COURSE.value: [
         "reuse_useful_structure_or_content",
         "identify_strengths_and_weaknesses",
+    ],
+    SourceCategory.MIXED_QUALITY_AI_COURSE_DRAFT.value: [
+        "extract_useful_candidates_only",
+        "extract_topic_inventory_as_candidates",
+        "extract_learner_objections_as_candidates",
+        "extract_examples_to_rebuild_not_copy",
+        "detect_discard_and_bad_patterns",
+        "flag_claims_for_external_grounding",
+        "apply_course_promise_relevance_gate",
+        "discard_off_promise_modules_and_dumb_reels",
     ],
     SourceCategory.RAW_MATERIAL.value: [
         "classify_and_extract_useful_parts",
@@ -390,6 +436,34 @@ DISALLOWED_USE_BY_CATEGORY: dict[str, list[str]] = {
         "blindly_summarize",
         "reuse_weak_parts",
         "treat_as_final_authority",
+        "copy_wording_hooks_loops_or_structure",
+        "copy_hooks",
+        "copy_artificial_loops",
+        "copy_examples_verbatim",
+        "treat_as_quality_reference",
+        "treat_whole_draft_as_worthless",
+        "ground_claims_from_draft_alone",
+        "use_old_map_as_final_map",
+    ],
+    SourceCategory.MIXED_QUALITY_AI_COURSE_DRAFT.value: [
+        "blindly_summarize",
+        "reuse_weak_parts",
+        "treat_as_final_authority",
+        "treat_as_quality_reference",
+        "treat_whole_draft_as_worthless",
+        "copy_sentences",
+        "copy_hooks",
+        "copy_artificial_loops",
+        "copy_generic_ai_phrasing",
+        "copy_examples_verbatim",
+        "copy_distinctive_metaphors",
+        "preserve_bad_structure_by_default",
+        "ground_claims_from_draft_alone",
+        "use_old_map_as_final_map",
+        "resend_full_draft_into_lesson_prompts",
+        "preserve_off_promise_modules_because_they_exist",
+        "let_old_draft_dictate_module_or_lesson_count",
+        "inherit_old_draft_bloat_or_side_details",
     ],
     SourceCategory.RAW_MATERIAL.value: [
         "treat_as_verified_fact",
@@ -422,7 +496,17 @@ STYLE_CONTAMINATION_WARNING_BY_CATEGORY: dict[str, str | None] = {
         "Do not copy filler, wording, tone, or structure."
     ),
     SourceCategory.OLD_COURSE.value: (
-        "Previous course/attempt - may be outdated; reuse selectively, verify before reuse."
+        "Mixed-quality previous course/attempt — may contain useful candidates, "
+        "irrelevant modules, and defects. Apply Course Promise Relevance Gate; "
+        "discard off-promise modules; extract candidates only; never copy "
+        "wording/hooks/loops; never treat as quality reference; rebuild in ROKN."
+    ),
+    SourceCategory.MIXED_QUALITY_AI_COURSE_DRAFT.value: (
+        "This is a mixed-quality previous AI-generated course draft. It may contain "
+        "useful candidates, irrelevant modules, dumb reels, side details, and defects. "
+        "Evaluate every segment against the current course promise before using it. "
+        "Discard off-promise modules and irrelevant reels even if they are well-written. "
+        "Extract only useful candidate ideas, then rebuild from scratch in ROKN quality."
     ),
     SourceCategory.RAW_MATERIAL.value: (
         "Mixed/unclear material - treat as uncertain, verify before reuse."
@@ -440,6 +524,7 @@ _CATEGORY_AUTHORITY_RANK: dict[str, int] = {
     SourceCategory.SCIENTIFIC_REFERENCE.value: 1,
     SourceCategory.TRANSCRIPT.value: 2,
     SourceCategory.FLOW_REFERENCE.value: 3,
+    SourceCategory.MIXED_QUALITY_AI_COURSE_DRAFT.value: 4,
     SourceCategory.OLD_COURSE.value: 4,
     SourceCategory.RAW_MATERIAL.value: 5,
 }
@@ -763,6 +848,14 @@ def _build_excerpt(source: SourceForCompiler, query_text: str) -> SourceExcerpt:
     elif source.category == SourceCategory.USER_NOTES.value:
         # Notes are highest-priority data but still fenced — never override Admin.
         text = wrap_untrusted(source.text or "", label=f"user_notes:{source.source_id}")
+    elif source.category in (
+        SourceCategory.MIXED_QUALITY_AI_COURSE_DRAFT.value,
+        SourceCategory.OLD_COURSE.value,
+    ):
+        text = wrap_untrusted(
+            source.text or "",
+            label=f"mixed_quality_ai_course_draft:{source.source_id}",
+        )
     elif source.category == SourceCategory.RAW_MATERIAL.value:
         text = wrap_untrusted(
             _RAW_MATERIAL_MARKER + _factual_excerpt_text(source, query_text),

@@ -40,10 +40,13 @@ class SourceCategory(str, Enum):
       or course-planning input. Never facts/claims/examples/terminology;
       never assume the speaker is good; never copy messy structure.
       Replaces the old SPOKEN_STYLE category.
-    - OLD_COURSE: a previous course, to understand its structure/strengths/
-      weaknesses. Reuse what's useful, avoid its weak parts; don't blindly
-      summarize it. Prep for future fusion logic, but no fusion logic
-      exists yet.
+    - MIXED_QUALITY_AI_COURSE_DRAFT: previous AI-generated course draft that
+      may contain useful candidates AND defects. Segment-evaluate; extract
+      candidates only; never copy wording/hooks/loops; never treat as quality
+      reference or automatic truth. Not worthless.
+    - OLD_COURSE: legacy alias for previous course/attempt. Processed with the
+      same Mixed Draft Memory pipeline as MIXED_QUALITY_AI_COURSE_DRAFT so
+      existing rows keep working (TEXT storage; no rename migration required).
     - USER_NOTES: direct user instructions - highest priority. Adjusts
       scope/audience/tone/constraints; never dropped or truncated by any
       budget-compression step. Replaces the old NOTES category.
@@ -54,6 +57,7 @@ class SourceCategory(str, Enum):
 
     SCIENTIFIC_REFERENCE = "scientific_reference"
     FLOW_REFERENCE = "flow_reference"
+    MIXED_QUALITY_AI_COURSE_DRAFT = "mixed_quality_ai_course_draft"
     OLD_COURSE = "old_course"
     USER_NOTES = "user_notes"
     RAW_MATERIAL = "raw_material"

@@ -12,6 +12,7 @@ export type ExplanationLevel = "final_only" | "short_summary" | "full_report";
 export type SourceCategory =
   | "scientific_reference"
   | "flow_reference"
+  | "mixed_quality_ai_course_draft"
   | "old_course"
   | "user_notes"
   | "raw_material"

@@ -503,6 +503,38 @@ def gate_originality_rights(
     return updated.model_copy(update={"modules": modules})
 
 
+def gate_teleprompter_readability(course: FinalCourse, report: CourseGateReport) -> FinalCourse:
+    """Format scripts for teleprompter reading (line breaks, light punctuation).
+
+    Runs after content remediations so earlier gates that join sentences with
+    spaces do not leave a dense paragraph in the DOCX.
+    """
+    from app.generation.teleprompter_readability import format_script_for_teleprompter
+
+    modules = []
+    changed = False
+    for module in course.modules:
+        reels = []
+        for reel in module.reels:
+            original = reel.script_text or ""
+            formatted = format_script_for_teleprompter(original)
+            if formatted != original:
+                changed = True
+                report.rebuilt_reel_ids.append(reel.reel_id)
+                report.remediations.append(f"teleprompter_readability:{reel.reel_id}")
+            reels.append(reel.model_copy(update={"script_text": formatted}))
+        modules.append(module.model_copy(update={"reels": reels}))
+    if changed:
+        report.issues.append(
+            GateIssue(
+                gate="teleprompter_readability",
+                code="readability_format_applied",
+                detail="Applied teleprompter line-break readability formatting.",
+            )
+        )
+    return course.model_copy(update={"modules": modules}) if changed else course
+
+
 def _refresh_full_text(course: FinalCourse) -> FinalCourse:
     parts = [f"# {course.title}"]
     for module in course.modules:
@@ -604,6 +636,8 @@ def run_course_quality_gates(
     course = gate_originality_rights(
         course, brief, report, source_texts=source_texts
     )
+    # Last mutate of script_text: teleprompter line breaks must survive export.
+    course = gate_teleprompter_readability(course, report)
     course = _refresh_full_text(course)
 
     # Risk count = distinct issue codes (excluding soft remediations-only noise).
@@ -612,7 +646,11 @@ def run_course_quality_gates(
             i.code
             for i in report.issues
             if i.code
-            not in {"spoken_rewrite_applied", "tool_course_flag"}  # soft signals
+            not in {
+                "spoken_rewrite_applied",
+                "tool_course_flag",
+                "readability_format_applied",
+            }  # soft signals
         }
     )
     # Deduplicate rebuilt ids

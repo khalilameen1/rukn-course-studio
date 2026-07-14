@@ -123,7 +123,11 @@ def test_generation_presets_key_never_included_for_any_stage():
 def test_missing_keys_are_just_omitted_not_an_error():
     partial_rules = {"rukn_core_rules": "core"}
     selected = select_rules_for_stage(partial_rules, PipelineStage.BUILD_COURSE_MAP)
-    assert selected == {"rukn_core_rules": "core"}
+    assert selected["rukn_core_rules"] == "core"
+    # Missing admin keys are silently omitted (never an error) - only the
+    # always-injected compact authority hint is added on top.
+    assert "rukn_practical_course_rules" not in selected
+    assert set(selected) == {"rukn_core_rules", "rukn_authority_pack_hint"}
 
 
 def test_flow_reference_produces_profile_not_verbatim_excerpt():
@@ -145,7 +149,9 @@ def test_flow_reference_produces_profile_not_verbatim_excerpt():
     result_text = excerpts[0].text
     assert source_text not in result_text
     assert "هتضيع وقتك" not in result_text
-    assert "heuristic profile" in result_text
+    # Profile (not verbatim), fenced as untrusted calibration-only material.
+    assert "Natural Colloquial Calibration" in result_text
+    assert "colloquial_calibration" in result_text
 
 
 def test_scientific_reference_uses_extract_summarize_chunk_selection_path():
@@ -183,7 +189,9 @@ def test_scientific_reference_short_source_passes_through_full_text():
         source_id=3, category="scientific_reference", priority="medium", text="Short note."
     )
     excerpts = compile_source_context([source], query_text="")
-    assert excerpts[0].text == "Short note."
+    # Full text survives, wrapped in the untrusted-reference fence.
+    assert "Short note." in excerpts[0].text
+    assert "UNTRUSTED_REFERENCE_MATERIAL" in excerpts[0].text
 
 
 def test_user_notes_always_pass_through_unmodified_when_within_budget():
@@ -191,7 +199,9 @@ def test_user_notes_always_pass_through_unmodified_when_within_budget():
         source_id=4, category="user_notes", priority="low", text="Please keep this exact tone."
     )
     excerpts = compile_source_context([source], query_text="")
-    assert excerpts[0].text == "Please keep this exact tone."
+    # Notes text is never rewritten/truncated - only fenced as untrusted.
+    assert "Please keep this exact tone." in excerpts[0].text
+    assert "user_notes" in excerpts[0].text
 
 
 def test_raw_material_gets_unclassified_marker_prefix():
@@ -236,8 +246,8 @@ def test_user_notes_survive_trimming_over_low_priority_raw_material():
     excerpts = compile_source_context(sources, query_text="", max_total_chars=200)
 
     by_category = {e.category: e for e in excerpts}
-    assert by_category["user_notes"].text == user_notes_text
-    assert len(by_category["raw_material"].text) < len(raw_material_text)
+    assert user_notes_text in by_category["user_notes"].text
+    assert raw_material_text not in by_category["raw_material"].text
 
 
 def test_default_max_total_chars_is_a_sane_positive_number():
