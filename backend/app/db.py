@@ -22,6 +22,12 @@ connect_args = (
 
 engine = create_engine(settings.database_url, echo=False, connect_args=connect_args)
 
+# Postgres rejects INTEGER literals as BOOLEAN defaults (DatatypeMismatch).
+# Always use TRUE/FALSE in raw DDL — never DEFAULT 1 / DEFAULT 0 for booleans.
+# SQLite accepts TRUE/FALSE as aliases for 1/0, so this form is dual-safe.
+BOOLEAN_NOT_NULL_DEFAULT_TRUE = "BOOLEAN NOT NULL DEFAULT TRUE"
+BOOLEAN_NOT_NULL_DEFAULT_FALSE = "BOOLEAN NOT NULL DEFAULT FALSE"
+
 
 def init_db() -> None:
     """Create tables for all registered SQLModel models.
@@ -42,12 +48,46 @@ def init_db() -> None:
     _ensure_course_source_columns()
 
 
+def _is_postgres() -> bool:
+    return getattr(engine.dialect, "name", "") == "postgresql"
+
+
+def _harden_boolean_not_null_true(conn, table: str, column: str) -> None:
+    """Fix default/nullability on an existing boolean column (Postgres-focused).
+
+    SQLite: fill NULLs only (ALTER COLUMN SET DEFAULT/NOT NULL is limited).
+    """
+    from sqlalchemy import text
+
+    dialect = getattr(getattr(conn, "dialect", None), "name", None) or (
+        engine.dialect.name if hasattr(engine, "dialect") else ""
+    )
+    if dialect == "postgresql":
+        conn.execute(
+            text(f"ALTER TABLE {table} ALTER COLUMN {column} SET DEFAULT TRUE")
+        )
+        conn.execute(
+            text(f"UPDATE {table} SET {column} = TRUE WHERE {column} IS NULL")
+        )
+        conn.execute(
+            text(f"ALTER TABLE {table} ALTER COLUMN {column} SET NOT NULL")
+        )
+    else:
+        # SQLite stores booleans as 0/1; TRUE works as alias.
+        conn.execute(
+            text(f"UPDATE {table} SET {column} = TRUE WHERE {column} IS NULL")
+        )
+
+
 def _ensure_course_source_columns() -> None:
-    """Add CourseSource cost-hygiene columns on existing DBs."""
+    """Add CourseSource cost-hygiene columns on existing DBs.
+
+    Critical: `include_in_generation` must use BOOLEAN … DEFAULT TRUE, never
+    DEFAULT 1 (Postgres DatatypeMismatch on Render).
+    """
     from sqlalchemy import inspect, text
 
-    additions: dict[str, str] = {
-        "include_in_generation": "BOOLEAN DEFAULT 1",
+    other_additions: dict[str, str] = {
         "title": "TEXT",
         "source_hash": "TEXT",
     }
@@ -55,17 +95,43 @@ def _ensure_course_source_columns() -> None:
         inspector = inspect(engine)
         if "course_sources" not in inspector.get_table_names():
             return
-        existing = {col["name"] for col in inspector.get_columns("course_sources")}
+        existing = {col["name"]: col for col in inspector.get_columns("course_sources")}
     except Exception:
         return
 
     with engine.begin() as conn:
-        for name, sql_type in additions.items():
+        if "include_in_generation" not in existing:
+            if _is_postgres():
+                conn.execute(
+                    text(
+                        "ALTER TABLE course_sources "
+                        "ADD COLUMN IF NOT EXISTS include_in_generation "
+                        f"{BOOLEAN_NOT_NULL_DEFAULT_TRUE}"
+                    )
+                )
+            else:
+                conn.execute(
+                    text(
+                        "ALTER TABLE course_sources "
+                        "ADD COLUMN include_in_generation "
+                        f"{BOOLEAN_NOT_NULL_DEFAULT_TRUE}"
+                    )
+                )
+        else:
+            # Column already present (possibly nullable / wrong default from an
+            # older SQLite-era patch). Harden without failing if already correct.
+            try:
+                _harden_boolean_not_null_true(
+                    conn, "course_sources", "include_in_generation"
+                )
+            except Exception:
+                # Best-effort on exotic SQLite builds / locked schemas.
+                pass
+
+        for name, sql_type in other_additions.items():
             if name in existing:
                 continue
-            conn.execute(
-                text(f"ALTER TABLE course_sources ADD COLUMN {name} {sql_type}")
-            )
+            conn.execute(text(f"ALTER TABLE course_sources ADD COLUMN {name} {sql_type}"))
 
 
 def _ensure_source_analysis_columns() -> None:

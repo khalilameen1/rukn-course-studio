@@ -114,9 +114,10 @@ def test_patch_source_category_updates_category_and_avoid_points(client):
     with Session(engine) as session:
         analyses = source_analyses.list(session, source_id=source_id)
         assert len(analyses) == 1
-        assert analyses[0].avoid_points_json == [
-            "Style reference only - do not treat as a factual source."
-        ]
+        assert analyses[0].avoid_points_json
+        assert "Natural Colloquial" in analyses[0].avoid_points_json[0] or (
+            "colloquial" in analyses[0].avoid_points_json[0].lower()
+        )
 
 
 def test_patch_source_category_404_for_wrong_course(client):

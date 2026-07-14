@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 from typing import Optional
 
+from sqlalchemy import Boolean, Column, true as sa_true
 from sqlmodel import Field, SQLModel
 
 from app.models.enums import Priority, SourceCategory
@@ -27,7 +28,11 @@ class CourseSource(SQLModel, table=True):
     priority: Priority = Field(default=Priority.MEDIUM)
     status: str = Field(default="uploaded")
     # Cost hygiene: when False, source is kept but not injected into generation.
-    include_in_generation: bool = Field(default=True)
+    # DB default must be TRUE (not integer 1) for Postgres compatibility.
+    include_in_generation: bool = Field(
+        default=True,
+        sa_column=Column(Boolean, nullable=False, server_default=sa_true()),
+    )
     # Content hash of extracted/pasted text (aligned with Source Memory).
     source_hash: Optional[str] = Field(default=None, index=True)
     created_at: datetime = Field(default_factory=_utcnow)
