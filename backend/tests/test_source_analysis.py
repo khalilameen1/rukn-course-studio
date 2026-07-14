@@ -8,13 +8,13 @@ from app.services.source_analysis import (
 
 
 def test_analyze_short_text_summary_is_full_text():
-    result = analyze_source_text("Short text about VLOOKUP.", "main_content")
+    result = analyze_source_text("Short text about VLOOKUP.", "scientific_reference")
     assert result.source_summary == "Short text about VLOOKUP."
 
 
 def test_analyze_long_text_summary_is_truncated():
     long_text = "This is a sentence about formulas. " * 30  # well over SUMMARY_MAX_CHARS
-    result = analyze_source_text(long_text, "main_content")
+    result = analyze_source_text(long_text, "scientific_reference")
 
     assert len(result.source_summary) <= SUMMARY_MAX_CHARS + 3  # allow "..." fallback
     assert result.source_summary != long_text
@@ -22,26 +22,28 @@ def test_analyze_long_text_summary_is_truncated():
 
 def test_key_points_use_headings_when_present():
     text = "# Getting Started\nSome content.\n\n# Advanced Topics\nMore content."
-    result = analyze_source_text(text, "main_content")
+    result = analyze_source_text(text, "scientific_reference")
 
     assert result.key_points == ["Getting Started", "Advanced Topics"]
 
 
 def test_key_points_fall_back_to_first_sentence_without_headings():
     text = "VLOOKUP finds values in a table. It is one of the most common formulas."
-    result = analyze_source_text(text, "main_content")
+    result = analyze_source_text(text, "scientific_reference")
 
     assert result.key_points == ["VLOOKUP finds values in a table."]
 
 
 def test_avoid_points_are_category_driven():
-    spoken = analyze_source_text("some text", "spoken_style")
+    flow = analyze_source_text("some text", "flow_reference")
     old = analyze_source_text("some text", "old_course")
-    main = analyze_source_text("some text", "main_content")
+    raw = analyze_source_text("some text", "raw_material")
+    scientific = analyze_source_text("some text", "scientific_reference")
 
-    assert "factual source" in spoken.avoid_points[0]
+    assert "factual source" in flow.avoid_points[0]
     assert "outdated" in old.avoid_points[0]
-    assert main.avoid_points == []
+    assert "uncertain" in raw.avoid_points[0]
+    assert scientific.avoid_points == []
 
 
 def test_select_relevant_chunks_ranks_by_keyword_overlap():

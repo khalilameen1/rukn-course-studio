@@ -9,12 +9,26 @@ finished `GenerationJob`.
 Only `GenerationJob.current_stage` and `.progress_percent` are the
 user-visible signal of progress (values match the coarse vocabulary in
 docs/PRD.md FR-8: queued/reading_sources/building_map/generating/
-reviewing_repetition/reviewing/exporting/done/failed - the frontend maps
-these to friendlier labels, see frontend GeneratePanel.tsx STAGE_LABELS).
-`log_json` holds short, structured internal log entries for
+reviewing_repetition/reviewing/exporting/done/failed/partial - the frontend
+maps these to friendlier labels, see frontend GeneratePanel.tsx
+STAGE_LABELS). `log_json` holds short, structured internal log entries for
 admin/debug traceability only - see app/schemas/generation_job.py, which
 deliberately excludes `log_json` from what the API ever returns. Nothing in
 this file returns reel-by-reel content to a caller outside the pipeline.
+
+Loss-safe persistence: `course_map_json` and `completed_reels_json` (see
+app/models/generation_job.py) are flushed to the DB as soon as each piece
+completes - the course map right after it's built, each reel right after
+it's appended - so a mid-run failure never loses already-completed work.
+On failure, `except Exception` below classifies the error
+(app/generation/errors.py) and, if any of that persisted state exists,
+builds and saves a partial DOCX and ends the job `PARTIAL` instead of
+`FAILED`. There is deliberately no `resume_generation`: the two-module
+review pairing (`pending_pair` below) can't be safely reconstructed from
+`completed_reels_json` alone (a crash between a module's own review and
+its pairing review would look identical, on resume, to one where the pairing
+already ran) - see README.md's "Generation resilience" section. Partial
+DOCX download is the supported recovery path for now.
 """
 
 from dataclasses import dataclass
@@ -41,6 +55,7 @@ from app.ai.provider import (
 from app.config import settings
 from app.crud import (
     admin_knowledge_items,
+    ai_usage_events,
     course_sources,
     course_versions,
     courses,
@@ -48,11 +63,22 @@ from app.crud import (
     source_analyses,
 )
 from app.db import engine
+from app.generation.budget_guard import compute_budget_warning
+from app.generation.errors import classify_provider_error, error_message_for
+from app.generation.output_scoring import OutputScoreReport, score_final_course
+from app.generation.pricing import estimate_cost_usd
+from app.generation.prompt_compiler import (
+    SourceForCompiler,
+    compile_source_context,
+    select_rules_for_stage,
+)
+from app.generation.run_snapshot import build_run_snapshot
 from app.models.course import Course
 from app.models.course_source import CourseSource
 from app.models.enums import ExplanationLevel, JobStatus
 from app.models.generation_job import GenerationJob
 from app.models.source_analysis import SourceAnalysis
+from app.prompts.prompt_registry import PipelineStage
 from app.schemas.generation import (
     CourseMap,
     FinalCourse,
@@ -67,9 +93,23 @@ from app.schemas.generation import (
     ReviewScope,
     ReviewStatus,
 )
-from app.services.docx_export import export_final_course_to_docx, next_version_number
-from app.services.source_analysis import SHORT_SOURCE_MAX_CHARS, select_relevant_chunks
-from app.validators import check_forbidden_phrases, check_length, check_opening, check_repetition
+from app.services.docx_export import (
+    build_partial_course_from_job,
+    export_final_course_to_docx,
+    export_partial_course_to_docx,
+    extract_plain_text,
+    next_version_number,
+    render_final_course_docx,
+    render_partial_course_docx,
+)
+from app.validators import (
+    check_anti_template,
+    check_forbidden_phrases,
+    check_high_signal,
+    check_length,
+    check_opening,
+    check_repetition,
+)
 
 # Usable extraction outcomes - see app/services/extraction.py. Anything else
 # (password_required / extraction_blocked / scanned_no_text / failed) has no
@@ -95,12 +135,59 @@ class UsableSource:
     analysis: SourceAnalysis | None
 
 
+def _record_usage_event(
+    session: Session,
+    job: GenerationJob,
+    provider: AIProvider,
+    stage: PipelineStage,
+    preset: str,
+) -> None:
+    """AI Usage Center (§5): persist one `AIUsageEvent` row for the call
+    that just completed on `provider`, reading `provider.last_usage` if the
+    provider exposes it (deliberately `hasattr`-guarded, same decoupling
+    pattern as `configure_for_run` above - this keeps `AIProvider`
+    implementations entirely DB-independent; only the orchestrator, which
+    already holds `session`, does the persisting).
+
+    A provider with no `last_usage` (or one that's still `None`, e.g.
+    before its first call) simply means nothing is recorded for that call -
+    never an error.
+    """
+    usage = getattr(provider, "last_usage", None)
+    if not usage:
+        return
+
+    provider_name = (settings.ai_provider or "fake").strip().lower()
+    model_name = usage.get("model") or ("fake" if provider_name == "fake" else settings.ai_model_name)
+    estimated_cost = 0.0 if provider_name == "fake" else estimate_cost_usd(
+        model_name, usage.get("input_tokens"), usage.get("output_tokens")
+    )
+
+    ai_usage_events.create(
+        session,
+        job_id=job.id,
+        course_id=job.course_id,
+        stage=stage.value,
+        provider=provider_name,
+        model=model_name,
+        preset=preset,
+        input_tokens=usage.get("input_tokens"),
+        output_tokens=usage.get("output_tokens"),
+        cache_read_tokens=usage.get("cache_read_input_tokens"),
+        cache_write_tokens=usage.get("cache_creation_input_tokens"),
+        estimated_cost_usd=estimated_cost,
+        status="ok",
+    )
+
+
 def run_generation(
     session: Session, course_id: int, provider: AIProvider | None = None
 ) -> GenerationJob:
     """Run the full pipeline for `course_id` and return the finished job.
 
-    On any internal error, the job is marked FAILED with a short
+    On any internal error, the job is marked FAILED (nothing usable was
+    saved yet) or PARTIAL (a course map and/or at least one completed reel
+    survived - see the module docstring above) with a short, clean
     `error_message` and returned (not raised) - callers should check
     `job.status` rather than relying on an exception, per docs/PRD.md FR-10
     ("clear, actionable error state, not a raw stack trace").
@@ -126,6 +213,14 @@ def run_generation(
         log_json=[],
     )
     logs: list[dict] = []
+    # Initialized here (not inside `try`) so the `except` block below can
+    # always safely reference them - a failure that happens before
+    # `_load_active_rules`/`_load_usable_sources` complete would otherwise
+    # leave these undefined right when the error path needs them for
+    # output scoring/the run snapshot.
+    rules_context: dict[str, str] = {}
+    usable_sources: list[UsableSource] = []
+    preset_value: str = course.generation_preset.value
 
     def flush(**job_fields) -> None:
         nonlocal job
@@ -143,6 +238,17 @@ def run_generation(
                 "sources": len(usable_sources),
             }
         )
+        # Run snapshot metadata (§2 & §3) - immutable once written here,
+        # never touched again for the rest of this run. See
+        # app/generation/run_snapshot.py for exactly what's stored (hashes
+        # only, never raw admin-knowledge/source text) and why this lives
+        # on GenerationJob rather than Course.
+        run_snapshot = build_run_snapshot(
+            rules_context=rules_context,
+            generation_preset=preset_value,
+            source_ids_used=[u.course_source.id for u in usable_sources],
+        )
+        flush(run_snapshot_json=run_snapshot)
         flush(current_stage="building_map", progress_percent=5)
 
         # --- Steps 4-5: build (or convert) the course map ---------------
@@ -154,13 +260,23 @@ def run_generation(
         # short) - never full text of a long source. See
         # app/services/source_analysis.py.
         brief = _build_course_brief(course)
+        # Deliberately `hasattr`-guarded rather than a method on the
+        # `AIProvider` ABC (see app/ai/provider.py): this is how a real
+        # provider picks up the course's actual generation_preset once per
+        # run (see AnthropicProvider.configure_for_run) without every
+        # stage's Input model needing to carry it - and it means
+        # `FakeProvider` needs zero changes.
+        if hasattr(provider, "configure_for_run"):
+            provider.configure_for_run(brief.generation_preset)
+        logs.append({"step": "load_brief", "preset": brief.generation_preset.value})
         course_map = provider.build_course_map(
             BuildCourseMapInput(
                 brief=brief,
                 sources=_map_source_excerpts(usable_sources),
-                rules_context=rules_context,
+                rules_context=select_rules_for_stage(rules_context, PipelineStage.BUILD_COURSE_MAP),
             )
         )
+        _record_usage_event(session, job, provider, PipelineStage.BUILD_COURSE_MAP, preset_value)
         total_reels = sum(len(m.reels) for m in course_map.modules)
         logs.append(
             {
@@ -170,12 +286,18 @@ def run_generation(
                 "reels": total_reels,
             }
         )
-        flush(current_stage="generating", progress_percent=PROGRESS_AFTER_CONTEXT_AND_MAP)
+        flush(
+            current_stage="generating",
+            progress_percent=PROGRESS_AFTER_CONTEXT_AND_MAP,
+            course_map_json=course_map.model_dump(mode="json"),
+            last_completed_step="build_map",
+        )
 
         # --- Steps 6-11: generate reel by reel, with layered review -----
         all_reels: list[GeneratedReel] = []
         pending_pair: tuple[ModulePlan, list[GeneratedReel]] | None = None
         reels_done = 0
+        modules_done = 0
 
         for module in course_map.modules:
             module_reels: list[GeneratedReel] = []
@@ -194,6 +316,9 @@ def run_generation(
                     all_reels_so_far=all_reels,
                     sources=_reel_source_excerpts(usable_sources, reel_plan),
                     rules_context=rules_context,
+                    session=session,
+                    job=job,
+                    preset=preset_value,
                 )
                 logs.append(
                     {
@@ -212,13 +337,27 @@ def run_generation(
                 progress = PROGRESS_AFTER_CONTEXT_AND_MAP + int(
                     PROGRESS_REEL_GENERATION_SPAN * reels_done / max(total_reels, 1)
                 )
-                flush(current_stage="generating", progress_percent=progress)
+                flush(
+                    current_stage="generating",
+                    progress_percent=progress,
+                    completed_reels_json=[r.model_dump(mode="json") for r in all_reels],
+                    completed_reels_count=reels_done,
+                    last_completed_step=f"reel:{reel_plan.reel_id}",
+                )
 
                 if reels_done % 5 == 0:
                     flush(current_stage="reviewing_repetition")
                     window = all_reels[-5:]
                     result = provider.review_five_reels(
-                        ReviewFiveReelsInput(reels=window, rules_context=rules_context)
+                        ReviewFiveReelsInput(
+                            reels=window,
+                            rules_context=select_rules_for_stage(
+                                rules_context, PipelineStage.REVIEW_FIVE_REELS
+                            ),
+                        )
+                    )
+                    _record_usage_event(
+                        session, job, provider, PipelineStage.REVIEW_FIVE_REELS, preset_value
                     )
                     logs.append({"step": "review_5reels", "status": result.status.value})
                     flush()
@@ -226,9 +365,12 @@ def run_generation(
             flush(current_stage="reviewing_repetition")
             module_result = provider.review_module(
                 ReviewModuleInput(
-                    module=module, reels=module_reels, rules_context=rules_context
+                    module=module,
+                    reels=module_reels,
+                    rules_context=select_rules_for_stage(rules_context, PipelineStage.REVIEW_MODULE),
                 )
             )
+            _record_usage_event(session, job, provider, PipelineStage.REVIEW_MODULE, preset_value)
             logs.append(
                 {
                     "step": "review_module",
@@ -236,7 +378,11 @@ def run_generation(
                     "status": module_result.status.value,
                 }
             )
-            flush()
+            modules_done += 1
+            flush(
+                completed_modules_count=modules_done,
+                last_completed_step=f"module:{module.module_id}",
+            )
 
             if pending_pair is None:
                 pending_pair = (module, module_reels)
@@ -247,8 +393,13 @@ def run_generation(
                     ReviewTwoModulesInput(
                         first=ModuleWithReels(module=prev_module, reels=prev_reels),
                         second=ModuleWithReels(module=module, reels=module_reels),
-                        rules_context=rules_context,
+                        rules_context=select_rules_for_stage(
+                            rules_context, PipelineStage.REVIEW_TWO_MODULES
+                        ),
                     )
+                )
+                _record_usage_event(
+                    session, job, provider, PipelineStage.REVIEW_TWO_MODULES, preset_value
                 )
                 logs.append(
                     {
@@ -267,11 +418,18 @@ def run_generation(
         # --- Step 12: final review ---------------------------------------
         final_result = provider.final_review(
             FinalReviewInput(
-                course_map=course_map, all_reels=all_reels, rules_context=rules_context
+                course_map=course_map,
+                all_reels=all_reels,
+                rules_context=select_rules_for_stage(rules_context, PipelineStage.FINAL_REVIEW),
             )
         )
+        _record_usage_event(session, job, provider, PipelineStage.FINAL_REVIEW, preset_value)
         logs.append({"step": "final_review", "status": final_result.status.value})
-        flush(current_stage="reviewing", progress_percent=PROGRESS_AFTER_FINAL_REVIEW)
+        flush(
+            current_stage="reviewing",
+            progress_percent=PROGRESS_AFTER_FINAL_REVIEW,
+            last_completed_step="final_review",
+        )
 
         # --- Step 13: rebuild only if final_review actually requires it --
         if final_result.status == ReviewStatus.NEEDS_REVISION:
@@ -280,8 +438,13 @@ def run_generation(
                     course_map=course_map,
                     all_reels=all_reels,
                     final_review=final_result,
-                    rules_context=rules_context,
+                    rules_context=select_rules_for_stage(
+                        rules_context, PipelineStage.REBUILD_FINAL_COURSE
+                    ),
                 )
+            )
+            _record_usage_event(
+                session, job, provider, PipelineStage.REBUILD_FINAL_COURSE, preset_value
             )
             logs.append({"step": "rebuild_final_course", "triggered": True})
         else:
@@ -300,6 +463,24 @@ def run_generation(
         existing_versions = course_versions.list(session, course_id=course_id)
         version_number = next_version_number([v.version_number for v in existing_versions])
         docx_path = export_final_course_to_docx(final_course, course_id, version_number)
+
+        # Output Scoring Gates (§4) - runs against the exact text the DOCX
+        # was rendered from (re-rendered in-memory here purely to extract
+        # plain text for scoring; `export_final_course_to_docx` above
+        # already did the real render+save - this never touches, re-saves,
+        # or mutates the exported file). Observational only: never blocks
+        # export, regardless of result - see app/generation/output_scoring.py
+        # module docstring for why.
+        score_report = score_final_course(
+            extract_plain_text(render_final_course_docx(final_course)),
+            rules_context,
+            source_texts=[
+                u.course_source.extracted_text
+                for u in usable_sources
+                if u.course_source.extracted_text
+            ],
+        )
+        logs.append({"step": "output_scoring", "teleprompter_clean": score_report.teleprompter_clean})
 
         # summary_text/report_text feed the frontend's explanation_level
         # display (docs/PRD.md explanation_level) - never shown for
@@ -325,15 +506,82 @@ def run_generation(
         flush(
             progress_percent=PROGRESS_AFTER_DOCX_EXPORT,
             output_docx_path=str(docx_path),
+            last_completed_step="export_docx",
+            output_score_json=score_report.model_dump(mode="json"),
         )
 
         # --- Step 15: mark completed --------------------------------------
+        # Budget Guard (§6) - observational only, computed last so it
+        # reflects this run's own usage events too; never blocks/aborts a
+        # run regardless of result. `None` (no warning attached) whenever
+        # no budget is configured - see app/generation/budget_guard.py.
+        budget_warning = compute_budget_warning(session, course_id)
         logs.append({"step": "complete"})
-        flush(status=JobStatus.COMPLETED, current_stage="done", progress_percent=100)
+        flush(
+            status=JobStatus.COMPLETED,
+            current_stage="done",
+            progress_percent=100,
+            budget_warning=budget_warning,
+        )
 
-    except Exception as exc:  # noqa: BLE001 - convert any failure into a FAILED job
+    except Exception as exc:  # noqa: BLE001 - convert any failure into a FAILED/PARTIAL job
         logs.append({"step": "error", "message": str(exc)[:300]})
-        flush(status=JobStatus.FAILED, current_stage="failed", error_message=str(exc)[:500])
+        category = classify_provider_error(exc)
+
+        # `job` is kept current by `flush()` (see `nonlocal job` above), so
+        # this reflects whatever was actually persisted before the failure
+        # - not the local `course_map`/`all_reels` variables, which may not
+        # exist yet or may be stale if the exception happened elsewhere.
+        has_saved_work = bool(job.course_map_json) or bool(job.completed_reels_json)
+
+        partial_docx_path: str | None = None
+        partial_score_report: OutputScoreReport | None = None
+        if has_saved_work:
+            try:
+                partial_course = build_partial_course_from_job(
+                    job.course_map_json, job.completed_reels_json
+                )
+                saved_path = export_partial_course_to_docx(partial_course, course_id, job.id)
+                partial_docx_path = str(saved_path)
+                logs.append({"step": "partial_export", "path": partial_docx_path})
+                # Output Scoring Gates (§4) - same function, scoring only
+                # whatever partial content actually made it into the
+                # partial DOCX. Wrapped in its own try/except: a scoring
+                # bug must never turn an otherwise-successful partial
+                # export into a worse failure.
+                try:
+                    partial_score_report = score_final_course(
+                        extract_plain_text(render_partial_course_docx(partial_course)),
+                        rules_context,
+                        source_texts=[
+                            u.course_source.extracted_text
+                            for u in usable_sources
+                            if u.course_source.extracted_text
+                        ],
+                    )
+                except Exception as score_exc:  # noqa: BLE001
+                    logs.append({"step": "output_scoring_failed", "message": str(score_exc)[:200]})
+            except Exception as export_exc:  # noqa: BLE001 - a partial-export
+                # failure must never crash the error path itself; the job
+                # still ends PARTIAL (with course_map_json/
+                # completed_reels_json intact), just without a downloadable
+                # file this time.
+                logs.append({"step": "partial_export_failed", "message": str(export_exc)[:200]})
+
+        status = JobStatus.PARTIAL if has_saved_work else JobStatus.FAILED
+        # Budget Guard (§6) - same as the success path, observational only.
+        budget_warning = compute_budget_warning(session, course_id)
+        flush(
+            status=status,
+            current_stage="partial" if has_saved_work else "failed",
+            output_score_json=(
+                partial_score_report.model_dump(mode="json") if partial_score_report else None
+            ),
+            budget_warning=budget_warning,
+            error_message=error_message_for(category, has_saved_work=has_saved_work),
+            error_category=category,
+            partial_docx_path=partial_docx_path,
+        )
 
     return job
 
@@ -390,58 +638,34 @@ def _load_usable_sources(session: Session, course_id: int) -> list[UsableSource]
     return result
 
 
-def _excerpt_text_for_map(usable: UsableSource) -> str:
-    """No full source text unless the source is short - otherwise its
-    summary, which is exactly what course-map planning needs."""
-    text = usable.course_source.extracted_text or ""
-    if len(text) <= SHORT_SOURCE_MAX_CHARS:
-        return text
-    if usable.analysis:
-        return usable.analysis.source_summary
-    return text[:SHORT_SOURCE_MAX_CHARS]
-
-
-def _excerpt_text_for_reel(usable: UsableSource, reel_plan: ReelPlan) -> str:
-    """Relevant chunks only when writing a reel, not the whole source -
-    unless the source is already short enough to just pass in full."""
-    text = usable.course_source.extracted_text or ""
-    if len(text) <= SHORT_SOURCE_MAX_CHARS:
-        return text
-
-    if not usable.analysis:
-        return text[:SHORT_SOURCE_MAX_CHARS]
-
-    query = " ".join([reel_plan.title, reel_plan.purpose, *reel_plan.must_cover])
-    relevant = select_relevant_chunks(usable.analysis.chunks_json, query)
-    if relevant:
-        return "\n\n".join(chunk.get("text", "") for chunk in relevant)
-    return usable.analysis.source_summary
+def _to_source_for_compiler(usable: UsableSource) -> SourceForCompiler:
+    return SourceForCompiler(
+        source_id=usable.course_source.id,
+        category=usable.course_source.source_category.value,
+        priority=usable.course_source.priority.value,
+        text=usable.course_source.extracted_text or "",
+        summary=usable.analysis.source_summary if usable.analysis else None,
+        chunks=usable.analysis.chunks_json if usable.analysis else None,
+    )
 
 
 def _map_source_excerpts(usable_sources: list[UsableSource]) -> list[SourceExcerpt]:
-    return [
-        SourceExcerpt(
-            source_id=usable.course_source.id,
-            category=usable.course_source.source_category.value,
-            priority=usable.course_source.priority.value,
-            text=_excerpt_text_for_map(usable),
-        )
-        for usable in usable_sources
-    ]
+    """Map building gets source summaries (or full text if a source is
+    short) - never full text of a long source. See
+    app/generation/prompt_compiler.py `compile_source_context` (empty
+    query text means no reel-specific chunk selection happens here)."""
+    sources = [_to_source_for_compiler(usable) for usable in usable_sources]
+    return compile_source_context(sources, query_text="")
 
 
 def _reel_source_excerpts(
     usable_sources: list[UsableSource], reel_plan: ReelPlan
 ) -> list[SourceExcerpt]:
-    return [
-        SourceExcerpt(
-            source_id=usable.course_source.id,
-            category=usable.course_source.source_category.value,
-            priority=usable.course_source.priority.value,
-            text=_excerpt_text_for_reel(usable, reel_plan),
-        )
-        for usable in usable_sources
-    ]
+    """Reel writing gets only relevant chunks of a long source, or its full
+    text if the source is short. Never a long source's full text."""
+    sources = [_to_source_for_compiler(usable) for usable in usable_sources]
+    query = " ".join([reel_plan.title, reel_plan.purpose, *reel_plan.must_cover])
+    return compile_source_context(sources, query_text=query)
 
 
 def _build_course_brief(course: Course) -> CourseBrief:
@@ -453,6 +677,7 @@ def _build_course_brief(course: Course) -> CourseBrief:
         special_notes=course.special_notes,
         structure_mode=course.structure_mode,
         explanation_level=course.explanation_level,
+        generation_preset=course.generation_preset,
         manual_map_text=manual_map,
     )
 
@@ -513,6 +738,29 @@ def _local_review_single_reel(
             )
         )
 
+    for issue in check_high_signal(generated.script_text):
+        actions.append(
+            ReviewAction(
+                action=ReviewActionType.REWRITE,
+                target_id=generated.reel_id,
+                reason_code=issue.reason_code,
+                instruction=issue.detail,
+            )
+        )
+
+    # Cross-reel anti-template (only meaningful once prior siblings exist).
+    for issue in check_anti_template([*all_reels_so_far, generated]):
+        if issue.target_id != generated.reel_id:
+            continue
+        actions.append(
+            ReviewAction(
+                action=ReviewActionType.REWRITE,
+                target_id=generated.reel_id,
+                reason_code=issue.reason_code,
+                instruction=issue.detail,
+            )
+        )
+
     if not actions:
         return None
     return ReviewResult(scope=ReviewScope.REEL, status=ReviewStatus.NEEDS_REVISION, actions=actions)
@@ -528,6 +776,9 @@ def _write_and_review_reel(
     all_reels_so_far: list[GeneratedReel],
     sources: list[SourceExcerpt],
     rules_context: dict[str, str],
+    session: Session | None = None,
+    job: GenerationJob | None = None,
+    preset: str | None = None,
 ) -> tuple[GeneratedReel, int, bool]:
     """Steps 6-8: write one reel, review it, rewrite up to MAX_REEL_REWRITE_ATTEMPTS times.
 
@@ -536,7 +787,23 @@ def _write_and_review_reel(
     `provider.review_single_reel`. Returns (generated_reel, attempts,
     caught_locally) - `caught_locally` is True if any attempt's issue was
     found by a local validator rather than the AI reviewer.
+
+    `rules_context` here is the full active-rules dict (see
+    `_load_active_rules`); each provider call below narrows it to just the
+    keys relevant to that specific stage (see
+    app/generation/prompt_compiler.py `select_rules_for_stage`) instead of
+    sending every active rule to every call.
+
+    `session`/`job`/`preset` are optional (default `None`) purely so this
+    function stays directly callable exactly as before from tests that
+    don't have a `GenerationJob`/DB session at hand (see
+    `backend/tests/test_orchestrator.py`) - when any is `None`, usage-event
+    recording (AI Usage Center, §5) is silently skipped for this reel
+    rather than raising.
     """
+    write_rules = select_rules_for_stage(rules_context, PipelineStage.WRITE_SINGLE_REEL)
+    review_rules = select_rules_for_stage(rules_context, PipelineStage.REVIEW_SINGLE_REEL)
+
     prior_summaries = [
         PriorReelSummary(
             reel_id=r.reel_id,
@@ -560,21 +827,25 @@ def _write_and_review_reel(
             reel=reel_plan,
             prior_reels_in_module=prior_summaries,
             sources=sources,
-            rules_context=rules_context,
+            rules_context=write_rules,
             previous_review_feedback=feedback,
         )
         generated = provider.write_single_reel(write_input)
+        if session is not None and job is not None and preset is not None:
+            _record_usage_event(session, job, provider, PipelineStage.WRITE_SINGLE_REEL, preset)
 
-        local_result = _local_review_single_reel(generated, all_reels_so_far, rules_context)
+        local_result = _local_review_single_reel(generated, all_reels_so_far, review_rules)
         if local_result is not None:
             review = local_result
             caught_locally = True
         else:
             review = provider.review_single_reel(
                 ReviewSingleReelInput(
-                    reel_plan=reel_plan, generated_reel=generated, rules_context=rules_context
+                    reel_plan=reel_plan, generated_reel=generated, rules_context=review_rules
                 )
             )
+            if session is not None and job is not None and preset is not None:
+                _record_usage_event(session, job, provider, PipelineStage.REVIEW_SINGLE_REEL, preset)
 
         if review.status == ReviewStatus.PASS or attempts > MAX_REEL_REWRITE_ATTEMPTS:
             return generated, attempts, caught_locally

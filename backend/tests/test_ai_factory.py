@@ -11,7 +11,7 @@ from sqlmodel import SQLModel, create_engine
 
 from app.ai.anthropic_provider import AnthropicProvider
 from app.ai.fake_provider import FakeProvider
-from app.ai.factory import AIProviderConfigError, get_ai_provider
+from app.ai.factory import AIProviderConfigError, get_ai_provider, missing_anthropic_config
 from app.config import Settings
 
 
@@ -52,6 +52,35 @@ def test_anthropic_without_model_name_fails_clearly():
         get_ai_provider(
             _settings(ai_provider="anthropic", anthropic_api_key="test-key", ai_model_name="")
         )
+
+
+def test_anthropic_without_api_key_and_model_name_lists_both_missing():
+    """Both env vars missing at once should produce one clear, actionable
+    message naming both - not just whichever happens to be checked first."""
+    with pytest.raises(AIProviderConfigError) as exc_info:
+        get_ai_provider(_settings(ai_provider="anthropic", anthropic_api_key=None, ai_model_name=""))
+
+    message = str(exc_info.value)
+    assert "ANTHROPIC_API_KEY" in message
+    assert "AI_MODEL_NAME" in message
+
+
+def test_missing_anthropic_config_reports_both_when_unset():
+    """Shared helper (also used by app/auth/diagnostics.py's
+    ai_provider_ready) must report exactly the env vars that are missing."""
+    missing = missing_anthropic_config(
+        _settings(ai_provider="anthropic", anthropic_api_key=None, ai_model_name="")
+    )
+
+    assert set(missing) == {"ANTHROPIC_API_KEY", "AI_MODEL_NAME"}
+
+
+def test_missing_anthropic_config_empty_when_both_set():
+    missing = missing_anthropic_config(
+        _settings(ai_provider="anthropic", anthropic_api_key="k", ai_model_name="m")
+    )
+
+    assert missing == []
 
 
 def test_anthropic_error_never_falls_back_to_fake():

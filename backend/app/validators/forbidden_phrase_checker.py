@@ -1,12 +1,12 @@
 """Checks generated text against Rukn's forbidden-phrases admin knowledge
-item (see app/seed_admin_knowledge.py `rukn-forbidden-phrases`). Plain
+item (see app/seed_admin_knowledge.py `rukn_forbidden_phrases`). Plain
 substring matching - no AI, no embeddings.
 """
 
 import json
 from dataclasses import dataclass
 
-FORBIDDEN_PHRASES_KEY = "rukn-forbidden-phrases"
+FORBIDDEN_PHRASES_KEY = "rukn_forbidden_phrases"
 
 
 @dataclass
@@ -17,7 +17,7 @@ class ForbiddenPhraseMatch:
 
 
 def load_forbidden_phrases(rules_context: dict[str, str]) -> list[dict]:
-    """Parse the active `rukn-forbidden-phrases` admin knowledge item.
+    """Parse the active `rukn_forbidden_phrases` admin knowledge item.
 
     Never raises: a missing item or malformed JSON just means no phrases
     are checked, rather than breaking the whole pipeline over formatting.

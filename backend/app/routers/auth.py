@@ -1,9 +1,11 @@
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
+from sqlmodel import Session
 
 from app.auth.diagnostics import build_diagnostics
 from app.auth.service import AuthConfigError, verify_credentials
 from app.auth.tokens import DEFAULT_EXPIRY_DAYS, create_token
 from app.config import settings
+from app.db import get_session
 from app.schemas.auth import DiagnosticsResponse, LoginRequest, LoginResponse, MeResponse
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -46,11 +48,11 @@ def logout() -> None:
 
 
 @router.get("/diagnostics", response_model=DiagnosticsResponse)
-def diagnostics() -> DiagnosticsResponse:
+def diagnostics(session: Session = Depends(get_session)) -> DiagnosticsResponse:
     """Public, secret-free status check for diagnosing login/CORS/storage
     misconfiguration in production (e.g. FRONTEND_ORIGIN never set on
-    Render). Deliberately public - see app/auth/middleware.py
-    PUBLIC_ROUTES - since it needs to be reachable even when login itself
-    is broken. See app/auth/diagnostics.py for exactly what is/isn't
-    returned."""
-    return DiagnosticsResponse(**build_diagnostics())
+    Render), plus AI Provider Health (§7). Deliberately public - see
+    app/auth/middleware.py PUBLIC_ROUTES - since it needs to be reachable
+    even when login itself is broken. See app/auth/diagnostics.py for
+    exactly what is/isn't returned."""
+    return DiagnosticsResponse(**build_diagnostics(session=session))

@@ -28,8 +28,9 @@ MAX_RELEVANT_CHUNKS = 3
 # Only populated when there's an obvious, category-driven reason - never
 # fabricated from content analysis we can't actually do without AI/NLP.
 CATEGORY_AVOID_POINTS: dict[str, list[str]] = {
-    "spoken_style": ["Style reference only - do not treat as a factual source."],
+    "flow_reference": ["Style reference only - do not treat as a factual source."],
     "old_course": ["May be outdated - verify before reusing any specific facts."],
+    "raw_material": ["Mixed/unclear material - treat as uncertain, verify before reuse."],
 }
 
 _WORD_RE = re.compile(r"[a-zA-Z\u0600-\u06FF]+")

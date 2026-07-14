@@ -12,7 +12,7 @@ export default function LogoutButton() {
   }
 
   return (
-    <button onClick={handleLogout} className="hover:underline">
+    <button type="button" onClick={handleLogout} className="btn-ghost">
       Logout
     </button>
   );

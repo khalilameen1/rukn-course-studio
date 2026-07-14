@@ -10,6 +10,11 @@ Checks the specific guarantees this scenario was written to prove:
 - a real .docx is produced and downloadable
 - the job's API-facing shape never carries reel content or internal logs
 - job status/stage/progress reporting works throughout
+- the downloaded DOCX itself follows the teleprompter contract: course
+  title, module heading, lesson heading, spoken script - and none of the
+  internal review/validation/quality-check machinery this same pipeline
+  run generates internally along the way (see docs/PRD.md and
+  rukn_teleprompter_docx_contract in app/seed_admin_knowledge.py)
 """
 
 import pytest
@@ -24,6 +29,20 @@ from app.crud import course_versions, courses
 from app.generation.orchestrator import run_generation
 from app.models.enums import ExplanationLevel, JobStatus, StructureMode
 from app.schemas.generation_job import GenerationJobRead
+
+# Mirrors the FORBIDDEN_SUBSTRINGS list in test_docx_export.py - kept
+# duplicated (not imported) so this end-to-end test still fails loudly on
+# its own if that file's list is ever narrowed.
+FORBIDDEN_DOCX_SUBSTRINGS = [
+    "internal_review",
+    "validation",
+    "quality_check",
+    "prepared by ai",
+    "methodology",
+    "note to instructor",
+    "say this",
+    "explain that",
+]
 
 COURSE_BRIEF = dict(
     title="تصميم إعلانات ميتا بالفوتوشوب",
@@ -92,6 +111,24 @@ def test_full_generation_with_fake_provider_no_sources(session):
     paragraph_texts = [p.text for p in document.paragraphs]
     assert course.title in paragraph_texts
 
+    # Teleprompter contract, checked against the real file this pipeline
+    # run actually produced (not a hand-built fixture): course title,
+    # module heading, lesson heading, and spoken script must all be
+    # visually present.
+    assert any(t.startswith("Module 1 —") for t in paragraph_texts)
+    assert any(t.startswith("Lesson 1 —") for t in paragraph_texts)
+    # FakeProvider's placeholder script text (app/ai/fake_provider.py) -
+    # proves actual spoken-script paragraphs exist under a lesson heading,
+    # not just the headings themselves.
+    assert any("يلا نبدأ" in t for t in paragraph_texts)
+
+    # Same real file must never surface any of the internal review/
+    # validation/quality-check machinery this pipeline run generated along
+    # the way (see job.log_json below, which does contain review steps).
+    full_text = "\n".join(paragraph_texts).lower()
+    for forbidden in FORBIDDEN_DOCX_SUBSTRINGS:
+        assert forbidden not in full_text
+
     # A CourseVersion points at that same file.
     versions = course_versions.list(session, course_id=course.id)
     assert len(versions) == 1
@@ -99,6 +136,12 @@ def test_full_generation_with_fake_provider_no_sources(session):
 
     # Job progress/status reporting works and never leaks reel content.
     _assert_job_never_leaks_internal_content(job)
+
+    # Sanity: this run really did generate internal review steps - proving
+    # the DOCX assertions above are actually hiding something, not just
+    # trivially passing because nothing internal happened.
+    review_steps = [e for e in job.log_json if "review" in e.get("step", "")]
+    assert len(review_steps) > 0
 
 
 def test_download_latest_docx_via_real_api_endpoints(tmp_path, monkeypatch):
@@ -138,7 +181,14 @@ def test_download_latest_docx_via_real_api_endpoints(tmp_path, monkeypatch):
     job_body = generate_response.json()
 
     # Exactly the fields the frontend GeneratePanel relies on - nothing else
-    # reel/log related.
+    # reel/log related (course_map_json/completed_reels_json/log_json stay
+    # internal-only, see app/schemas/generation_job.py). `run_snapshot_json`/
+    # `output_score_json`/`budget_warning` were added by the AI-ops
+    # hardening pass (see app/generation/run_snapshot.py,
+    # app/generation/output_scoring.py, app/generation/budget_guard.py) -
+    # all three are safe-by-construction (hashes/scores/a warning string,
+    # never secrets or raw source/admin-knowledge text), so they're
+    # intentionally included here too.
     assert set(job_body.keys()) == {
         "id",
         "course_id",
@@ -147,6 +197,14 @@ def test_download_latest_docx_via_real_api_endpoints(tmp_path, monkeypatch):
         "progress_percent",
         "output_docx_path",
         "error_message",
+        "last_completed_step",
+        "completed_modules_count",
+        "completed_reels_count",
+        "error_category",
+        "partial_docx_path",
+        "run_snapshot_json",
+        "output_score_json",
+        "budget_warning",
         "created_at",
         "updated_at",
     }

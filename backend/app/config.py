@@ -123,6 +123,13 @@ class Settings(BaseSettings):
     anthropic_api_key: str | None = None
     ai_model_name: str = "claude-sonnet-5"
 
+    # How long to wait for a single Anthropic API call before giving up
+    # (ANTHROPIC_REQUEST_TIMEOUT_SECONDS env var). Optional to set - a sane
+    # default (120s) means a hung request still surfaces as a clean,
+    # classifiable timeout error (see app/generation/errors.py) instead of
+    # hanging the generation run indefinitely.
+    anthropic_request_timeout_seconds: float = 120.0
+
     # Single-admin-user auth for this internal MVP (see app/auth/). No
     # multi-user accounts, registration, roles, or OAuth - one username/
     # password pair from the environment, guarding every route except
@@ -131,6 +138,15 @@ class Settings(BaseSettings):
     admin_username: str | None = None
     admin_password: str | None = None
     auth_secret_key: str | None = None
+
+    # Budget Guard (see app/generation/budget_guard.py) - observational
+    # only, never blocks/aborts a run. Both budgets default to `None`
+    # (unset): if neither is set, nothing is computed or warned about at
+    # all. `ai_warn_at_percent` only matters once at least one budget is
+    # set.
+    ai_monthly_budget_usd: float | None = None
+    ai_course_budget_usd: float | None = None
+    ai_warn_at_percent: float = 80.0
 
 
 settings = Settings()

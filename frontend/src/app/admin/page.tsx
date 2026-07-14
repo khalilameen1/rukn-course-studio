@@ -6,7 +6,9 @@ import type { AdminKnowledgeItem } from "@/lib/types";
 import KnowledgeItemForm, {
   type KnowledgeItemFormValues,
 } from "@/components/admin/KnowledgeItemForm";
-import KnowledgeItemTable from "@/components/admin/KnowledgeItemTable";
+import KnowledgeItemGrid from "@/components/admin/KnowledgeItemGrid";
+import EmptyState from "@/components/ui/EmptyState";
+import PageHeader from "@/components/ui/PageHeader";
 
 export default function AdminKnowledgePage() {
   const [items, setItems] = useState<AdminKnowledgeItem[]>([]);
@@ -64,21 +66,23 @@ export default function AdminKnowledgePage() {
   }
 
   return (
-    <div className="mx-auto flex max-w-3xl flex-col gap-6 px-6 py-12">
-      <div>
-        <h1 className="text-2xl font-semibold">Admin Knowledge Center</h1>
-        <p className="mt-2 text-zinc-600 dark:text-zinc-400">
-          Fixed Rukn knowledge (structure, style, pedagogy, formatting rules,
-          templates) that every course generation run is pinned to. Only one
-          version per key is active at a time.
-        </p>
-      </div>
+    <div className="flex flex-col gap-8">
+      <PageHeader
+        title="Admin Knowledge Center"
+        description="Fixed Rukn rules used by every generation run - structure, style, pedagogy, formatting, and templates. Only one version per key is active at a time."
+      />
 
-      {error ? <p className="text-sm text-red-600">{error}</p> : null}
+      {error ? <p className="text-sm text-red-600 dark:text-red-400">{error}</p> : null}
+
       {loading ? (
-        <p className="text-sm text-zinc-500">Loading...</p>
+        <p className="text-sm text-muted">Loading...</p>
+      ) : items.length === 0 ? (
+        <EmptyState
+          title="Admin knowledge not seeded yet"
+          description="This normally seeds automatically when the backend starts. If it's still empty, run `python -m app.seed_admin_knowledge` from backend/, or restart the backend - or add an item manually below."
+        />
       ) : (
-        <KnowledgeItemTable
+        <KnowledgeItemGrid
           items={items}
           onEdit={setEditingItem}
           onDelete={handleDelete}

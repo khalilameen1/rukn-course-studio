@@ -10,9 +10,13 @@ from app.crud import course_sources, source_analyses
 from app.db import get_session
 from app.models.enums import Priority, SourceCategory
 from app.routers.deps import get_course_or_404
-from app.schemas.course_source import CourseSourceNotesCreate, CourseSourceRead
+from app.schemas.course_source import (
+    CourseSourceNotesCreate,
+    CourseSourcePatch,
+    CourseSourceRead,
+)
 from app.services.extraction import extract_text
-from app.services.source_analysis import analyze_source_text
+from app.services.source_analysis import CATEGORY_AVOID_POINTS, analyze_source_text
 from app.services.source_status import POOR_EXTRACTION, READY
 
 router = APIRouter(prefix="/courses/{course_id}/sources", tags=["sources"])
@@ -52,7 +56,7 @@ def _create_source_analysis(
 async def upload_source(
     course_id: int,
     file: UploadFile = File(...),
-    source_category: SourceCategory = Form(SourceCategory.MAIN_CONTENT),
+    source_category: SourceCategory = Form(SourceCategory.SCIENTIFIC_REFERENCE),
     priority: Priority = Form(Priority.MEDIUM),
     password: str | None = Form(None),
     session: Session = Depends(get_session),
@@ -152,3 +156,30 @@ def delete_source(
         source_analyses.delete(session, analysis.id)
 
     course_sources.delete(session, source_id)
+
+
+@router.patch("/{source_id}", response_model=CourseSourceRead)
+def update_source_category(
+    course_id: int,
+    source_id: int,
+    payload: CourseSourcePatch,
+    session: Session = Depends(get_session),
+):
+    """Change a source's category. Only `avoid_points_json` on its
+    `SourceAnalysis` is re-derived from the new category - chunks/summary
+    are untouched, since only avoid-points are category-driven (see
+    app/services/source_analysis.py `CATEGORY_AVOID_POINTS`)."""
+    source = course_sources.get(session, source_id)
+    if source is None or source.course_id != course_id:
+        raise HTTPException(status_code=404, detail="Source not found")
+
+    if payload.source_category is not None:
+        source = course_sources.update(
+            session, source_id, source_category=payload.source_category
+        )
+        avoid_points = list(CATEGORY_AVOID_POINTS.get(payload.source_category.value, []))
+        analyses = source_analyses.list(session, source_id=source_id)
+        if analyses:
+            source_analyses.update(session, analyses[0].id, avoid_points_json=avoid_points)
+
+    return source

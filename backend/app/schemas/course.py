@@ -3,7 +3,7 @@ from typing import Optional
 
 from pydantic import BaseModel, ConfigDict
 
-from app.models.enums import ExplanationLevel, StructureMode
+from app.models.enums import ExplanationLevel, GenerationPreset, StructureMode
 
 
 class CourseCreate(BaseModel):
@@ -15,6 +15,7 @@ class CourseCreate(BaseModel):
     structure_mode: StructureMode
     manual_map_text: Optional[str] = None
     explanation_level: ExplanationLevel = ExplanationLevel.FINAL_ONLY
+    generation_preset: GenerationPreset = GenerationPreset.BALANCED
 
 
 class CourseUpdate(BaseModel):
@@ -27,6 +28,7 @@ class CourseUpdate(BaseModel):
     structure_mode: Optional[StructureMode] = None
     manual_map_text: Optional[str] = None
     explanation_level: Optional[ExplanationLevel] = None
+    generation_preset: Optional[GenerationPreset] = None
     status: Optional[str] = None
 
 
@@ -42,6 +44,7 @@ class CourseRead(BaseModel):
     structure_mode: StructureMode
     manual_map_text: Optional[str]
     explanation_level: ExplanationLevel
+    generation_preset: GenerationPreset
     status: str
     created_at: datetime
     updated_at: datetime

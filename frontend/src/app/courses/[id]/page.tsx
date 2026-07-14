@@ -3,7 +3,15 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { api } from "@/lib/api";
-import type { Course, CourseSource, CourseVersion, Priority, SourceCategory } from "@/lib/types";
+import type {
+  Course,
+  CourseSource,
+  CourseVersion,
+  DiagnosticsResponse,
+  GenerationJob,
+  Priority,
+  SourceCategory,
+} from "@/lib/types";
 import CourseTabs, { type CourseTab } from "@/components/courses/CourseTabs";
 import CourseForm, {
   courseToFormValues,
@@ -14,12 +22,30 @@ import NotesSourceForm from "@/components/courses/NotesSourceForm";
 import SourceTable from "@/components/courses/SourceTable";
 import GeneratePanel from "@/components/courses/GeneratePanel";
 import VersionTable from "@/components/courses/VersionTable";
+import Card from "@/components/ui/Card";
+import EmptyState from "@/components/ui/EmptyState";
+import PageHeader from "@/components/ui/PageHeader";
+import SectionPanel from "@/components/ui/SectionPanel";
+import StatusBadge from "@/components/ui/StatusBadge";
+import { SOURCE_CATEGORY_LABELS } from "@/lib/sourceCategories";
+import { GENERATION_PRESET_LABELS } from "@/lib/generationPresets";
+
+const STRUCTURE_MODE_LABELS: Record<string, string> = {
+  connected_no_modules: "Connected, no modules",
+  connected_modules_with_bridge_projects: "Connected + bridge projects",
+};
+
+const EXPLANATION_LEVEL_LABELS: Record<string, string> = {
+  final_only: "Final DOCX only",
+  short_summary: "Short summary",
+  full_report: "Full report",
+};
 
 function Field({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <p className="text-xs text-zinc-500">{label}</p>
-      <p className="whitespace-pre-wrap">{value}</p>
+      <p className="text-xs text-muted">{label}</p>
+      <p className="text-sm whitespace-pre-wrap">{value}</p>
     </div>
   );
 }
@@ -31,10 +57,20 @@ export default function CourseDetailPage() {
   const [course, setCourse] = useState<Course | null>(null);
   const [sources, setSources] = useState<CourseSource[]>([]);
   const [versions, setVersions] = useState<CourseVersion[]>([]);
-  const [tab, setTab] = useState<CourseTab>("brief");
+  const [activeKnowledgeCount, setActiveKnowledgeCount] = useState<number | null>(null);
+  const [diagnostics, setDiagnostics] = useState<DiagnosticsResponse | null>(null);
+  const [tab, setTab] = useState<CourseTab>("sources");
   const [editingBrief, setEditingBrief] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Mirrors GeneratePanel's own job state via onJobUpdate - the Output
+  // panel below is the canonical place for download/partial-status UI, so
+  // it needs to see the current run without duplicating the polling logic.
+  const [currentJob, setCurrentJob] = useState<GenerationJob | null>(null);
+  const [downloadingLatest, setDownloadingLatest] = useState(false);
+  const [downloadingPartial, setDownloadingPartial] = useState(false);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
+  const [courseUsage, setCourseUsage] = useState<{ cost: number; events: number } | null>(null);
 
   const loadAll = useCallback(async () => {
     setError(null);
@@ -47,6 +83,12 @@ export default function CourseDetailPage() {
       setCourse(courseData);
       setSources(sourcesData);
       setVersions(versionsData);
+      try {
+        const usage = await api.getCourseAIUsage(courseId);
+        setCourseUsage({ cost: usage.estimated_cost_usd, events: usage.event_count });
+      } catch {
+        // optional signal
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load course");
     } finally {
@@ -61,6 +103,25 @@ export default function CourseDetailPage() {
     loadAll();
   }, [loadAll]);
 
+  useEffect(() => {
+    // Lightweight Inputs/Output panel signals - failures here shouldn't
+    // block the rest of the workspace from loading.
+    api
+      .listKnowledgeItems()
+      .then((items) => setActiveKnowledgeCount(items.filter((item) => item.is_active).length))
+      .catch(() => setActiveKnowledgeCount(null));
+
+    api
+      .diagnostics()
+      .then(setDiagnostics)
+      .catch(() => setDiagnostics(null));
+
+    api
+      .getCourseAIUsage(courseId)
+      .then((usage) => setCourseUsage({ cost: usage.estimated_cost_usd, events: usage.event_count }))
+      .catch(() => setCourseUsage(null));
+  }, [courseId]);
+
   async function handleBriefSubmit(values: CourseFormValues) {
     const updated = await api.updateCourse(courseId, {
       title: values.title,
@@ -70,6 +131,7 @@ export default function CourseDetailPage() {
       structure_mode: values.structure_mode,
       manual_map_text: values.manual_map_text || null,
       explanation_level: values.explanation_level,
+      generation_preset: values.generation_preset,
     });
     setCourse(updated);
     setEditingBrief(false);
@@ -95,18 +157,41 @@ export default function CourseDetailPage() {
     setSources((prev) => prev.filter((s) => s.id !== source.id));
   }
 
+  async function handleSourceCategoryChange(source: CourseSource, category: SourceCategory) {
+    const updated = await api.updateSourceCategory(courseId, source.id, category);
+    setSources((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
+  }
+
+  async function handleDownloadLatest(version: CourseVersion) {
+    setDownloadError(null);
+    setDownloadingLatest(true);
+    try {
+      await api.downloadLatestDocx(courseId, `course_${courseId}_v${version.version_number}.docx`);
+    } catch (err) {
+      setDownloadError(err instanceof Error ? err.message : "Download failed");
+    } finally {
+      setDownloadingLatest(false);
+    }
+  }
+
+  async function handleDownloadPartial(jobId: number) {
+    setDownloadError(null);
+    setDownloadingPartial(true);
+    try {
+      await api.downloadPartialDocx(jobId, `course_${courseId}_job_${jobId}_partial.docx`);
+    } catch (err) {
+      setDownloadError(err instanceof Error ? err.message : "Download failed");
+    } finally {
+      setDownloadingPartial(false);
+    }
+  }
+
   if (loading) {
-    return (
-      <div className="mx-auto max-w-3xl px-6 py-12 text-sm text-zinc-500">Loading...</div>
-    );
+    return <p className="text-sm text-muted">Loading...</p>;
   }
 
   if (error || !course) {
-    return (
-      <div className="mx-auto max-w-3xl px-6 py-12 text-sm text-red-600">
-        {error ?? "Course not found"}
-      </div>
-    );
+    return <p className="text-sm text-red-600 dark:text-red-400">{error ?? "Course not found"}</p>;
   }
 
   const latestVersion =
@@ -115,78 +200,206 @@ export default function CourseDetailPage() {
       : null;
   const showReportTab = course.explanation_level === "full_report";
 
+  const providerNeedsAttention = diagnostics?.ai_provider === "anthropic" && !diagnostics.ai_provider_ready;
+  const providerLabel =
+    diagnostics?.ai_provider === "anthropic"
+      ? diagnostics.ai_provider_ready
+        ? "Anthropic"
+        : "Anthropic (not fully configured)"
+      : "Fake provider";
+
+  const sourceCategoryCounts = sources.reduce<Record<SourceCategory, number>>((acc, source) => {
+    acc[source.source_category] = (acc[source.source_category] ?? 0) + 1;
+    return acc;
+  }, {} as Record<SourceCategory, number>);
+  const sourceCategorySummary = Object.entries(sourceCategoryCounts)
+    .map(([category, count]) => `${count} ${SOURCE_CATEGORY_LABELS[category as SourceCategory]}`)
+    .join(", ");
+
   return (
-    <div className="mx-auto flex max-w-3xl flex-col gap-6 px-6 py-12">
-      <div>
-        <h1 className="text-2xl font-semibold">{course.title}</h1>
-        <p className="mt-1 text-sm text-zinc-500">{course.audience}</p>
+    <div className="flex flex-col gap-8">
+      <PageHeader title={course.title} description={course.audience} />
+
+      <div className="grid gap-4 lg:grid-cols-3">
+        <SectionPanel label="Inputs" description="Brief, sources, rules, preset" framed>
+          <Card className="flex flex-col gap-4">
+            {editingBrief ? (
+              <>
+                <CourseForm
+                  initialValues={courseToFormValues(course)}
+                  submitLabel="Save changes"
+                  onSubmit={handleBriefSubmit}
+                />
+                <button
+                  onClick={() => setEditingBrief(false)}
+                  className="w-fit rounded-full border border-border px-4 py-1.5 text-sm hover:bg-surface-muted"
+                >
+                  Cancel
+                </button>
+              </>
+            ) : (
+              <>
+                <div className="flex flex-col gap-3">
+                  <Field label="Outcome" value={course.outcome} />
+                  {course.special_notes ? (
+                    <Field label="Special notes" value={course.special_notes} />
+                  ) : null}
+                  <Field
+                    label="Structure"
+                    value={STRUCTURE_MODE_LABELS[course.structure_mode] ?? course.structure_mode}
+                  />
+                  {course.manual_map_text ? (
+                    <Field label="Manual course map" value={course.manual_map_text} />
+                  ) : null}
+                  <Field
+                    label="Output level"
+                    value={
+                      EXPLANATION_LEVEL_LABELS[course.explanation_level] ?? course.explanation_level
+                    }
+                  />
+                  <div>
+                    <p className="text-xs text-muted">Sources</p>
+                    <p className="text-sm">
+                      {sources.length === 0
+                        ? "None added yet"
+                        : `${sources.length} added (${sourceCategorySummary})`}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted">Admin knowledge</p>
+                    <p className="text-sm">
+                      {activeKnowledgeCount === null
+                        ? "-"
+                        : `${activeKnowledgeCount} active rule set${activeKnowledgeCount === 1 ? "" : "s"}`}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted">Generation preset</p>
+                    <p className="text-sm">{GENERATION_PRESET_LABELS[course.generation_preset]}</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setEditingBrief(true)}
+                  className="btn-secondary w-fit"
+                >
+                  Edit brief
+                </button>
+              </>
+            )}
+          </Card>
+        </SectionPanel>
+
+        <SectionPanel label="Generate" description="Work / status only" framed>
+          <Card className="flex flex-col gap-4">
+            <GeneratePanel
+              courseId={courseId}
+              explanationLevel={course.explanation_level}
+              latestSummary={latestVersion?.summary_text ?? null}
+              onVersionCreated={loadAll}
+              onJobUpdate={setCurrentJob}
+            />
+          </Card>
+        </SectionPanel>
+
+        <SectionPanel label="Output" description="Teleprompter DOCX" framed>
+          <Card className="flex flex-col gap-4">
+            {latestVersion ? (
+              <>
+                <StatusBadge label="DOCX ready" tone="success" />
+                <Field label="Last generated" value={new Date(latestVersion.created_at).toLocaleString()} />
+                <button
+                  onClick={() => handleDownloadLatest(latestVersion)}
+                  disabled={downloadingLatest}
+                  className="btn-primary w-fit"
+                >
+                  {downloadingLatest ? "Preparing download..." : "Download DOCX"}
+                </button>
+              </>
+            ) : (
+              <EmptyState
+                title="No DOCX generated yet"
+                description="Use Generate in the center panel to create the first version."
+              />
+            )}
+
+            {currentJob?.partial_docx_path ? (
+              <div className="flex flex-col gap-2 border-t border-border pt-4">
+                <StatusBadge label="Partial draft available" tone="warning" />
+                <button
+                  onClick={() => handleDownloadPartial(currentJob.id)}
+                  disabled={downloadingPartial}
+                  className="btn-secondary w-fit"
+                >
+                  {downloadingPartial ? "Preparing download..." : "Download Partial DOCX"}
+                </button>
+              </div>
+            ) : currentJob &&
+              (currentJob.status === "partial" || currentJob.status === "failed") ? (
+              <p className="border-t border-border pt-4 text-xs text-muted">
+                No partial draft was saved for this run.
+              </p>
+            ) : null}
+
+            {downloadError ? <p className="text-sm text-red-700">{downloadError}</p> : null}
+
+            <div className="flex items-center gap-2">
+              <Field label="Provider" value={providerLabel} />
+              {providerNeedsAttention ? (
+                <StatusBadge label="Needs configuration" tone="warning" />
+              ) : null}
+            </div>
+
+            {courseUsage ? (
+              <Field
+                label="Estimated course usage"
+                value={
+                  courseUsage.events === 0
+                    ? "No usage events yet"
+                    : `$${courseUsage.cost.toFixed(4)} · ${courseUsage.events} request(s)`
+                }
+              />
+            ) : null}
+
+            <p className="text-xs text-muted">
+              Final DOCX is a teleprompter-ready lecturer script - spoken script only, no internal
+              notes in the export.
+            </p>
+          </Card>
+        </SectionPanel>
       </div>
 
-      <CourseTabs active={tab} onChange={setTab} showReportTab={showReportTab} />
+      <div className="flex flex-col gap-4">
+        <CourseTabs active={tab} onChange={setTab} showReportTab={showReportTab} />
 
-      {tab === "brief" ? (
-        editingBrief ? (
-          <CourseForm
-            initialValues={courseToFormValues(course)}
-            submitLabel="Save changes"
-            onSubmit={handleBriefSubmit}
-          />
-        ) : (
-          <div className="flex flex-col gap-3 text-sm">
-            <Field label="Outcome" value={course.outcome} />
-            <Field label="Special notes" value={course.special_notes ?? "-"} />
-            <Field label="Structure mode" value={course.structure_mode} />
-            <Field
-              label="Manual course map"
-              value={course.manual_map_text ?? "(none - system will build one)"}
+        {tab === "sources" ? (
+          <div className="flex flex-col gap-4">
+            <SourceTable
+              sources={sources}
+              onDelete={handleDeleteSource}
+              onCategoryChange={handleSourceCategoryChange}
             />
-            <Field label="Explanation level" value={course.explanation_level} />
-            <Field label="Status" value={course.status} />
-            <button
-              onClick={() => setEditingBrief(true)}
-              className="w-fit rounded-full border border-black/15 px-4 py-1.5 dark:border-white/20"
-            >
-              Edit brief
-            </button>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <SourceUploadForm onUpload={handleUpload} />
+              <NotesSourceForm onAdd={handleAddNote} />
+            </div>
           </div>
-        )
-      ) : null}
+        ) : null}
 
-      {tab === "sources" ? (
-        <div className="flex flex-col gap-6">
-          <SourceTable sources={sources} onDelete={handleDeleteSource} />
-          <div className="grid gap-4 sm:grid-cols-2">
-            <SourceUploadForm onUpload={handleUpload} />
-            <NotesSourceForm onAdd={handleAddNote} />
-          </div>
-        </div>
-      ) : null}
+        {tab === "versions" ? <VersionTable versions={versions} /> : null}
 
-      {tab === "generate" ? (
-        <GeneratePanel
-          courseId={courseId}
-          hasVersion={versions.length > 0}
-          explanationLevel={course.explanation_level}
-          latestSummary={latestVersion?.summary_text ?? null}
-          onVersionCreated={loadAll}
-        />
-      ) : null}
-
-      {tab === "versions" ? <VersionTable versions={versions} /> : null}
-
-      {tab === "report" ? (
-        <div className="flex flex-col gap-2 text-sm">
-          {latestVersion?.report_text ? (
-            <pre className="whitespace-pre-wrap rounded-lg border border-black/10 p-4 font-sans dark:border-white/10">
-              {latestVersion.report_text}
-            </pre>
+        {tab === "report" ? (
+          latestVersion?.report_text ? (
+            <Card>
+              <pre className="text-sm whitespace-pre-wrap font-sans">{latestVersion.report_text}</pre>
+            </Card>
           ) : (
-            <p className="text-zinc-500">
-              No report yet - generate the course first to see a full report here.
-            </p>
-          )}
-        </div>
-      ) : null}
+            <EmptyState
+              title="No report yet"
+              description="Generate the course first to see a full report here."
+            />
+          )
+        ) : null}
+      </div>
     </div>
   );
 }

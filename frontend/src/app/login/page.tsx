@@ -6,6 +6,8 @@ import { api, ApiError } from "@/lib/api";
 import { setToken } from "@/lib/auth";
 import { API_BASE_URL, API_BASE_URL_CONFIGURED } from "@/lib/config";
 import type { DiagnosticsResponse } from "@/lib/types";
+import Card from "@/components/ui/Card";
+import PageHeader from "@/components/ui/PageHeader";
 
 type CheckStatus =
   | { state: "loading" }
@@ -60,10 +62,10 @@ function CheckLine({ label, check }: { label: string; check: CheckStatus }) {
   const detail = check.state === "loading" ? "checking..." : check.detail;
   const color =
     check.state === "loading"
-      ? "text-zinc-500"
+      ? "text-muted"
       : check.state === "ok"
         ? "text-green-600 dark:text-green-500"
-        : "text-red-600";
+        : "text-red-600 dark:text-red-400";
 
   return (
     <p>
@@ -102,53 +104,50 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="mx-auto flex max-w-sm flex-col gap-6 px-6 py-16">
-      <div>
-        <h1 className="text-2xl font-semibold">Sign in</h1>
-        <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
-          Rukn Course Studio - internal access only.
-        </p>
-      </div>
+    <div className="mx-auto flex max-w-sm flex-col gap-6">
+      <PageHeader title="Sign in" description="Rukn Course Studio - internal access only." />
 
-      <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-        <label className="flex flex-col gap-1 text-sm">
-          Username
-          <input
-            required
-            autoFocus
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            className="rounded border border-black/15 px-2 py-1 dark:border-white/20 dark:bg-transparent"
-          />
-        </label>
+      <Card>
+        <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+          <label className="flex flex-col gap-1 text-sm">
+            Username
+            <input
+              required
+              autoFocus
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              className="field-input"
+            />
+          </label>
 
-        <label className="flex flex-col gap-1 text-sm">
-          Password
-          <input
-            required
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            className="rounded border border-black/15 px-2 py-1 dark:border-white/20 dark:bg-transparent"
-          />
-        </label>
+          <label className="flex flex-col gap-1 text-sm">
+            Password
+            <input
+              required
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="field-input"
+            />
+          </label>
 
-        {error ? <p className="text-sm text-red-600">{error}</p> : null}
+          {error ? <p className="text-sm text-red-700">{error}</p> : null}
 
-        <button
-          type="submit"
-          disabled={submitting}
-          className="w-fit rounded-full bg-foreground px-5 py-2 text-sm text-background disabled:opacity-60"
-        >
-          {submitting ? "Signing in..." : "Sign in"}
-        </button>
-      </form>
+          <button
+            type="submit"
+            disabled={submitting}
+            className="btn-primary w-fit"
+          >
+            {submitting ? "Signing in..." : "Sign in"}
+          </button>
+        </form>
+      </Card>
 
-      <div className="flex flex-col gap-1 rounded border border-black/10 bg-black/[.03] px-3 py-2 text-xs text-zinc-600 dark:border-white/10 dark:bg-white/[.04] dark:text-zinc-400">
-        <p className="font-medium text-zinc-700 dark:text-zinc-300">Deployment diagnostics</p>
+      <Card padding="sm" className="flex flex-col gap-1 text-xs text-muted">
+        <p className="font-medium text-foreground">Deployment diagnostics</p>
         <p>
           API base URL:{" "}
-          <span className={API_BASE_URL_CONFIGURED ? "" : "text-red-600"}>
+          <span className={API_BASE_URL_CONFIGURED ? "" : "text-red-600 dark:text-red-400"}>
             {API_BASE_URL_CONFIGURED ? API_BASE_URL : "not configured"}
           </span>
         </p>
@@ -172,7 +171,7 @@ export default function LoginPage() {
             </p>
           </>
         ) : null}
-      </div>
+      </Card>
     </div>
   );
 }

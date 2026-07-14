@@ -2,11 +2,22 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlmodel import Session
 
 from app.auth.middleware import AuthMiddleware
 from app.config import settings
-from app.db import init_db
-from app.routers import admin_knowledge, auth, courses, generation, health, jobs, sources
+from app.db import engine, init_db
+from app.routers import (
+    admin_knowledge,
+    ai_usage,
+    auth,
+    courses,
+    generation,
+    health,
+    jobs,
+    sources,
+)
+from app.seed_admin_knowledge import seed as seed_admin_knowledge
 
 
 @asynccontextmanager
@@ -20,6 +31,15 @@ async def lifespan(app: FastAPI):
         directory.mkdir(parents=True, exist_ok=True)
 
     init_db()
+
+    # Safe to run on every startup: seed_admin_knowledge.seed() only ever
+    # creates a row for a key that has zero rows, so this never duplicates
+    # an item and never overwrites one a user has since edited (see
+    # app/seed_admin_knowledge.py). This is what makes the Admin Knowledge
+    # Center auto-populate instead of needing a manual command every deploy.
+    with Session(engine) as session:
+        seed_admin_knowledge(session)
+
     yield
 
 
@@ -52,3 +72,4 @@ app.include_router(courses.router)
 app.include_router(sources.router)
 app.include_router(generation.router)
 app.include_router(jobs.router)
+app.include_router(ai_usage.router)

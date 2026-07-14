@@ -224,3 +224,160 @@ def test_diagnostics_reports_unconfigured_admin_credentials(monkeypatch):
     assert body["admin_password_configured"] is False
     assert body["frontend_origin_configured"] is False
     assert body["frontend_origin_value"] is None
+
+
+def test_diagnostics_reports_fake_provider_as_always_ready(monkeypatch):
+    monkeypatch.setattr(settings, "ai_provider", "fake")
+
+    response = client.get("/auth/diagnostics")
+
+    body = response.json()
+    assert body["ai_provider"] == "fake"
+    assert body["ai_provider_ready"] is True
+
+
+def test_diagnostics_reports_anthropic_ready_once_configured(monkeypatch):
+    monkeypatch.setattr(settings, "ai_provider", "anthropic")
+    monkeypatch.setattr(settings, "anthropic_api_key", "sk-ant-test-should-never-leak-12345")
+    monkeypatch.setattr(settings, "ai_model_name", "claude-example-model")
+
+    response = client.get("/auth/diagnostics")
+
+    body = response.json()
+    assert body["ai_provider"] == "anthropic"
+    assert body["ai_provider_ready"] is True
+    # Never leak the key value itself - only the boolean above.
+    assert "sk-ant-test-should-never-leak-12345" not in response.text
+    assert "anthropic_api_key" not in body
+
+
+def test_diagnostics_reports_anthropic_not_ready_when_misconfigured(monkeypatch):
+    monkeypatch.setattr(settings, "ai_provider", "anthropic")
+    monkeypatch.setattr(settings, "anthropic_api_key", None)
+    monkeypatch.setattr(settings, "ai_model_name", "claude-example-model")
+
+    response = client.get("/auth/diagnostics")
+
+    body = response.json()
+    assert body["ai_provider"] == "anthropic"
+    assert body["ai_provider_ready"] is False
+
+
+def test_diagnostics_reports_ai_model_name_only_for_anthropic(monkeypatch):
+    monkeypatch.setattr(settings, "ai_provider", "fake")
+    monkeypatch.setattr(settings, "ai_model_name", "claude-example-model")
+
+    response = client.get("/auth/diagnostics")
+
+    assert response.json()["ai_model_name"] == "fake"
+
+    monkeypatch.setattr(settings, "ai_provider", "anthropic")
+    monkeypatch.setattr(settings, "anthropic_api_key", "sk-ant-test-should-never-leak-99999")
+
+    response = client.get("/auth/diagnostics")
+
+    assert response.json()["ai_model_name"] == "claude-example-model"
+
+
+def test_diagnostics_provider_health_defaults_to_unknown_with_no_usage_history(monkeypatch):
+    """Provider Health (§7): with no `AIUsageEvent` history at all, the
+    honest answer is "unknown", never a fabricated "ok" - and this must
+    never make a real network call to find out."""
+    monkeypatch.setattr(settings, "ai_provider", "anthropic")
+    monkeypatch.setattr(settings, "anthropic_api_key", "sk-ant-test-should-never-leak-11111")
+
+    response = client.get("/auth/diagnostics")
+
+    body = response.json()
+    assert body["provider_reachable"] == "unknown"
+    assert body["last_successful_request_at"] is None
+    assert "sk-ant-test-should-never-leak-11111" not in response.text
+
+
+def test_diagnostics_provider_health_reflects_a_recent_successful_usage_event(tmp_path, monkeypatch):
+    import app.db as db_module
+    from sqlmodel import Session, SQLModel, create_engine
+
+    from app.crud import ai_usage_events
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'diagnostics_health_test.db'}")
+    SQLModel.metadata.create_all(engine)
+    monkeypatch.setattr(db_module, "engine", engine)
+
+    with Session(engine) as session:
+        ai_usage_events.create(
+            session,
+            job_id=None,
+            course_id=None,
+            stage="write_single_reel",
+            provider="anthropic",
+            model="claude-example-model",
+            preset="balanced",
+            input_tokens=100,
+            output_tokens=50,
+            estimated_cost_usd=0.01,
+            status="ok",
+        )
+
+    response = client.get("/auth/diagnostics")
+
+    body = response.json()
+    assert body["provider_reachable"] == "ok"
+    assert body["last_successful_request_at"] is not None
+
+
+def test_diagnostics_never_exposes_secrets_even_with_usage_and_error_history(tmp_path, monkeypatch):
+    """Extends test_diagnostics_never_exposes_secrets above to also cover
+    the new §7 provider-health fields, which are sourced from DB rows
+    (AIUsageEvent/GenerationJob) rather than settings directly - a
+    different-enough code path to warrant its own explicit check."""
+    import app.db as db_module
+    from sqlmodel import Session, SQLModel, create_engine
+
+    from app.crud import ai_usage_events, courses, generation_jobs
+    from app.models.enums import ExplanationLevel, JobStatus, StructureMode
+
+    fake_key = "sk-ant-test-should-never-leak-22222"
+    monkeypatch.setattr(settings, "anthropic_api_key", fake_key)
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'diagnostics_secret_test.db'}")
+    SQLModel.metadata.create_all(engine)
+    monkeypatch.setattr(db_module, "engine", engine)
+
+    with Session(engine) as session:
+        ai_usage_events.create(
+            session,
+            job_id=None,
+            course_id=None,
+            stage="write_single_reel",
+            provider="anthropic",
+            model="claude-example-model",
+            preset="balanced",
+            status="ok",
+        )
+        course = courses.create(
+            session,
+            title="Course",
+            audience="audience",
+            outcome="outcome",
+            structure_mode=StructureMode.CONNECTED_NO_MODULES,
+            explanation_level=ExplanationLevel.FINAL_ONLY,
+        )
+        generation_jobs.create(
+            session,
+            course_id=course.id,
+            status=JobStatus.FAILED,
+            current_stage="failed",
+            progress_percent=10,
+            log_json=[],
+            error_category="rate_limit",
+            error_message="Rate limit reached - please try again shortly.",
+        )
+
+    response = client.get("/auth/diagnostics")
+
+    assert response.status_code == 200
+    assert fake_key not in response.text
+    body = response.json()
+    assert "anthropic_api_key" not in body
+    assert body["last_error_category"] == "rate_limit"

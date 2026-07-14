@@ -10,7 +10,18 @@ docs/BUILD_PLAN.md Phase 4+.
 do: flag reels whose `script_text` is empty as needing a rewrite. This lets
 pipeline tests exercise both the pass path and the revision path without
 needing an actual model to judge quality.
+
+`self.last_usage` (AI Usage Center, §5) is set after every method call to
+a small deterministic *synthetic* token estimate derived from input/output
+text length - never real usage, since no real API call ever happens here.
+`estimated_cost_usd` computed from this is always `0.0` (see
+app/generation/orchestrator.py `_record_usage_event` - it recognizes
+`provider == "fake"` and never applies real pricing to it), so this is
+purely for UI/testing symmetry with `AnthropicProvider.last_usage`, never
+mistakable for real spend.
 """
+
+from pydantic import BaseModel
 
 from app.ai.provider import (
     AIProvider,
@@ -58,11 +69,31 @@ def _result_for(scope: ReviewScope, empty_reels: list[GeneratedReel]) -> ReviewR
     )
 
 
+def _synthetic_usage(input_model: BaseModel, output_model: BaseModel) -> dict:
+    """Deterministic, clearly-synthetic token estimate - roughly 4
+    characters per token, the same rough heuristic often used to
+    ballpark-estimate token counts without a real tokenizer."""
+    input_chars = len(input_model.model_dump_json())
+    output_chars = len(output_model.model_dump_json())
+    return {
+        "model": "fake",
+        "input_tokens": max(1, input_chars // 4),
+        "output_tokens": max(1, output_chars // 4),
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+    }
+
+
 class FakeProvider(AIProvider):
     """Deterministic stand-in for a real AI provider. Calls no external API."""
 
     DEFAULT_MODULE_COUNT = 2
     DEFAULT_REELS_PER_MODULE = 3
+
+    def __init__(self) -> None:
+        # Same shape/purpose as `AnthropicProvider.last_usage` - see this
+        # module's docstring for why costs derived from it are always 0.0.
+        self.last_usage: dict | None = None
 
     def build_course_map(self, input: BuildCourseMapInput) -> CourseMap:
         modules: list[ModulePlan] = []
@@ -71,7 +102,9 @@ class FakeProvider(AIProvider):
             reels = [
                 ReelPlan(
                     reel_id=f"{module_id}-r{r_idx}",
-                    title=f"{input.brief.title} - Module {m_idx} Reel {r_idx}",
+                    # Same reasoning as the module title above: plain
+                    # descriptive text, no "Reel N" self-numbering.
+                    title=f"Fake lesson topic {r_idx} for module {m_idx}",
                     purpose=f"Fake purpose for module {m_idx} reel {r_idx}.",
                     # Includes m_idx so must_cover is unique across the whole
                     # course, not just within one module - otherwise every
@@ -87,7 +120,12 @@ class FakeProvider(AIProvider):
             modules.append(
                 ModulePlan(
                     module_id=module_id,
-                    title=f"Module {m_idx}: {input.brief.title}",
+                    # Plain descriptive title, no "Module N:" prefix - the
+                    # DOCX exporter (app/services/docx_export.py) is solely
+                    # responsible for that numbering, so a title containing
+                    # its own prefix would render doubled ("Module 1 —
+                    # Module 1: ...").
+                    title=f"Fake topic block {m_idx} for {input.brief.title}",
                     purpose=f"Fake purpose for module {m_idx}, building toward: {input.brief.outcome}",
                     bridge_project=(
                         f"Fake bridge project connecting module {m_idx} to module {m_idx + 1}"
@@ -98,23 +136,29 @@ class FakeProvider(AIProvider):
                 )
             )
 
-        return CourseMap(
+        result = CourseMap(
             course_title=input.brief.title,
             main_thread=f"Fake main thread connecting all modules toward: {input.brief.outcome}",
             modules=modules,
         )
+        self.last_usage = _synthetic_usage(input, result)
+        return result
 
     def write_single_reel(self, input: WriteSingleReelInput) -> GeneratedReel:
         used_ideas = list(input.reel.must_cover)
         used_examples = [f"Fake example illustrating '{input.reel.title}'"]
 
+        # Deliberately written as spoken-style placeholder lines, not
+        # labeled meta text (no "Purpose:"/"- covers:" style notes) - even
+        # fake output should already look like a lecturer script, not
+        # internal planning notes, per the teleprompter DOCX contract.
         script_lines = [
-            f"[FAKE SCRIPT] {input.reel.title}",
-            f"Purpose: {input.reel.purpose}",
-            *[f"- covers: {point}" for point in input.reel.must_cover],
+            f"يلا نبدأ في {input.reel.title} على طول من غير مقدمات.",
+            *[f"النقطة دي مهمة: {point}." for point in input.reel.must_cover],
+            "كده كفاية للجزء ده، وجاهزين نكمل اللي جاي بعده.",
         ]
 
-        return GeneratedReel(
+        result = GeneratedReel(
             reel_id=input.reel.reel_id,
             module_id=input.module.module_id,
             title=input.reel.title,
@@ -123,27 +167,39 @@ class FakeProvider(AIProvider):
             used_examples=used_examples,
             self_check_status=ReviewStatus.PASS,
         )
+        self.last_usage = _synthetic_usage(input, result)
+        return result
 
     def review_single_reel(self, input: ReviewSingleReelInput) -> ReviewResult:
         empty = [input.generated_reel] if not input.generated_reel.script_text.strip() else []
-        return _result_for(ReviewScope.REEL, empty)
+        result = _result_for(ReviewScope.REEL, empty)
+        self.last_usage = _synthetic_usage(input, result)
+        return result
 
     def review_five_reels(self, input: ReviewFiveReelsInput) -> ReviewResult:
         empty = [r for r in input.reels if not r.script_text.strip()]
-        return _result_for(ReviewScope.FIVE_REELS, empty)
+        result = _result_for(ReviewScope.FIVE_REELS, empty)
+        self.last_usage = _synthetic_usage(input, result)
+        return result
 
     def review_module(self, input: ReviewModuleInput) -> ReviewResult:
         empty = [r for r in input.reels if not r.script_text.strip()]
-        return _result_for(ReviewScope.MODULE, empty)
+        result = _result_for(ReviewScope.MODULE, empty)
+        self.last_usage = _synthetic_usage(input, result)
+        return result
 
     def review_two_modules(self, input: ReviewTwoModulesInput) -> ReviewResult:
         all_reels = input.first.reels + input.second.reels
         empty = [r for r in all_reels if not r.script_text.strip()]
-        return _result_for(ReviewScope.TWO_MODULES, empty)
+        result = _result_for(ReviewScope.TWO_MODULES, empty)
+        self.last_usage = _synthetic_usage(input, result)
+        return result
 
     def final_review(self, input: FinalReviewInput) -> ReviewResult:
         empty = [r for r in input.all_reels if not r.script_text.strip()]
-        return _result_for(ReviewScope.FINAL, empty)
+        result = _result_for(ReviewScope.FINAL, empty)
+        self.last_usage = _synthetic_usage(input, result)
+        return result
 
     def rebuild_final_course(self, input: RebuildFinalCourseInput) -> FinalCourse:
         sections: list[str] = []
@@ -173,8 +229,10 @@ class FakeProvider(AIProvider):
                 )
             )
 
-        return FinalCourse(
+        result = FinalCourse(
             title=input.course_map.course_title,
             modules=final_modules,
             full_text="\n\n".join(sections),
         )
+        self.last_usage = _synthetic_usage(input, result)
+        return result

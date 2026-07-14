@@ -2,6 +2,7 @@
 
 import json
 from dataclasses import asdict
+from pathlib import Path
 
 import pytest
 from sqlmodel import Session, SQLModel, create_engine
@@ -10,7 +11,15 @@ from docx import Document
 
 from app.ai.fake_provider import FakeProvider
 from app.ai.provider import BuildCourseMapInput, WriteSingleReelInput
-from app.crud import admin_knowledge_items, course_sources, course_versions, courses, source_analyses
+from app.crud import (
+    admin_knowledge_items,
+    course_sources,
+    course_versions,
+    courses,
+    generation_jobs,
+    source_analyses,
+)
+from app.generation.errors import ERROR_CATEGORY_MESSAGES, ERROR_CATEGORY_MESSAGES_NOTHING_SAVED
 from app.generation.orchestrator import run_generation
 from app.models.enums import (
     ExplanationLevel,
@@ -55,7 +64,7 @@ def _make_source_with_analysis(
     session,
     course_id,
     text,
-    category=SourceCategory.MAIN_CONTENT,
+    category=SourceCategory.SCIENTIFIC_REFERENCE,
     priority=Priority.MEDIUM,
 ):
     """Mirrors what app/routers/sources.py does on upload/notes creation."""
@@ -100,6 +109,51 @@ class RecordingProvider(FakeProvider):
     def review_single_reel(self, input):  # noqa: A002
         self.review_single_reel_calls += 1
         return super().review_single_reel(input)
+
+
+class FailAfterNReelsProvider(FakeProvider):
+    """Raises once `fail_after` distinct reels have already completed
+    successfully - a deterministic mid-pipeline failure, robust to any
+    local-validator retries within those already-completed reels (see
+    `_write_and_review_reel`'s bounded rewrite loop, which can call
+    `write_single_reel` more than once for the very same reel_id)."""
+
+    def __init__(self, fail_after: int, message: str = "simulated provider failure"):
+        super().__init__()
+        self.fail_after = fail_after
+        self.message = message
+        self._seen_reel_ids: set[str] = set()
+
+    def write_single_reel(self, input):  # noqa: A002
+        if input.reel.reel_id not in self._seen_reel_ids and len(self._seen_reel_ids) >= self.fail_after:
+            raise RuntimeError(self.message)
+        self._seen_reel_ids.add(input.reel.reel_id)
+        return super().write_single_reel(input)
+
+
+class RealisticRateLimitError(Exception):
+    """Named and worded like the real `anthropic` SDK's `RateLimitError`
+    (e.g. `anthropic.RateLimitError: Error code: 429 - rate limit
+    exceeded`) without importing the actual `anthropic` package here -
+    `classify_provider_error` (app/generation/errors.py) is a pure
+    function that only looks at exception type name/message text, so this
+    is enough to prove it classifies a real-shaped failure correctly."""
+
+
+class RealisticRateLimitProvider(FakeProvider):
+    """Mirrors `FailAfterNReelsProvider` below, but raises an
+    Anthropic-shaped exception instead of a generic `RuntimeError`."""
+
+    def __init__(self, fail_after: int):
+        super().__init__()
+        self.fail_after = fail_after
+        self._seen_reel_ids: set[str] = set()
+
+    def write_single_reel(self, input):  # noqa: A002
+        if input.reel.reel_id not in self._seen_reel_ids and len(self._seen_reel_ids) >= self.fail_after:
+            raise RealisticRateLimitError("Error code: 429 - rate limit exceeded")
+        self._seen_reel_ids.add(input.reel.reel_id)
+        return super().write_single_reel(input)
 
 
 def test_run_generation_completes_end_to_end(session):
@@ -214,7 +268,7 @@ def test_only_usable_sources_are_counted(session):
     course_sources.create(
         session,
         course_id=course.id,
-        source_category=SourceCategory.MAIN_CONTENT,
+        source_category=SourceCategory.SCIENTIFIC_REFERENCE,
         priority=Priority.HIGH,
         status="ready",
         extracted_text="Usable extracted text.",
@@ -222,7 +276,7 @@ def test_only_usable_sources_are_counted(session):
     course_sources.create(
         session,
         course_id=course.id,
-        source_category=SourceCategory.MAIN_CONTENT,
+        source_category=SourceCategory.SCIENTIFIC_REFERENCE,
         priority=Priority.MEDIUM,
         status="extraction_blocked",
         extracted_text=None,
@@ -350,7 +404,7 @@ def test_forbidden_phrase_short_circuits_ai_review_entirely(session):
     course_map = CourseMap(course_title="Course", main_thread="thread", modules=[module])
     provider = AlwaysForbiddenProvider()
     rules_context = {
-        "rukn-forbidden-phrases": json.dumps(
+        "rukn_forbidden_phrases": json.dumps(
             {"phrases": [{"phrase": "في الريل ده", "severity": "high"}]}
         )
     }
@@ -467,10 +521,61 @@ def test_course_not_found_raises(session):
         run_generation(session, course_id=999999)
 
 
-def test_provider_error_marks_job_failed_without_raising(session):
+def test_source_style_and_jargon_never_leak_into_exported_docx(session):
+    """Source Authority Firewall, end to end: a scientific_reference source
+    with distinctive academic jargon and a flow_reference source with a
+    distinctive catchphrase must never appear verbatim in the exported
+    DOCX, and the DOCX must still follow the standard teleprompter
+    structure regardless of the sources' own formatting/tone. This
+    currently passes largely because FakeProvider never consumes source
+    text into its placeholder script - that's fine, it's a forward-looking
+    regression guard for when a real provider is wired in."""
+    course = _make_course(session)
+
+    jargon_phrase = "epistemological paradigmatic heuristic substantiation"
+    academic_text = (
+        f"In accordance with the {jargon_phrase} framework established by prior "
+        "scholarship, the present treatise shall proceed to enumerate the "
+        "constituent formulae. " * 10
+    )
+    _make_source_with_analysis(
+        session, course.id, academic_text, category=SourceCategory.SCIENTIFIC_REFERENCE
+    )
+
+    catchphrase = "يلا يا نجم يلا"
+    flow_text = (
+        f"{catchphrase} خد بالك من الخطوة الأولى كويس وابدأ فعليا من غير "
+        f"تفكير كتير. لو الألوان مش واضحة هتضيع وقتك. {catchphrase} جرب دلوقتي."
+    )
+    _make_source_with_analysis(
+        session, course.id, flow_text, category=SourceCategory.FLOW_REFERENCE
+    )
+
+    job = run_generation(session, course.id)
+
+    assert job.status == JobStatus.COMPLETED
+    document = Document(job.output_docx_path)
+    paragraph_texts = [p.text for p in document.paragraphs]
+    full_text = "\n".join(paragraph_texts)
+
+    assert jargon_phrase not in full_text
+    assert catchphrase not in full_text
+
+    # Standard teleprompter structure still holds regardless of the
+    # sources' own formatting/tone.
+    assert any(t.startswith("Module 1 —") for t in paragraph_texts)
+    assert any(t.startswith("Lesson 1 —") for t in paragraph_texts)
+
+
+def test_provider_error_with_no_saved_work_marks_job_failed_with_clean_message(session):
+    """Nothing usable was saved yet (fails before the course map even
+    finishes) - the job must end FAILED, with a short, clean error_message
+    that never contains the raw exception text (that stays in the
+    internal-only log_json entry, never in what the API returns)."""
+
     class BrokenProvider(FakeProvider):
         def build_course_map(self, input):  # noqa: A002 - matches AIProvider's signature
-            raise RuntimeError("simulated provider failure")
+            raise RuntimeError("simulated rate limit: HTTP 429 too many requests")
 
     course = _make_course(session)
 
@@ -478,6 +583,101 @@ def test_provider_error_marks_job_failed_without_raising(session):
 
     assert job.status == JobStatus.FAILED
     assert job.current_stage == "failed"
-    assert "simulated provider failure" in job.error_message
+    assert job.course_map_json is None
+    assert job.completed_reels_json == []
+    assert job.partial_docx_path is None
+    assert job.error_category == "rate_limit"
+    assert job.error_message == ERROR_CATEGORY_MESSAGES_NOTHING_SAVED["rate_limit"]
+    assert "simulated rate limit" not in job.error_message
+    assert "429" not in job.error_message
+
     error_logs = [e for e in job.log_json if e["step"] == "error"]
     assert len(error_logs) == 1
+    # The raw text is allowed in the internal-only log, just never in the
+    # user-facing error_message.
+    assert "simulated rate limit" in error_logs[0]["message"]
+
+
+def test_provider_error_with_saved_work_marks_job_partial_and_saves_partial_docx(session):
+    """A course map and some completed reels already exist when the
+    failure happens - the job must end PARTIAL (not FAILED), with a clean
+    category-specific error_message and a real partial DOCX on disk."""
+    course = _make_course(session)
+    provider = FailAfterNReelsProvider(
+        fail_after=2, message="Service unavailable: 503 - please retry later"
+    )
+
+    job = run_generation(session, course.id, provider=provider)
+
+    assert job.status == JobStatus.PARTIAL
+    assert job.current_stage == "partial"
+    assert job.course_map_json is not None
+    assert len(job.completed_reels_json) == 2
+    assert job.completed_reels_count == 2
+    assert job.completed_modules_count == 0  # module 1's review never ran
+    assert job.last_completed_step == "reel:m1-r2"
+    assert job.error_category == "provider_unavailable"
+    assert job.error_message == ERROR_CATEGORY_MESSAGES["provider_unavailable"]
+    assert "503" not in job.error_message
+
+    assert job.partial_docx_path is not None
+    assert Path(job.partial_docx_path).exists()
+
+
+def test_realistic_anthropic_shaped_rate_limit_error_ends_job_partial(session):
+    """Closes the gap between the generic reliability-pass tests above
+    (plain RuntimeError) and what a real Anthropic SDK failure actually
+    looks like: a distinctly-named exception class with 429/rate-limit
+    wording. The job must still end PARTIAL with the already-completed
+    reels intact."""
+    course = _make_course(session)
+    provider = RealisticRateLimitProvider(fail_after=2)
+
+    job = run_generation(session, course.id, provider=provider)
+
+    assert job.status == JobStatus.PARTIAL
+    assert job.current_stage == "partial"
+    assert job.error_category == "rate_limit"
+    assert job.course_map_json is not None
+    assert len(job.completed_reels_json) == 2
+    assert job.completed_reels_count == 2
+
+    reloaded = generation_jobs.get(session, job.id)
+    assert reloaded.status == JobStatus.PARTIAL
+    assert len(reloaded.completed_reels_json) == 2
+
+
+def test_partial_run_does_not_lose_or_overwrite_already_completed_work(session):
+    """Re-fetch the job row from the DB after the failure (not just the
+    in-memory return value) to confirm nothing got wiped."""
+    course = _make_course(session)
+    provider = FailAfterNReelsProvider(fail_after=2)
+
+    job = run_generation(session, course.id, provider=provider)
+    assert job.status == JobStatus.PARTIAL
+
+    reloaded = generation_jobs.get(session, job.id)
+    assert reloaded is not None
+    assert reloaded.status == JobStatus.PARTIAL
+    assert reloaded.course_map_json is not None
+    assert len(reloaded.completed_reels_json) == 2
+    assert reloaded.completed_reels_json == job.completed_reels_json
+
+
+def test_regenerate_from_scratch_is_independent_of_an_existing_partial_job(session):
+    """`run_generation` always creates a brand-new `GenerationJob` row -
+    starting fresh must not be blocked by, or corrupt, an existing
+    partial job's saved state."""
+    course = _make_course(session)
+    partial_job = run_generation(session, course.id, provider=FailAfterNReelsProvider(fail_after=2))
+    assert partial_job.status == JobStatus.PARTIAL
+
+    fresh_job = run_generation(session, course.id)
+
+    assert fresh_job.id != partial_job.id
+    assert fresh_job.status == JobStatus.COMPLETED
+
+    reloaded_partial = generation_jobs.get(session, partial_job.id)
+    assert reloaded_partial.status == JobStatus.PARTIAL
+    assert len(reloaded_partial.completed_reels_json) == 2
+    assert reloaded_partial.course_map_json is not None

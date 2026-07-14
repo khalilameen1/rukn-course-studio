@@ -1,8 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
-import Link from "next/link";
 import AuthGuard from "@/components/AuthGuard";
-import LogoutButton from "@/components/LogoutButton";
+import AppShell from "@/components/ui/AppShell";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -20,12 +19,6 @@ export const metadata: Metadata = {
   description: "Internal tool for generating Rukn practical-skill courses as DOCX.",
 };
 
-const NAV_LINKS = [
-  { href: "/", label: "Home" },
-  { href: "/admin", label: "Admin" },
-  { href: "/courses", label: "Courses" },
-];
-
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -36,27 +29,10 @@ export default function RootLayout({
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">
-        <header className="border-b border-black/10 dark:border-white/10">
-          <nav className="mx-auto flex max-w-3xl flex-col gap-3 px-6 py-4 sm:flex-row sm:items-center sm:gap-6">
-            <span className="font-semibold">Rukn Course Studio</span>
-            <ul className="flex flex-wrap gap-4 text-sm">
-              {NAV_LINKS.map((link) => (
-                <li key={link.href}>
-                  <Link href={link.href} className="hover:underline">
-                    {link.label}
-                  </Link>
-                </li>
-              ))}
-              <li>
-                <LogoutButton />
-              </li>
-            </ul>
-          </nav>
-        </header>
-        <main className="flex-1">
+      <body className="min-h-full font-sans antialiased">
+        <AppShell>
           <AuthGuard>{children}</AuthGuard>
-        </main>
+        </AppShell>
       </body>
     </html>
   );

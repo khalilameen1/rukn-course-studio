@@ -24,7 +24,7 @@ def _reel(reel_id, title, script_text, used_ideas=None, used_examples=None) -> G
 # --- forbidden_phrase_checker ------------------------------------------------
 
 FORBIDDEN_RULES_CONTEXT = {
-    "rukn-forbidden-phrases": json.dumps(
+    "rukn_forbidden_phrases": json.dumps(
         {
             "phrases": [
                 {
@@ -58,7 +58,7 @@ def test_forbidden_phrase_checker_handles_missing_rule():
 
 
 def test_forbidden_phrase_checker_handles_malformed_json():
-    assert check_forbidden_phrases("any text", {"rukn-forbidden-phrases": "{not json"}) == []
+    assert check_forbidden_phrases("any text", {"rukn_forbidden_phrases": "{not json"}) == []
 
 
 def test_forbidden_phrase_checker_finds_multiple_matches():

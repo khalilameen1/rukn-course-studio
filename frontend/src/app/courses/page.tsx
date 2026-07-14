@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import type { Course } from "@/lib/types";
 import CourseTable from "@/components/courses/CourseTable";
+import PageHeader from "@/components/ui/PageHeader";
 
 export default function CoursesPage() {
   const [courses, setCourses] = useState<Course[]>([]);
@@ -20,23 +21,22 @@ export default function CoursesPage() {
   }, []);
 
   return (
-    <div className="mx-auto flex max-w-3xl flex-col gap-6 px-6 py-12">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Courses</h1>
-        <Link
-          href="/courses/new"
-          className="rounded-full bg-foreground px-4 py-2 text-sm text-background"
-        >
-          New Course
-        </Link>
-      </div>
+    <div className="flex flex-col gap-6">
+      <PageHeader
+        title="Courses"
+        description="Create a course brief, upload sources, and generate the final teleprompter-ready DOCX."
+        action={
+          <Link
+            href="/courses/new"
+            className="btn-primary"
+          >
+            New Course
+          </Link>
+        }
+      />
 
-      {error ? <p className="text-sm text-red-600">{error}</p> : null}
-      {loading ? (
-        <p className="text-sm text-zinc-500">Loading...</p>
-      ) : (
-        <CourseTable courses={courses} />
-      )}
+      {error ? <p className="text-sm text-red-700">{error}</p> : null}
+      {loading ? <p className="text-sm text-muted">Loading...</p> : <CourseTable courses={courses} />}
     </div>
   );
 }

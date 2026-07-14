@@ -103,6 +103,14 @@ Seed admin knowledge separately (idempotent — skips keys that already exist):
 python -m app.seed_admin_knowledge
 ```
 
+To intentionally refresh selected system defaults (forbidden phrases, quality
+rubric, high-signal doctrine, teleprompter contract) after a code upgrade —
+keeps previous active content as an inactive backup version:
+
+```powershell
+python -m app.seed_admin_knowledge --refresh-defaults --confirm
+```
+
 ## Frontend Setup (Next.js)
 
 From the repository root, in a **separate terminal** (keep the backend
@@ -145,6 +153,359 @@ reachable via `/health` — start the backend first if you see "unreachable".
 Generation shows **high-level progress only** (no reel-by-reel output). After a
 successful run, download the latest DOCX from the Generate or Versions tab.
 
+## Source types
+
+Every uploaded/pasted source has a `source_category` (`app/models/enums.py`
+`SourceCategory`) that controls how the generation pipeline treats it -
+see `app/generation/prompt_compiler.py` for exactly how each one is
+compiled into prompt context:
+
+| Category | Use for | How it's handled |
+|---|---|---|
+| `scientific_reference` | Factual/technical/educational material to extract, summarize, and rephrase into Rukn's style. | Short source -> full text; long source -> summary, or a few keyword-matched chunks when writing a specific reel. Never copied as long verbatim passages. |
+| `flow_reference` | A style/speaking reference - HOW something is said (hook, pacing, transitions, escalation, ending, naturalness), not WHAT is said. | Never summarized or quoted. Instead reduced to a short **heuristic flow profile** (pacing, opening/ending pattern, transition style, escalation, naturalness) - see "Prompt compiler" below. |
+| `old_course` | A previous course, to understand its structure/strengths/weaknesses. | Same extract/summarize/chunk-select handling as `scientific_reference`. Reuse what's useful, avoid the weak parts - no automatic "fusion" logic exists yet. |
+| `user_notes` | Direct user instructions - highest priority (scope/audience/tone/constraints). | Always passed through in full. Never trimmed by category logic; protected as long as possible even when the overall source budget (below) has to trim something. |
+| `raw_material` | Mixed/unclear material that hasn't been classified yet. | Same extract/summarize/chunk-select handling as `scientific_reference`, prefixed with a short "unclassified/mixed material - verify before treating as fact" marker. |
+
+**Why `flow_reference` is analyzed instead of summarized:** a style
+reference's *content* is irrelevant (and must never leak into a course as
+if it were a fact) - what matters is its *delivery pattern*. Summarizing
+it would either produce a meaningless summary or, worse, tempt the
+pipeline into treating a catchphrase as real course material.
+`scientific_reference` is the opposite: its content *is* the point, so it
+gets extracted/summarized/chunk-selected instead of pattern-profiled.
+
+Change a source's category after upload with
+`PATCH /courses/{course_id}/sources/{source_id}` (body:
+`{"source_category": "..."}`) - this re-derives that source's category-driven
+"avoid points" (`app/services/source_analysis.py` `CATEGORY_AVOID_POINTS`)
+without re-running extraction/chunking/summarization. Delete a source with
+`DELETE /courses/{course_id}/sources/{source_id}` (204 on success, 404 if it
+doesn't belong to that course) - removes the DB row, the uploaded file, the
+extracted-text copy, and any analysis rows.
+
+### Source Authority
+
+**Sources never define Rukn's language, format, lesson/reel structure, or
+style.** That authority comes only from:
+
+- **Rukn Admin Knowledge** - specifically `rukn_writing_style`,
+  `rukn_practical_course_rules`, `rukn_teleprompter_docx_contract`,
+  `rukn_quality_rubric`, and `rukn_high_signal_reel_doctrine`
+  (`app/models/admin_knowledge_item.py`, loaded per stage by
+  `select_rules_for_stage`) - and
+- **explicit user instructions** (`user_notes` sources, always passed
+  through in full).
+
+Concretely: `scientific_reference` sources provide **knowledge only** (facts
+to extract, simplify, and rephrase into Rukn's own voice - never tone,
+wording, or structure to imitate). `flow_reference` sources provide **human
+delivery mechanics only** (pacing, hooks, escalation, naturalness) - never a
+factual source and never a format/reel template. A transcript or document
+from a completely different field/domain must never become a course
+template just because it was uploaded - it can only ever inform *how a human
+naturally talks*, never *what Rukn's course looks like*.
+
+**Authority priority order** (highest to lowest):
+
+1. Explicit user instructions (`user_notes`)
+2. Rukn Admin Knowledge (`rukn_writing_style`, `rukn_practical_course_rules`,
+   `rukn_teleprompter_docx_contract`, `rukn_quality_rubric`,
+   `rukn_high_signal_reel_doctrine`)
+3. The teleprompter DOCX contract specifically (`rukn_teleprompter_docx_contract`)
+4. The course brief / target learner (title, audience, outcome, structure mode)
+5. Scientific/factual sources (`scientific_reference`)
+6. Flow/style mechanics (`flow_reference`)
+7. Old course structure (`old_course`)
+
+`compile_source_context` (`app/generation/prompt_compiler.py`) enforces this
+hierarchy on every stage's compiled sources, ordering the returned excerpts
+`user_notes` -> `scientific_reference` -> `flow_reference` -> `old_course` ->
+`raw_material`, independent of the unrelated high/medium/low `priority`
+field (which stays a secondary signal used only for budget trimming).
+
+**Conflict-resolution rules:**
+
+- Admin Knowledge beats source style/tone, always.
+- The teleprompter contract beats a source's own formatting, always.
+- An explicit user instruction beats default source-handling behavior.
+- Scientific facts beat creative/stylistic wording when they conflict.
+- `flow_reference` never overrides Rukn's own lesson/reel format/structure -
+  it can only ever describe delivery mechanics.
+
+Every compiled `SourceExcerpt` (`app/ai/provider.py`) also carries
+`allowed_use` / `disallowed_use` / `style_contamination_warning` - a narrow,
+explicit label of exactly what that source's content may and may never be
+used for (e.g. `scientific_reference` allows
+`extract_factual_knowledge`/`rephrase_into_rukn_style` but disallows
+`imitate_source_tone`/`copy_source_structure`; `flow_reference` allows
+`identify_pacing`/`identify_escalation_and_tension` but disallows
+`copy_catchphrases_or_signature_lines`/`treat_as_reel_template`). See
+`ALLOWED_USE_BY_CATEGORY` / `DISALLOWED_USE_BY_CATEGORY` /
+`STYLE_CONTAMINATION_WARNING_BY_CATEGORY` in `app/generation/prompt_compiler.py`
+for the exact per-category lists.
+
+## High-signal reel doctrine
+
+`rukn_high_signal_reel_doctrine` (Admin Knowledge; auto-seeded when missing)
+defines Rukn's writing standard against shallow short-form habits:
+
+- **Viral without bait** — hooks stop because of the idea, not hype
+  ("biggest"/"secret no one knows"/forced heat).
+- **Standalone + series** — each reel works alone on social; no disguised
+  recap of the previous reel inside the app series.
+- **Organic loops** — natural cut at an important point, never "in the next
+  reel" announcements.
+- **Variable length by idea** — short/medium/long as needed; no equal word
+  counts, no padding, no cutting until shallow.
+- **High-signal only** — save/share-worthy distinction, correction, local
+  realistic example, or mental model.
+- **Local examples** — Egyptian/Arab learner reality (shops, phones, low
+  budgets); not imported luxury/default mega-company contexts.
+- **Teacher dignity** — honest value ok; no desperate selling tone.
+- **Domain voice** — not one robotic voice for every skill.
+- **No template copying** — scientific sources = knowledge only;
+  `flow_reference` = `human_flow_profile` only, never a format template.
+- **Adversarial self-review** — write path must internally produce Draft A →
+  Draft B → Adversarial Critic → **Master Version**; only Master becomes
+  `script_text` (see `app/prompts/write_single_reel.md`). Local validators
+  (`app/validators/high_signal_checker.py`,
+  `app/validators/anti_template_checker.py`) catch obvious failures even
+  under `FakeProvider`.
+
+Seed seeds the doctrine for new installs. Existing DBs get missing keys on
+next startup (idempotent create-only). To intentionally replace *selected*
+system defaults on an already-seeded database (forbidden phrases, quality
+rubric, high-signal doctrine, teleprompter contract — and optional firewall /
+flow-guide keys when shipped), use:
+
+```powershell
+cd backend
+.\.venv\Scripts\python.exe -m app.seed_admin_knowledge --refresh-defaults --confirm
+```
+
+This deactivates the previous active version (kept as an inactive backup row
+with a timestamped title) and creates a new active version from code
+defaults. It never runs on startup and does not touch custom keys or
+`rukn_core_rules` / `rukn_writing_style` / presets. Omitting `--confirm`
+prints the warning and exits without changing anything.
+
+Golden doctrine checks (no live AI):
+
+```powershell
+cd backend
+.\.venv\Scripts\python.exe -m pytest tests/golden -q
+```
+
+## Generation presets
+
+`Course.generation_preset` (`app/models/enums.py` `GenerationPreset`,
+default **Balanced**) is a named intent for how generation should approach
+a course. See `app/generation/presets.py`:
+
+| Preset | Intended use | Temperature |
+|---|---|---|
+| `conservative` | Review/correction passes - accuracy over variety. | 0.2 |
+| `balanced` (default) | Everyday reel/module writing. | 0.45 |
+| `creative` | Generating multiple candidate openings/examples/angles. | 0.75 |
+| `fusion` | Merging a Conservative attempt and a Creative attempt into one (not implemented). | 0.35 |
+| `strict_teleprompter` | Final export/cleanup pass enforcing the teleprompter DOCX contract strictly. | 0.25 |
+
+`PRESET_TEMPERATURES` in the same module maps each preset to the
+temperature values above. Every generation run logs which preset was used
+(`{"step": "load_brief", "preset": "..."}` in the job's internal
+`log_json`).
+
+- **`FakeProvider`** (default) ignores the preset entirely - its output
+  never changes per preset.
+- **`AnthropicProvider`** actually uses it: `app/generation/orchestrator.py`
+  calls `provider.configure_for_run(brief.generation_preset)` once, right
+  after the course brief loads and before the first AI call, which
+  re-resolves and applies that preset's temperature (see
+  `AnthropicProvider.configure_for_run` in
+  `app/ai/anthropic_provider.py`) for every stage's `messages.create` call
+  for the rest of that run. This hook is deliberately `hasattr`-guarded at
+  the call site (not a method on the `AIProvider` ABC) so `FakeProvider`
+  needs zero changes.
+
+## Connecting a real Anthropic provider
+
+`AI_PROVIDER=fake` (the default) needs no key and produces deterministic
+placeholder content - safe for all local dev and the whole automated test
+suite. Switching to `AI_PROVIDER=anthropic` calls the real Claude API via
+`app/ai/anthropic_provider.py` and costs real API credits. Two things to
+know before flipping the switch:
+
+- **Request timeout.** `ANTHROPIC_REQUEST_TIMEOUT_SECONDS` (default `120`,
+  optional) bounds how long a single Anthropic call can hang before
+  failing with a clean, classifiable `timeout` error (see "Generation
+  resilience" below) instead of hanging the whole request indefinitely.
+- **Switching back to `fake` at any time needs zero code changes** - just
+  set `AI_PROVIDER=fake` (and redeploy/restart if in production). Nothing
+  else needs to change.
+
+### First real test mode (do this once, with a real key, before trusting it for anything bigger)
+
+The cheapest, most predictable way to confirm the real provider actually
+works end to end: create a tiny course with a **manual course map**. This
+still makes one `build_course_map` call, but
+`backend/app/prompts/build_course_map.md` instructs the model to convert
+`manual_map_text` "as-is" rather than design its own structure - so a
+short, explicit map keeps the whole run down to exactly one module and two
+lessons (one `build_course_map` call, two `write_single_reel`/review
+cycles, one `final_review`) instead of however large a from-scratch map
+might turn out.
+
+1. Set in `backend/.env` (or the equivalent Render env vars - see
+   "Deploying to Render" below):
+
+   ```
+   AI_PROVIDER=anthropic
+   ANTHROPIC_API_KEY=<your real key>
+   AI_MODEL_NAME=<check Anthropic's current model list for the exact slug, e.g. something like "claude-sonnet-4-5-..." - do not copy that string verbatim, it is a placeholder, not a verified-current model name>
+   ```
+
+   Restart the backend (`uvicorn`) after changing `.env` so it picks up
+   the new values.
+
+2. Create a course with `generation_preset=balanced`, no source uploads,
+   and a short, explicit `manual_map_text` that requests exactly one
+   module with two lessons - either via the UI (Course form's "Manual
+   course map" field) or directly via curl:
+
+   ```powershell
+   curl -X POST http://localhost:8000/courses `
+     -H "Authorization: Bearer <your login token>" `
+     -H "Content-Type: application/json" `
+     -d '{
+       "title": "Real Provider Smoke Test",
+       "audience": "internal test",
+       "outcome": "confirm the real Anthropic provider works end to end",
+       "structure_mode": "connected_no_modules",
+       "generation_preset": "balanced",
+       "manual_map_text": "Exactly one module titled '\''Module 1'\'' with exactly two short lessons: Lesson 1 (a 30-second intro) and Lesson 2 (a 30-second wrap-up). Do not add any other modules or lessons."
+     }'
+   ```
+
+   (Get `<your login token>` from `POST /auth/login` with your
+   `ADMIN_USERNAME`/`ADMIN_PASSWORD` first.)
+
+3. Trigger generation for that course - UI's "Generate" button, or:
+
+   ```powershell
+   curl -X POST http://localhost:8000/courses/<course_id>/generate `
+     -H "Authorization: Bearer <your login token>"
+   ```
+
+4. Confirm the job ends `"status": "completed"` (`GET
+   /jobs/{job_id}`) and download the DOCX (`GET
+   /courses/{course_id}/download/latest`) to confirm it reads like a real,
+   teleprompter-ready script for one module/two lessons - not placeholder
+   text.
+
+5. Set `AI_PROVIDER=fake` again afterward if you don't want further runs
+   to spend real credits.
+
+`backend/scripts/smoke_test.py` (see "Production smoke test" below) is a
+**login/auth-only** smoke check - it deliberately never touches
+generation, so it is not a substitute for the steps above and needs no
+changes to support this. There is no automated test that calls the real
+Anthropic API (and there should never be one - see the top of
+`backend/tests/test_anthropic_provider.py`); the steps above are the only
+supported way to validate a real key/model before relying on it.
+
+## Generation resilience
+
+The synchronous request-response model (`POST /courses/{course_id}/generate`
+waits for the whole pipeline, see "Repository Structure" above) stays as-is
+for this MVP - no Celery/Redis/task queue. What changed is that a mid-run
+failure no longer loses already-completed work:
+
+- **Incremental persistence.** `app/generation/orchestrator.py` flushes the
+  course map (`GenerationJob.course_map_json`) to the DB as soon as it's
+  built, and appends each completed reel to `GenerationJob.completed_reels_json`
+  right after it's generated - not batched at the end. `last_completed_step`,
+  `completed_modules_count`, and `completed_reels_count` track progress the
+  same way. All four are internal-only (same exclusion principle as
+  `log_json` - see `app/schemas/generation_job.py`); the API only ever
+  returns the small, user-safe summary fields.
+- **If credits/API calls fail mid-generation:** the pipeline classifies the
+  error (`app/generation/errors.py` `classify_provider_error` - one of
+  `rate_limit`, `insufficient_quota`, `timeout`, `provider_unavailable`,
+  `malformed_response`, `context_too_long`, `unknown`) and checks what's
+  already saved. If a course map and/or at least one completed reel exists,
+  the job ends `JobStatus.PARTIAL` (not `FAILED`) with a clean,
+  category-specific `error_message` (never the raw exception text) and a
+  downloadable partial DOCX. If nothing usable was saved yet (e.g. failure
+  before the course map even finished), the job ends `JobStatus.FAILED`.
+- **Partial DOCX** (`app/services/docx_export.py`
+  `export_partial_course_to_docx`) follows the exact same module/lesson
+  heading structure and Arabic-friendly formatting as a real export, but
+  only for modules that actually have at least one completed reel (a module
+  with zero completed reels is skipped, not padded/invented), with exactly
+  one extra paragraph before the course title: "Partial draft — generation
+  stopped before completion." Nothing else extra - no logs, no review
+  notes, no error text. Saved to
+  `storage/outputs/{course_id}/partial_job_{job_id}.docx` - a naming
+  pattern distinct from a real `course_v{n}.docx` version so it's never
+  confused with, or picked up as, a completed version. Download via
+  `GET /jobs/{job_id}/download-partial`.
+- **Resume is not implemented.** A `partial` job's per-module review
+  bookkeeping (specifically, whether the two-module repetition review for
+  the current pair of modules already ran) can't be safely reconstructed
+  from `completed_reels_json` alone - a crash between a module's own review
+  and its pairing review would look identical, on resume, to one where the
+  pairing already happened, silently skipping a required check. Rather than
+  ship that, there's no `resume_generation` function and no `/resume`
+  route. **Downloading the partial DOCX is the supported recovery path
+  today.**
+- **Regenerate from scratch is unaffected.** `POST /courses/{course_id}/generate`
+  always starts a brand-new `GenerationJob` row, independent of any
+  existing partial/failed job for the same course - it never blocks on, or
+  mutates, that job's saved state. The frontend labels this "Regenerate
+  from Scratch" once a partial/failed job already exists, to make clear
+  it's a fresh restart, not a continuation.
+- This persistence work (the incremental flushes, the clean error
+  categories, the partial export) is exactly what a future background-job
+  upgrade (Celery/RQ/a task queue) would build on - the synchronous
+  request-response route is an acceptable MVP trade-off precisely because
+  the state it produces along the way is already loss-safe.
+
+## Prompt compiler
+
+`app/generation/prompt_compiler.py` keeps every AI-provider prompt lean
+instead of dumping everything into every call:
+
+- **Rules per stage** (`select_rules_for_stage`) - each of the 8 pipeline
+  stages (`app/prompts/prompt_registry.py` `PipelineStage`) only receives
+  the admin-knowledge keys actually relevant to it (e.g. a review stage
+  gets the quality rubric and forbidden phrases, not the course-structure
+  rules a map-building stage needs). `rukn_generation_presets` is never
+  sent to any stage - it's for admin visibility only.
+- **Source budget trimming** (`compile_source_context`) - every stage's
+  source excerpts are capped at a total character budget (default 6000).
+  If sources would exceed it, the lowest-priority excerpts are trimmed
+  first; `user_notes` sources are protected from trimming for as long as
+  possible. This never fails/raises - it degrades gracefully by cutting
+  text, not by dropping sources or erroring out.
+- **Source Authority Firewall** - the same function also labels every
+  excerpt with `allowed_use`/`disallowed_use`/`style_contamination_warning`
+  and orders the result by a fixed authority hierarchy, never by the
+  `priority` field. See [Source Authority](#source-authority) above.
+
+`flow_reference` sources are reduced to a 12-field heuristic **flow
+profile** (`build_flow_profile`) instead of a summary or quote: `opening_energy`,
+`hook_mechanism`, `pacing`, `transition_style`, `idea_progression`,
+`escalation_pattern`, `tension_curve`, `climax_or_turning_point`,
+`example_integration`, `ending_motion`, `natural_speech_notes`, and
+`things_not_to_copy`. Every field is a qualitative description derived
+purely from sentence-length stats and regex-detected connector/instruction/
+question markers (stdlib only, no ML/NLP) - never a literal phrase lifted
+from the source - so the profile stays small and bounded no matter how long
+or heavily-structured the source is, and can never itself leak a
+catchphrase, signature line, or section order back out.
+
 ## Reset local database
 
 `create_all` creates missing tables but does **not** add new columns to existing
@@ -167,6 +528,14 @@ python -m app.reset_local_db
 that database file. Uploaded files under `storage/` are not deleted. **Stop
 `uvicorn` first** if the database file is in use (Windows will block deletion
 otherwise).
+
+**Source category rename note:** `SourceCategory` values were renamed/expanded
+(`main_content`/`supporting` -> `scientific_reference`, `spoken_style` ->
+`flow_reference`, `notes` -> `user_notes`, plus new `raw_material`; see
+"Source types" above). Any existing local `course_sources` rows still holding
+an old category string will fail to validate on read - expected for this
+pre-launch internal tool, not a bug. Fix with `python -m app.reset_local_db
+--seed` (stop `uvicorn` first).
 
 ## Tests
 
@@ -191,7 +560,8 @@ End-to-end fake generation scenario (no API key, no network):
 | `backend/.env` | `ENVIRONMENT` | `development` / `production` |
 | `backend/.env` | `AI_PROVIDER` | `fake` (default, no key needed) or `anthropic` |
 | `backend/.env` | `ANTHROPIC_API_KEY` | Only required when `AI_PROVIDER=anthropic` |
-| `backend/.env` | `AI_MODEL_NAME` | Model name for `AnthropicProvider`; only required when `AI_PROVIDER=anthropic` |
+| `backend/.env` | `AI_MODEL_NAME` | Model name for `AnthropicProvider`; only required when `AI_PROVIDER=anthropic` - check Anthropic's current model list for the exact slug |
+| `backend/.env` | `ANTHROPIC_REQUEST_TIMEOUT_SECONDS` | Optional, only relevant when `AI_PROVIDER=anthropic`. How long a single Anthropic API call can run before failing with a clean `timeout` error. Default `120` |
 | `backend/.env` | `AUTH_ENABLED` | Defaults to `true` (see [Authentication](#authentication) below) |
 | `backend/.env` | `ADMIN_USERNAME` | The one admin login username |
 | `backend/.env` | `ADMIN_PASSWORD` | The one admin login password |
@@ -243,9 +613,18 @@ credential - only booleans/labels:
   "database_backend": "postgres",
   "storage_dir_configured": true,
   "storage_dir_exists": true,
-  "storage_dir_writable": true
+  "storage_dir_writable": true,
+  "ai_provider": "fake",
+  "ai_provider_ready": true
 }
 ```
+
+`ai_provider` is the raw `AI_PROVIDER` value (`"fake"` or `"anthropic"` -
+not a secret). `ai_provider_ready` is `true` for `fake` always, or for
+`anthropic` only once both `ANTHROPIC_API_KEY` and `AI_MODEL_NAME` are
+set - the frontend's course page uses this to show "Anthropic (not fully
+configured)" with a warning badge instead of silently claiming a working
+real provider that isn't actually configured yet.
 
 The `/login` page also renders a small **diagnostics block** under the
 form (temporary, safe to leave in place) showing the resolved API base URL
@@ -308,7 +687,7 @@ one of them.
 | Health Check Path | `/health` |
 | Disk | 10 GB, mounted at `/opt/render/project/src/backend/storage` - see [Storage vs. database](#storage-vs-database) |
 
-Backend environment variables - **Option A (recommended: Postgres + Disk)**:
+Backend environment variables - **Option A (recommended: Postgres + Disk), fake AI provider (default)**:
 
 ```
 PYTHON_VERSION=3.12.8
@@ -324,6 +703,22 @@ FRONTEND_ORIGIN=<secret, set in Render Dashboard - the deployed frontend's URL, 
 ANTHROPIC_API_KEY=            # secret - leave blank while AI_PROVIDER=fake
 AI_MODEL_NAME=                # secret - leave blank while AI_PROVIDER=fake
 ```
+
+To use the real Anthropic provider instead, change exactly three values
+(everything else above stays the same) - see "Connecting a real Anthropic
+provider" above for what these mean and the First Real Test Mode procedure
+to validate them once set:
+
+```
+AI_PROVIDER=anthropic
+ANTHROPIC_API_KEY=<secret, set in Render Dashboard - your real Anthropic API key>
+AI_MODEL_NAME=<secret, set in Render Dashboard - check Anthropic's current model list for the exact slug>
+# Optional - defaults to 120 if unset:
+# ANTHROPIC_REQUEST_TIMEOUT_SECONDS=120
+```
+
+Switching back to the fake provider at any time is just `AI_PROVIDER=fake`
+again (redeploy to pick it up) - no code change either way.
 
 Backend environment variables - **Option B (temporary/legacy: SQLite + Disk)**
 - same as above, except omit `DATABASE_URL` and add instead:
@@ -392,7 +787,16 @@ in this MVP.
   before/after deploying the code that expects the new column. This MVP
   intentionally does not introduce a full migration system (e.g. Alembic)
   until the schema needs changes complex enough to require one - see
-  `docs/BUILD_PLAN.md`.
+  `docs/BUILD_PLAN.md`. Example: `courses` gained a `generation_preset`
+  column (see "Generation presets" above) - existing local/production
+  databases need this column added the same way before that code deploys.
+  Same situation for `generation_jobs`' new resilience columns
+  (`last_completed_step`, `completed_modules_count`, `completed_reels_count`,
+  `error_category`, `partial_docx_path`, `course_map_json`,
+  `completed_reels_json` - see "Generation resilience" above): a local dev
+  DB with existing job rows needs the equivalent manual `ALTER TABLE ...
+  ADD COLUMN ...` (or just `python -m app.reset_local_db --seed`, if losing
+  local data is fine) before/after deploying this code.
 
 ### Seed admin knowledge (production)
 

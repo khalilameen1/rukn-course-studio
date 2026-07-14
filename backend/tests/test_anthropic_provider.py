@@ -21,7 +21,8 @@ from app.ai.provider import (
     ReviewTwoModulesInput,
     WriteSingleReelInput,
 )
-from app.models.enums import ExplanationLevel, StructureMode
+from app.generation.presets import PRESET_TEMPERATURES
+from app.models.enums import ExplanationLevel, GenerationPreset, StructureMode
 from app.schemas.generation import (
     CourseMap,
     FinalCourse,
@@ -45,9 +46,24 @@ class FakeTextBlock:
         self.text = text
 
 
+class FakeUsage:
+    def __init__(
+        self,
+        input_tokens=None,
+        output_tokens=None,
+        cache_creation_input_tokens=None,
+        cache_read_input_tokens=None,
+    ):
+        self.input_tokens = input_tokens
+        self.output_tokens = output_tokens
+        self.cache_creation_input_tokens = cache_creation_input_tokens
+        self.cache_read_input_tokens = cache_read_input_tokens
+
+
 class FakeResponse:
-    def __init__(self, content: list):
+    def __init__(self, content: list, usage=None):
         self.content = content
+        self.usage = usage
 
 
 class FakeMessagesAPI:
@@ -154,6 +170,58 @@ def test_call_structured_treats_missing_tool_call_as_failure_and_retries():
     assert len(provider._client.messages.calls) == 2
 
 
+def test_last_usage_is_none_before_any_call():
+    provider = AnthropicProvider(api_key="test-key")
+
+    assert provider.last_usage is None
+
+
+def test_last_usage_captures_real_response_usage_fields():
+    usage = FakeUsage(
+        input_tokens=120,
+        output_tokens=45,
+        cache_creation_input_tokens=10,
+        cache_read_input_tokens=5,
+    )
+    responses = [FakeResponse([FakeToolUseBlock("review_result", VALID_REVIEW_RESULT)], usage=usage)]
+    provider = _provider_with_responses(responses)
+
+    provider._call_structured("prompt", ReviewResult, "review_result")
+
+    assert provider.last_usage == {
+        "model": provider._model_name,
+        "input_tokens": 120,
+        "output_tokens": 45,
+        "cache_creation_input_tokens": 10,
+        "cache_read_input_tokens": 5,
+    }
+
+
+def test_last_usage_is_safely_none_valued_when_response_has_no_usage_attribute():
+    responses = [FakeResponse([FakeToolUseBlock("review_result", VALID_REVIEW_RESULT)])]
+    provider = _provider_with_responses(responses)
+
+    provider._call_structured("prompt", ReviewResult, "review_result")
+
+    assert provider.last_usage["input_tokens"] is None
+    assert provider.last_usage["output_tokens"] is None
+
+
+def test_last_usage_only_updates_on_the_attempt_that_actually_succeeds():
+    invalid_usage = FakeUsage(input_tokens=999, output_tokens=999)
+    valid_usage = FakeUsage(input_tokens=10, output_tokens=20)
+    invalid = FakeResponse([FakeToolUseBlock("review_result", {"scope": "reel"})], usage=invalid_usage)
+    valid = FakeResponse(
+        [FakeToolUseBlock("review_result", VALID_REVIEW_RESULT)], usage=valid_usage
+    )
+    provider = _provider_with_responses([invalid, valid])
+
+    provider._call_structured("prompt", ReviewResult, "review_result")
+
+    assert provider.last_usage["input_tokens"] == 10
+    assert provider.last_usage["output_tokens"] == 20
+
+
 def test_call_structured_uses_forced_tool_choice_and_configured_model():
     responses = [FakeResponse([FakeToolUseBlock("review_result", VALID_REVIEW_RESULT)])]
     provider = _provider_with_responses(responses)
@@ -164,6 +232,60 @@ def test_call_structured_uses_forced_tool_choice_and_configured_model():
     assert call["tool_choice"] == {"type": "tool", "name": "review_result"}
     assert call["model"] == provider._model_name
     assert call["tools"][0]["name"] == "review_result"
+
+
+def test_default_temperature_matches_balanced_preset_before_configure_for_run():
+    """Before `configure_for_run` is ever called, a freshly-constructed
+    provider already uses the Balanced preset's temperature (the default
+    generation preset - see app/generation/presets.py)."""
+    provider = AnthropicProvider(api_key="test-key")
+
+    assert provider._temperature == PRESET_TEMPERATURES[GenerationPreset.BALANCED]
+
+
+def test_configure_for_run_changes_temperature_sent_to_messages_create():
+    responses = [FakeResponse([FakeToolUseBlock("review_result", VALID_REVIEW_RESULT)])]
+    provider = _provider_with_responses(responses)
+    assert provider._temperature == PRESET_TEMPERATURES[GenerationPreset.BALANCED]
+
+    provider.configure_for_run(GenerationPreset.CREATIVE)
+    provider._call_structured("prompt", ReviewResult, "review_result")
+
+    call = provider._client.messages.calls[0]
+    assert call["temperature"] == PRESET_TEMPERATURES[GenerationPreset.CREATIVE]
+    assert call["temperature"] != PRESET_TEMPERATURES[GenerationPreset.BALANCED]
+
+
+def test_request_timeout_defaults_from_settings(monkeypatch):
+    import app.ai.anthropic_provider as module
+
+    captured: dict = {}
+
+    class FakeAnthropicClass:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(module.anthropic, "Anthropic", FakeAnthropicClass)
+
+    AnthropicProvider(api_key="test-key")
+
+    assert captured["timeout"] == module.settings.anthropic_request_timeout_seconds
+
+
+def test_request_timeout_can_be_overridden_explicitly(monkeypatch):
+    import app.ai.anthropic_provider as module
+
+    captured: dict = {}
+
+    class FakeAnthropicClass:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(module.anthropic, "Anthropic", FakeAnthropicClass)
+
+    AnthropicProvider(api_key="test-key", request_timeout_seconds=5.0)
+
+    assert captured["timeout"] == 5.0
 
 
 def _brief() -> CourseBrief:

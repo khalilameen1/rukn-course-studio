@@ -1,36 +1,130 @@
 @import "tailwindcss";
 
+/*
+  Calm internal-SaaS theme (NotebookLM / Linear-inspired clarity).
+  Forced light workspace look so OS dark mode does not collapse the UI
+  into raw black/white. Accent is a restrained teal — not purple/glow.
+*/
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #f4f5f3;
+  --foreground: #1c1f1d;
+  --surface: #ffffff;
+  --surface-muted: #eaeeea;
+  --border: rgba(28, 31, 29, 0.1);
+  --muted: #5f6963;
+  --accent: #0f766e;
+  --accent-soft: #d8efe9;
+  --accent-foreground: #ffffff;
+  --shadow-sm: 0 1px 2px rgba(28, 31, 29, 0.05);
+  --shadow-md: 0 4px 16px rgba(28, 31, 29, 0.06);
+  color-scheme: light;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-surface: var(--surface);
+  --color-surface-muted: var(--surface-muted);
+  --color-border: var(--border);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-foreground: var(--accent-foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
 html,
 body {
-  /* Guards against any element pushing the page wider than the device,
-     which otherwise makes the whole site zoom out and look desktop-sized
-     on phones. Components that need internal horizontal scroll (tables,
-     tab bars) opt into it themselves via their own overflow-x-auto. */
   max-width: 100%;
   overflow-x: hidden;
 }
 
 body {
-  background: var(--background);
+  background:
+    radial-gradient(1200px 500px at 10% -10%, rgba(15, 118, 110, 0.07), transparent 55%),
+    radial-gradient(900px 400px at 100% 0%, rgba(28, 31, 29, 0.03), transparent 50%),
+    var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), "Segoe UI", system-ui, sans-serif;
+}
+
+/* Shared interaction primitives — used instead of one-off black pills. */
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  background: var(--accent);
+  color: var(--accent-foreground);
+  padding: 0.5rem 1.25rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  transition: background-color 0.15s ease, opacity 0.15s ease;
+}
+.btn-primary:hover {
+  background: #0d5f58;
+}
+.btn-primary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--foreground);
+  padding: 0.5rem 1.25rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+.btn-secondary:hover {
+  background: var(--surface-muted);
+}
+.btn-secondary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  color: var(--muted);
+  padding: 0.4rem 0.85rem;
+  font-size: 0.875rem;
+  transition: color 0.15s ease, background-color 0.15s ease;
+}
+.btn-ghost:hover {
+  color: var(--foreground);
+  background: var(--surface-muted);
+}
+
+.field-input {
+  width: 100%;
+  border-radius: 0.75rem;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  padding: 0.55rem 0.75rem;
+  font-size: 0.875rem;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.field-input:focus {
+  border-color: rgba(15, 118, 110, 0.45);
+  box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.12);
+}
+
+.workspace-zone {
+  border-radius: 1rem;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface) 88%, var(--accent-soft));
+  padding: 0.85rem;
+  box-shadow: var(--shadow-sm);
 }

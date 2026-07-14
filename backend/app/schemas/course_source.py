@@ -11,8 +11,15 @@ class CourseSourceNotesCreate(BaseModel):
     """Body for adding a free-text note as a source (no file involved)."""
 
     text: str
-    source_category: SourceCategory = SourceCategory.NOTES
+    source_category: SourceCategory = SourceCategory.USER_NOTES
     priority: Priority = Priority.MEDIUM
+
+
+class CourseSourcePatch(BaseModel):
+    """Body for `PATCH /courses/{course_id}/sources/{source_id}` - only the
+    category can be changed; omitted/`None` means "leave unchanged"."""
+
+    source_category: Optional[SourceCategory] = None
 
 
 class CourseSourceRead(BaseModel):

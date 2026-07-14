@@ -61,7 +61,7 @@ class ModulePlan(BaseModel):
     """One module's plan: its reels plus an optional bridge project.
 
     `bridge_project` connects this module to the next one (see the
-    `rukn-practical-course` admin knowledge rule) and is null for modules
+    `rukn_practical_course_rules` admin knowledge rule) and is null for modules
     that don't end in one.
     """
 

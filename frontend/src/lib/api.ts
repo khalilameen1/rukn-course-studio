@@ -16,6 +16,8 @@ import type {
   LoginResponse,
   Priority,
   SourceCategory,
+  AIUsageSummary,
+  CourseAIUsage,
 } from "@/lib/types";
 
 // `status` is set for any real HTTP response (even error ones), so callers
@@ -86,8 +88,57 @@ async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
   return (await res.json()) as T;
 }
 
-export function latestDownloadUrl(courseId: number): string {
-  return `${API_BASE_URL}/courses/${courseId}/download/latest`;
+// Every download route requires the same Bearer token as any other API
+// call (see backend/app/auth/middleware.py `PUBLIC_ROUTES` - downloads are
+// not in it), so a plain `<a href>` pointing at these URLs would always
+// 401 in the browser instead of downloading anything. This fetches the
+// file with the same auth header apiFetch uses, then triggers a save via
+// a throwaway object URL - which also means a missing-file 404 or an
+// expired session surfaces as a normal in-app error instead of a raw
+// browser error page.
+async function downloadFile(path: string, filename: string): Promise<void> {
+  const token = getToken();
+
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE_URL}${path}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+  } catch {
+    throw new ApiError(NETWORK_ERROR_MESSAGE, undefined, true);
+  }
+
+  if (res.status === 401) {
+    clearToken();
+    if (typeof window !== "undefined") {
+      window.location.href = "/login";
+    }
+    throw new ApiError("Session expired - redirecting to login", 401);
+  }
+
+  if (!res.ok) {
+    let detail = res.statusText;
+    try {
+      const data = await res.json();
+      if (data?.detail) detail = data.detail;
+    } catch {
+      // response body wasn't JSON; keep statusText
+    }
+    throw new ApiError(detail, res.status);
+  }
+
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  try {
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  } finally {
+    URL.revokeObjectURL(url);
+  }
 }
 
 export const api = {
@@ -155,6 +206,11 @@ export const api = {
     }),
   deleteSource: (courseId: number, sourceId: number) =>
     apiFetch<void>(`/courses/${courseId}/sources/${sourceId}`, { method: "DELETE" }),
+  updateSourceCategory: (courseId: number, sourceId: number, sourceCategory: SourceCategory) =>
+    apiFetch<CourseSource>(`/courses/${courseId}/sources/${sourceId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ source_category: sourceCategory }),
+    }),
 
   // Generation
   generateCourse: (courseId: number) =>
@@ -162,4 +218,16 @@ export const api = {
   getJob: (jobId: number) => apiFetch<GenerationJob>(`/jobs/${jobId}`),
   listVersions: (courseId: number) =>
     apiFetch<CourseVersion[]>(`/courses/${courseId}/versions`),
+  downloadLatestDocx: (courseId: number, filename: string) =>
+    downloadFile(`/courses/${courseId}/download/latest`, filename),
+  // Only meaningful once a job has a `partial_docx_path` set (status
+  // "partial", occasionally "failed" if one was saved just before the
+  // final failure) - see backend/app/routers/jobs.py `download_partial`.
+  downloadPartialDocx: (jobId: number, filename: string) =>
+    downloadFile(`/jobs/${jobId}/download-partial`, filename),
+
+  // AI Usage Center — estimated app usage only (backend labels it the same way)
+  getAIUsageSummary: () => apiFetch<AIUsageSummary>("/ai-usage/summary"),
+  getCourseAIUsage: (courseId: number) =>
+    apiFetch<CourseAIUsage>(`/courses/${courseId}/ai-usage`),
 };

@@ -5,8 +5,10 @@ Check up to 5 consecutive reels for problems only visible across a window - per-
 ## Check for
 
 - A repeated example, opening, or idea between any two reels in this window (compare `used_ideas`, `used_examples`, `script_text`).
+- Anti-template (`rukn_high_signal_reel_doctrine`): same hook family, same loop move, nearly equal lengths, mechanical devices ("mistake"/"secret"/"application") in every reel, recap openers.
 - Terminology drift from `rules_context`'s glossary, if present.
 - One reel noticeably thinner or lower-effort than its neighbors - an early sign of laziness.
+- Series feels chopped rather than connected.
 
 ## Output
 

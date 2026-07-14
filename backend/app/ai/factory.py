@@ -32,6 +32,24 @@ class AIProviderConfigError(RuntimeError):
     fallback to a different provider than the one configured."""
 
 
+def missing_anthropic_config(config: Settings) -> list[str]:
+    """Env var names still required for `AI_PROVIDER=anthropic` that are
+    currently unset.
+
+    Shared by `get_ai_provider` below (raises `AIProviderConfigError` if
+    non-empty) and `app/auth/diagnostics.py` (`ai_provider_ready`), so the
+    two can never quietly diverge on what "configured" means.
+    """
+    return [
+        env_name
+        for env_name, value in (
+            ("ANTHROPIC_API_KEY", config.anthropic_api_key),
+            ("AI_MODEL_NAME", config.ai_model_name),
+        )
+        if not value
+    ]
+
+
 def get_ai_provider(config: Settings = settings) -> AIProvider:
     provider_name = (config.ai_provider or "fake").strip().lower()
 
@@ -39,14 +57,7 @@ def get_ai_provider(config: Settings = settings) -> AIProvider:
         return FakeProvider()
 
     if provider_name == "anthropic":
-        missing = [
-            env_name
-            for env_name, value in (
-                ("ANTHROPIC_API_KEY", config.anthropic_api_key),
-                ("AI_MODEL_NAME", config.ai_model_name),
-            )
-            if not value
-        ]
+        missing = missing_anthropic_config(config)
         if missing:
             raise AIProviderConfigError(
                 "AI_PROVIDER=anthropic requires "

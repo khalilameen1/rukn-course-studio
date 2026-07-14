@@ -16,7 +16,7 @@ from abc import ABC, abstractmethod
 
 from pydantic import BaseModel, Field
 
-from app.models.enums import ExplanationLevel, StructureMode
+from app.models.enums import ExplanationLevel, GenerationPreset, StructureMode
 from app.schemas.generation import (
     CourseMap,
     FinalCourse,
@@ -36,6 +36,7 @@ class CourseBrief(BaseModel):
     special_notes: str | None = None
     structure_mode: StructureMode
     explanation_level: ExplanationLevel
+    generation_preset: GenerationPreset = GenerationPreset.BALANCED
     manual_map_text: str | None = None
 
 
@@ -44,12 +45,28 @@ class SourceExcerpt(BaseModel):
 
     Only sources with status `ready`/`poor_extraction` should ever be
     turned into a SourceExcerpt - see app/services/extraction.py.
+
+    `text` is the compact content field - extracted-knowledge
+    summary/chunks for `scientific_reference`/`old_course`/`raw_material`,
+    a serialized flow profile for `flow_reference`, full text for
+    `user_notes`. `allowed_use`/`disallowed_use`/`style_contamination_warning`
+    are the "Source Authority Firewall" metadata (see
+    app/generation/prompt_compiler.py): they label exactly what a source
+    may and may never be used for, so no uploaded source can ever define
+    Rukn's language, format, or structure - that authority comes only from
+    Admin Knowledge and explicit user instructions. All three default to
+    "nothing set" so existing callers/tests that build a `SourceExcerpt`
+    directly (without going through `compile_source_context`) keep working
+    unchanged.
     """
 
     source_id: int
     category: str
     priority: str
     text: str
+    allowed_use: list[str] = Field(default_factory=list)
+    disallowed_use: list[str] = Field(default_factory=list)
+    style_contamination_warning: str | None = None
 
 
 class PriorReelSummary(BaseModel):

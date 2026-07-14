@@ -10,15 +10,22 @@ export type StructureMode =
 export type ExplanationLevel = "final_only" | "short_summary" | "full_report";
 
 export type SourceCategory =
-  | "main_content"
-  | "supporting"
-  | "spoken_style"
+  | "scientific_reference"
+  | "flow_reference"
   | "old_course"
-  | "notes";
+  | "user_notes"
+  | "raw_material";
+
+export type GenerationPreset =
+  | "conservative"
+  | "balanced"
+  | "creative"
+  | "fusion"
+  | "strict_teleprompter";
 
 export type Priority = "high" | "medium" | "low";
 
-export type JobStatus = "pending" | "running" | "completed" | "failed";
+export type JobStatus = "pending" | "running" | "partial" | "failed" | "completed";
 
 export interface AdminKnowledgeItem {
   id: number;
@@ -55,6 +62,7 @@ export interface Course {
   structure_mode: StructureMode;
   manual_map_text: string | null;
   explanation_level: ExplanationLevel;
+  generation_preset: GenerationPreset;
   status: string;
   created_at: string;
   updated_at: string;
@@ -68,6 +76,7 @@ export interface CourseCreateInput {
   structure_mode: StructureMode;
   manual_map_text?: string | null;
   explanation_level?: ExplanationLevel;
+  generation_preset?: GenerationPreset;
 }
 
 export type CourseUpdateInput = Partial<CourseCreateInput> & { status?: string };
@@ -91,6 +100,10 @@ export interface CourseSourceNotesInput {
   priority?: Priority;
 }
 
+export interface CourseSourceCategoryUpdateInput {
+  source_category: SourceCategory;
+}
+
 export interface GenerationJob {
   id: number;
   course_id: number;
@@ -99,6 +112,13 @@ export interface GenerationJob {
   progress_percent: number;
   output_docx_path: string | null;
   error_message: string | null;
+  // Short, user-safe recovery signals (see backend/app/models/generation_job.py)
+  // - only meaningful once a run has stopped (status "partial" or "failed").
+  last_completed_step: string | null;
+  completed_modules_count: number;
+  completed_reels_count: number;
+  error_category: string | null;
+  partial_docx_path: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -138,4 +158,28 @@ export interface DiagnosticsResponse {
   storage_dir_configured: boolean;
   storage_dir_exists: boolean;
   storage_dir_writable: boolean;
+  // Raw AI_PROVIDER value ("fake"/"anthropic") - not a secret, just which
+  // provider is selected. ai_provider_ready is the only readiness signal;
+  // never a credential/key value.
+  ai_provider: string;
+  ai_provider_ready: boolean;
+}
+
+/** Estimated app usage only — never a real Anthropic account balance. */
+export interface AIUsageSummary {
+  provider: string;
+  model: string;
+  default_preset: string;
+  last_request_status: string | null;
+  last_request_at: string | null;
+  estimated_cost_today_usd: number;
+  estimated_cost_this_month_usd: number;
+  last_error_category: string | null;
+  last_error_message: string | null;
+}
+
+export interface CourseAIUsage {
+  course_id: number;
+  estimated_cost_usd: number;
+  event_count: number;
 }

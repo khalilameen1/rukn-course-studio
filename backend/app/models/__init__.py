@@ -5,6 +5,7 @@ is what `app.db.init_db()` relies on to create all tables on startup.
 """
 
 from app.models.admin_knowledge import AdminKnowledgeItem
+from app.models.ai_usage_event import AIUsageEvent
 from app.models.course import Course
 from app.models.course_source import CourseSource
 from app.models.course_version import CourseVersion
@@ -21,6 +22,7 @@ from app.models.source_analysis import SourceAnalysis
 
 __all__ = [
     "AdminKnowledgeItem",
+    "AIUsageEvent",
     "Course",
     "CourseSource",
     "CourseVersion",
