@@ -46,6 +46,7 @@ def init_db() -> None:
     _ensure_course_columns()
     _ensure_source_analysis_columns()
     _ensure_course_source_columns()
+    _ensure_ai_usage_events_table()
 
 
 def _is_postgres() -> bool:
@@ -229,6 +230,70 @@ def _ensure_course_columns() -> None:
             if name in existing:
                 continue
             conn.execute(text(f"ALTER TABLE courses ADD COLUMN {name} {sql_type}"))
+
+
+def _ensure_ai_usage_events_table() -> None:
+    """Create `ai_usage_events` on existing Postgres/SQLite DBs and patch columns.
+
+    `create_all` only creates missing tables at startup; this helper is a
+    belt-and-suspenders guard for Render DBs that predated AI usage telemetry,
+    and adds any newer nullable columns without a full migration tool.
+    """
+    from sqlalchemy import inspect, text
+
+    from app.models.ai_usage_event import AIUsageEvent
+
+    float_type = "DOUBLE PRECISION" if _is_postgres() else "REAL"
+    additions: dict[str, str] = {
+        "job_id": "INTEGER",
+        "course_id": "INTEGER",
+        "stage": "TEXT",
+        "provider": "TEXT",
+        "model": "TEXT",
+        "preset": "TEXT",
+        "input_tokens": "INTEGER",
+        "output_tokens": "INTEGER",
+        "cache_read_tokens": "INTEGER",
+        "cache_write_tokens": "INTEGER",
+        "estimated_cost_usd": float_type,
+        "status": "TEXT DEFAULT 'ok'",
+        "error_category": "TEXT",
+        "created_at": "TIMESTAMP",
+    }
+    try:
+        inspector = inspect(engine)
+        tables = inspector.get_table_names()
+    except Exception:
+        return
+
+    if "ai_usage_events" not in tables:
+        try:
+            AIUsageEvent.__table__.create(engine, checkfirst=True)
+        except Exception:
+            logger = __import__("logging").getLogger(__name__)
+            logger.exception("Failed to create ai_usage_events table")
+        return
+
+    try:
+        existing = {col["name"] for col in inspector.get_columns("ai_usage_events")}
+    except Exception:
+        return
+
+    with engine.begin() as conn:
+        for name, sql_type in additions.items():
+            if name in existing:
+                continue
+            if _is_postgres():
+                conn.execute(
+                    text(
+                        f"ALTER TABLE ai_usage_events "
+                        f"ADD COLUMN IF NOT EXISTS {name} {sql_type}"
+                    )
+                )
+            else:
+                conn.execute(
+                    text(f"ALTER TABLE ai_usage_events ADD COLUMN {name} {sql_type}")
+                )
 
 
 def get_session() -> Generator[Session, None, None]:
