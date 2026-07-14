@@ -37,3 +37,9 @@ class CourseAIUsage(BaseModel):
     course_id: int
     estimated_cost_usd: float
     event_count: int
+    # Simple usage panel extras (optional — filled when job telemetry present).
+    cost_per_completed_lesson: Optional[float] = None
+    web_searches_count: Optional[int] = None
+    source_memories_reused: Optional[int] = None
+    research_memory_reuses: Optional[int] = None
+    warnings: list[str] = []

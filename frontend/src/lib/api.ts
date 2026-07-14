@@ -154,8 +154,20 @@ export const api = {
   health: () => apiFetch<HealthResponse>("/health"),
   diagnostics: () => apiFetch<DiagnosticsResponse>("/auth/diagnostics"),
 
-  // Admin knowledge
-  listKnowledgeItems: () => apiFetch<AdminKnowledgeItem[]>("/admin/knowledge"),
+  // Admin knowledge (default: active primary only)
+  listKnowledgeItems: (opts?: { includeInactive?: boolean }) =>
+    apiFetch<AdminKnowledgeItem[]>(
+      opts?.includeInactive
+        ? "/admin/knowledge?active_only=false&include_inactive=true"
+        : "/admin/knowledge",
+    ),
+  cleanupKnowledgeDuplicates: () =>
+    apiFetch<{
+      deactivated_count: number;
+      message: string;
+      deactivated: unknown[];
+      kept_active: unknown[];
+    }>("/admin/knowledge/cleanup-duplicates", { method: "POST" }),
   createKnowledgeItem: (payload: AdminKnowledgeCreateInput) =>
     apiFetch<AdminKnowledgeItem>("/admin/knowledge", {
       method: "POST",
@@ -189,11 +201,16 @@ export const api = {
     file: File,
     sourceCategory: SourceCategory,
     priority: Priority,
+    opts?: { title?: string; include_in_generation?: boolean },
   ) => {
     const form = new FormData();
     form.append("file", file);
     form.append("source_category", sourceCategory);
     form.append("priority", priority);
+    if (opts?.title) form.append("source_title", opts.title);
+    if (opts?.include_in_generation !== undefined) {
+      form.append("include_in_generation", String(opts.include_in_generation));
+    }
     return apiFetch<CourseSource>(`/courses/${courseId}/sources/upload`, {
       method: "POST",
       body: form,
@@ -213,8 +230,16 @@ export const api = {
     }),
 
   // Generation
-  generateCourse: (courseId: number) =>
-    apiFetch<GenerationJob>(`/courses/${courseId}/generate`, { method: "POST" }),
+  generateCourseMap: (courseId: number) =>
+    apiFetch<Course>(`/courses/${courseId}/generate-map`, { method: "POST" }),
+  generateCourse: (
+    courseId: number,
+    body?: { generation_quality_mode?: "preview" | "premium" },
+  ) =>
+    apiFetch<GenerationJob>(`/courses/${courseId}/generate`, {
+      method: "POST",
+      body: JSON.stringify(body ?? { generation_quality_mode: "premium" }),
+    }),
   getJob: (jobId: number) => apiFetch<GenerationJob>(`/jobs/${jobId}`),
   listVersions: (courseId: number) =>
     apiFetch<CourseVersion[]>(`/courses/${courseId}/versions`),

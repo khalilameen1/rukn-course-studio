@@ -9,7 +9,7 @@ const SECTIONS = [
   {
     href: "/admin",
     title: "Admin Knowledge Center",
-    description: "Fixed Rukn rules used by every generation run.",
+    description: "Fixed ROKN rules used by every generation run.",
   },
   {
     href: "/courses",
@@ -27,7 +27,7 @@ export default function Home() {
   return (
     <div className="flex flex-col gap-8">
       <PageHeader
-        title="Rukn Course Studio"
+        title="ROKN Course Studio"
         description="Internal workspace for teleprompter-ready lecturer scripts."
       />
 

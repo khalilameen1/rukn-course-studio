@@ -31,6 +31,7 @@ CATEGORY_AVOID_POINTS: dict[str, list[str]] = {
     "flow_reference": ["Style reference only - do not treat as a factual source."],
     "old_course": ["May be outdated - verify before reusing any specific facts."],
     "raw_material": ["Mixed/unclear material - treat as uncertain, verify before reuse."],
+    "transcript": ["Spoken transcript — extract teaching value; do not copy filler or verbatim rambles."],
 }
 
 _WORD_RE = re.compile(r"[a-zA-Z\u0600-\u06FF]+")

@@ -14,7 +14,8 @@ export type SourceCategory =
   | "flow_reference"
   | "old_course"
   | "user_notes"
-  | "raw_material";
+  | "raw_material"
+  | "transcript";
 
 export type GenerationPreset =
   | "conservative"
@@ -23,9 +24,22 @@ export type GenerationPreset =
   | "fusion"
   | "strict_teleprompter";
 
+export type GenerationQualityMode = "preview" | "premium";
+
+export type WebResearchMode = "disabled" | "autonomous_gap_fill";
+
+export type TargetMarket = "egypt" | "arab_market" | "global" | "custom";
+
 export type Priority = "high" | "medium" | "low";
 
-export type JobStatus = "pending" | "running" | "partial" | "failed" | "completed";
+export type JobStatus =
+  | "pending"
+  | "running"
+  | "paused"
+  | "partial"
+  | "failed"
+  | "completed"
+  | "canceled";
 
 export interface AdminKnowledgeItem {
   id: number;
@@ -59,10 +73,14 @@ export interface Course {
   outcome: string;
   special_notes: string | null;
   course_type: string;
+  course_domain?: string | null;
   structure_mode: StructureMode;
   manual_map_text: string | null;
   explanation_level: ExplanationLevel;
   generation_preset: GenerationPreset;
+  generation_quality_mode?: GenerationQualityMode;
+  web_research_mode?: WebResearchMode;
+  target_market?: TargetMarket;
   status: string;
   created_at: string;
   updated_at: string;
@@ -73,10 +91,13 @@ export interface CourseCreateInput {
   audience: string;
   outcome: string;
   special_notes?: string | null;
+  course_domain?: string | null;
   structure_mode: StructureMode;
   manual_map_text?: string | null;
   explanation_level?: ExplanationLevel;
   generation_preset?: GenerationPreset;
+  generation_quality_mode?: GenerationQualityMode;
+  target_market?: TargetMarket;
 }
 
 export type CourseUpdateInput = Partial<CourseCreateInput> & { status?: string };
@@ -85,19 +106,25 @@ export interface CourseSource {
   id: number;
   course_id: number;
   source_category: SourceCategory;
+  title?: string | null;
   original_filename: string | null;
   file_path: string | null;
   mime_type: string | null;
   extracted_text: string | null;
   priority: Priority;
   status: string;
+  include_in_generation?: boolean;
+  source_hash?: string | null;
+  display_title?: string;
   created_at: string;
 }
 
 export interface CourseSourceNotesInput {
   text: string;
+  title?: string | null;
   source_category?: SourceCategory;
   priority?: Priority;
+  include_in_generation?: boolean;
 }
 
 export interface CourseSourceCategoryUpdateInput {
@@ -112,13 +139,25 @@ export interface GenerationJob {
   progress_percent: number;
   output_docx_path: string | null;
   error_message: string | null;
-  // Short, user-safe recovery signals (see backend/app/models/generation_job.py)
-  // - only meaningful once a run has stopped (status "partial" or "failed").
   last_completed_step: string | null;
   completed_modules_count: number;
   completed_reels_count: number;
+  total_lessons_count?: number;
+  needs_review_count?: number;
+  completed_lessons_count?: number;
   error_category: string | null;
   partial_docx_path: string | null;
+  partial_docx_available?: boolean;
+  run_status?: JobStatus;
+  current_module_index?: number | null;
+  current_lesson_index?: number | null;
+  last_progress_message?: string | null;
+  last_saved_at?: string | null;
+  estimated_usage_summary?: string | null;
+  estimated_duration_summary?: string | null;
+  internal_risk_count?: number;
+  generation_quality_mode?: GenerationQualityMode;
+  web_research_mode?: WebResearchMode;
   created_at: string;
   updated_at: string;
 }

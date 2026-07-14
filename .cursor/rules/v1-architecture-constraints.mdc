@@ -36,12 +36,31 @@ user first instead of adding it.
 - The multi-stage internal pipeline (map → reel-by-reel → per-reel review →
   every-5-reels review → per-module review → every-2-modules review →
   full-course review → export) is an internal implementation detail.
+- Multi-agent lesson loop: **Creator Agent** writes first draft → **Student
+  Agent** / **Specialist Critic Agent** / **Master Mentor Agent** review the
+  completed draft → **Creator Agent** writes Final Master. The Creator does
+  **not** self-criticize. Only Final Master is `script_text` / DOCX.
 - API responses and UI must never surface individual reel drafts, review
   verdicts, or per-stage content as the product output.
-- The user-facing result of a generation run is exactly one final DOCX, plus
-  an optional short, coarse status string (e.g. `queued`, `generating`,
-  `reviewing`, `exporting`, `done`, `failed`). Never a per-reel/per-module
-  progress feed.
+- The user-facing result of a generation run is exactly one final
+  **Teleprompter DOCX**, plus coarse progress/status (and optional partial
+  DOCX if a run stops early). Never a per-reel/per-module content feed.
+
+## V1 output lock — Teleprompter DOCX only
+
+The DOCX must contain only: course title, module headings, lesson/reel
+headings, final spoken transcript. Never production notes, asset briefs,
+design instructions, screenshot plans, Project/bridge blocks, sources,
+citations, evidence notes, critic/student/mentor comments, scores, planning
+labels, "needs confirmation", or prompt details.
+
+**Cancelled for V1 — do not implement unless the user explicitly requests:**
+Production Pack, asset planning UI/button, separate JSON user outputs,
+course versioning product features / update impact scan.
+
+All intelligence (map rebuild, draft/review/mentor, research, market,
+evergreen, originality, recordability, promise gates) stays internal and
+may rewrite scripts silently.
 
 ## Any big change must be broken down and explained first
 

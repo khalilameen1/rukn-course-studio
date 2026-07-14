@@ -1,10 +1,10 @@
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from sqlalchemy import JSON, Column
+from sqlalchemy import JSON, Column, DateTime
 from sqlmodel import Field, SQLModel
 
-from app.models.enums import JobStatus
+from app.models.enums import GenerationQualityMode, JobStatus, WebResearchMode
 
 
 def _utcnow() -> datetime:
@@ -17,7 +17,9 @@ class GenerationJob(SQLModel, table=True):
     `log_json` holds the internal, per-stage log entries (see
     docs/ARCHITECTURE.md Review Log). It is for admin/debug traceability
     only and is never returned to the end user as-is; the user-facing status
-    is `status` + `current_stage` + `progress_percent`.
+    is `status` + `current_stage` + `progress_percent` + heartbeat fields
+    (`last_progress_message`, indices, `last_saved_at`). Critic drafts and
+    specialist attack notes never live on this row in user-readable form.
     """
 
     __tablename__ = "generation_jobs"
@@ -36,10 +38,12 @@ class GenerationJob(SQLModel, table=True):
     # --- Loss-safe persistence (see app/generation/orchestrator.py) -------
     # Short, user-safe label of the most recently completed pipeline step
     # (e.g. "build_map", "reel:m1-r2", "module:m1", "final_review",
-    # "export_docx") - never raw log content.
+    # "export_docx") - never raw log content or critic text.
     last_completed_step: Optional[str] = None
     completed_modules_count: int = Field(default=0)
     completed_reels_count: int = Field(default=0)
+    total_lessons_count: int = Field(default=0)
+    needs_review_count: int = Field(default=0)
     # Machine-readable category from app/generation/errors.py
     # `classify_provider_error` - set alongside `error_message` whenever a
     # run ends PARTIAL or FAILED.
@@ -49,6 +53,48 @@ class GenerationJob(SQLModel, table=True):
     # see the "partial_job_{job_id}.docx" naming there, deliberately
     # distinct from a real "course_v{n}.docx" version.
     partial_docx_path: Optional[str] = None
+    # Heartbeat / progress panel (persisted, not memory-only).
+    current_module_index: Optional[int] = None  # 1-based while running
+    current_lesson_index: Optional[int] = None  # 1-based within module
+    last_progress_message: Optional[str] = None  # coarse user-safe sentence
+    last_saved_at: Optional[datetime] = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
+    estimated_usage_summary: Optional[str] = None  # short token hint if any
+    # Human review handoff (coarse — never DOCX / never critic notes).
+    estimated_duration_summary: Optional[str] = None  # e.g. "~120 min"
+    internal_risk_count: int = Field(default=0)
+    # Locked architecture depth for this run (Preview | Premium).
+    generation_quality_mode: GenerationQualityMode = Field(
+        default=GenerationQualityMode.PREMIUM
+    )
+    web_research_mode: WebResearchMode = Field(
+        default=WebResearchMode.AUTONOMOUS_GAP_FILL
+    )
+    # Internal-only research artifacts (admin/debug). Never in GenerationJobRead /
+    # DOCX / script_text.
+    source_memory_json: Optional[dict[str, Any]] = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
+    web_source_memory_json: Optional[dict[str, Any]] = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
+    evidence_ledger_json: Optional[dict[str, Any]] = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
+    # Source / web memory telemetry for this run (internal — not DOCX).
+    source_tokens_used: int = Field(default=0)
+    web_searches_count: int = Field(default=0)
+    reused_source_memory_count: int = Field(default=0)
+    repeated_source_extraction_warnings: int = Field(default=0)
+    research_memory_reuse_count: int = Field(default=0)
+    # Coarse waste-warning codes for the simple usage panel (never DOCX).
+    waste_warnings_json: list[str] = Field(
+        default_factory=list, sa_column=Column(JSON, nullable=False)
+    )
+    usage_by_stage_json: Optional[dict[str, Any]] = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
     # Internal-only persisted pipeline state, written incrementally as
     # each piece completes (not batched at the end) - this is what makes a
     # mid-run failure loss-safe: the course map and every completed reel
@@ -62,32 +108,13 @@ class GenerationJob(SQLModel, table=True):
         default_factory=list, sa_column=Column(JSON, nullable=False)
     )
 
-    # --- AI-ops / quality-control hardening (see docs at the top of ------
-    # app/generation/run_snapshot.py, app/generation/output_scoring.py,
-    # app/generation/budget_guard.py) ---------------------------------
-    # Immutable once written (near the start of the run, right after
-    # `_load_active_rules`/`_load_usable_sources`) - a compact, secret-free
-    # record of exactly which admin-knowledge content, prompt-compiler
-    # version, preset, provider/model, and sources produced this run. See
-    # app/generation/run_snapshot.py `build_run_snapshot` for the exact
-    # shape and why this lives here rather than on `Course` (see
-    # app/models/course.py). Safe to return to the frontend as-is (see
-    # app/schemas/generation_job.py `GenerationJobRead.run_snapshot`) -
-    # never contains raw admin-knowledge/source text, only short hashes.
+    # --- AI-ops / quality-control hardening ----------------------------
     run_snapshot_json: Optional[dict[str, Any]] = Field(
         default=None, sa_column=Column(JSON, nullable=True)
     )
-    # Populated once, after the final (or partial) course text is
-    # assembled/exported - see app/generation/output_scoring.py
-    # `score_final_course`. Purely observational: never blocks export, and
-    # never stored inside the DOCX itself.
     output_score_json: Optional[dict[str, Any]] = Field(
         default=None, sa_column=Column(JSON, nullable=True)
     )
-    # Set only when a budget is configured (see `Settings.ai_monthly_
-    # budget_usd`/`ai_course_budget_usd` in app/config.py) AND spend has
-    # crossed `ai_warn_at_percent` of it - see app/generation/budget_guard.py.
-    # Warning-only: never blocks or aborts a run.
     budget_warning: Optional[str] = None
 
     created_at: datetime = Field(default_factory=_utcnow)

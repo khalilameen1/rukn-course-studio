@@ -16,6 +16,8 @@ Check one finished module - its plan plus all of its reels - as a whole. Interna
   - recap openings
   - domain voice that feels like one repeated machine
 - Generic filler anywhere in the module (intros, recaps, transitions).
+- Student Confusion Layer (80% serious learner): Does the module jump too fast? Does each lesson prepare the next? Is progression natural? Flag missing bridges/prerequisites that would lose most learners — ignore rare textbook expansion demands.
+- Master Creator-Academic Mentor: module energy curve, repetition, transitions, where strong moments should land — advise without cloning any real creator.
 
 ## Output
 

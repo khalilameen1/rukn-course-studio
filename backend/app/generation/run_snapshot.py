@@ -58,6 +58,8 @@ def build_run_snapshot(
     rules_context: dict[str, str],
     generation_preset: str,
     source_ids_used: list[int],
+    generation_quality_mode: str = "premium",
+    web_research_mode: str = "autonomous_gap_fill",
     config: Settings = default_settings,
 ) -> dict:
     """Build the dict to store verbatim on `GenerationJob.run_snapshot_json`.
@@ -77,6 +79,8 @@ def build_run_snapshot(
         "admin_knowledge_snapshot": admin_knowledge_snapshot,
         "prompt_compiler_version": PROMPT_COMPILER_VERSION,
         "generation_preset": generation_preset,
+        "generation_quality_mode": generation_quality_mode,
+        "web_research_mode": web_research_mode,
         "provider": provider,
         "model": model,
         "source_ids_used": list(source_ids_used),

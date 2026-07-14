@@ -96,37 +96,45 @@ class FakeProvider(AIProvider):
         self.last_usage: dict | None = None
 
     def build_course_map(self, input: BuildCourseMapInput) -> CourseMap:
+        # Two-pass: first_draft can be lighter; final_master deepens
+        # estimated_length so Premium ~120 min floor is met without exploding
+        # reel write-count in e2e tests (still 2×3 lessons).
+        phase = (input.map_phase or "first_draft").strip().lower()
+        feedback_blob = " ".join(input.previous_map_feedback or []).lower()
+        deepen = phase == "final_master" or any(
+            k in feedback_blob
+            for k in ("120", "shallow", "depth", "bridge", "under", "merge", "premium")
+        )
+        estimated = "20 minutes" if deepen else "90 seconds"
+
         modules: list[ModulePlan] = []
         for m_idx in range(1, self.DEFAULT_MODULE_COUNT + 1):
             module_id = f"m{m_idx}"
             reels = [
                 ReelPlan(
                     reel_id=f"{module_id}-r{r_idx}",
-                    # Same reasoning as the module title above: plain
-                    # descriptive text, no "Reel N" self-numbering.
                     title=f"Fake lesson topic {r_idx} for module {m_idx}",
                     purpose=f"Fake purpose for module {m_idx} reel {r_idx}.",
-                    # Includes m_idx so must_cover is unique across the whole
-                    # course, not just within one module - otherwise every
-                    # module's "reel 1" would look like a repeat of every
-                    # other module's "reel 1" to the repetition checker.
                     must_cover=[f"fake point {m_idx}.{r_idx}.1", f"fake point {m_idx}.{r_idx}.2"],
                     must_avoid=["repeating an earlier reel's example"],
                     source_hints=[f"source:{s.source_id}" for s in input.sources],
-                    estimated_length="45-60 seconds",
+                    estimated_length=estimated,
                 )
                 for r_idx in range(1, self.DEFAULT_REELS_PER_MODULE + 1)
             ]
             modules.append(
                 ModulePlan(
                     module_id=module_id,
-                    # Plain descriptive title, no "Module N:" prefix - the
-                    # DOCX exporter (app/services/docx_export.py) is solely
-                    # responsible for that numbering, so a title containing
-                    # its own prefix would render doubled ("Module 1 —
-                    # Module 1: ...").
                     title=f"Fake topic block {m_idx} for {input.brief.title}",
-                    purpose=f"Fake purpose for module {m_idx}, building toward: {input.brief.outcome}",
+                    purpose=(
+                        f"Fake purpose for module {m_idx}, building toward: {input.brief.outcome}"
+                        if not deepen
+                        else (
+                            f"Module {m_idx} role: "
+                            f"{'foundation' if m_idx == 1 else 'application'} — "
+                            f"toward {input.brief.outcome}"
+                        )
+                    ),
                     bridge_project=(
                         f"Fake bridge project connecting module {m_idx} to module {m_idx + 1}"
                         if m_idx < self.DEFAULT_MODULE_COUNT
@@ -146,17 +154,69 @@ class FakeProvider(AIProvider):
 
     def write_single_reel(self, input: WriteSingleReelInput) -> GeneratedReel:
         used_ideas = list(input.reel.must_cover)
-        used_examples = [f"Fake example illustrating '{input.reel.title}'"]
-
-        # Deliberately written as spoken-style placeholder lines, not
-        # labeled meta text (no "Purpose:"/"- covers:" style notes) - even
-        # fake output should already look like a lecturer script, not
-        # internal planning notes, per the teleprompter DOCX contract.
-        script_lines = [
-            f"يلا نبدأ في {input.reel.title} على طول من غير مقدمات.",
-            *[f"النقطة دي مهمة: {point}." for point in input.reel.must_cover],
-            "كده كفاية للجزء ده، وجاهزين نكمل اللي جاي بعده.",
+        # Vary example family by reel_id so anti-template checks see diversity.
+        used_examples = [
+            f"Fake local example ({input.reel.reel_id[-1:]}) for '{input.reel.title}'"
         ]
+
+        curve = input.lesson_curve or {}
+        length = curve.get("natural_length", "medium")
+        hook = curve.get("hook_strength", "medium")
+        ending = curve.get("ending_motion", "natural_transition")
+        energy = curve.get("teaching_energy", "practical")
+        phase = (input.write_phase or "first_draft").strip().lower()
+
+        # Opening follows hook_strength — quiet lessons stay quiet (no bait).
+        if hook == "quiet":
+            opener = f"النقطة الأساسية في {input.reel.title} هي دي:"
+        elif hook == "strong":
+            opener = f"لو عملت {input.reel.title} بالطريقة الشائعة هتخسر نتيجة واضحة."
+        else:
+            opener = f"يلا نثبت فرق عملي في {input.reel.title} من أول خطوة."
+
+        body = [f"النقطة دي مهمة: {point}." for point in input.reel.must_cover]
+        # Length follows lesson_curve — short/medium/long/extended, no fixed quota.
+        if length == "short":
+            body = body[:1] or body
+        elif length == "long":
+            body = body + [
+                f"خلّي بالك من التفصيل ده عشان الفكرة متتبسّطش زيادة ({energy}).",
+                "المثال الواقعي هنا أوضح من أي كلام عام.",
+            ]
+        elif length == "extended":
+            body = body + [
+                f"هنا الفكرة تستاهل طول أكتر لأن سوء الفهم شائع ({energy}).",
+                "قارن القرار الغلط بالقرار الصح قبل ما تكمّل.",
+                "اختبر الفهم بموقف محلي بسيط من الشغل اليومي.",
+            ]
+
+        if ending == "no_loop_needed" or ending == "clean_close":
+            closer = "كده النقطة اكتملت، ومفيش لازمة نلفّ عليها."
+        elif ending == "soft_next_need":
+            closer = "باقي جزء عملي مبني على القرار ده."
+        elif ending == "unresolved_practical_need":
+            closer = "جرّب الخطوة دي على شغلك قبل ما تعدّي للفكرة الجاية."
+        else:
+            closer = "كده كفاية للجزء ده، وجاهزين نكمل اللي جاي بعده."
+
+        # Final master is a real rewrite path: apply review cues without
+        # exposing drafts/reviews. First draft stays freer.
+        if phase == "final_master":
+            if any("forbidden" in (f or "").lower() for f in input.previous_review_feedback):
+                opener = f"خلّينا نثبت فرق عملي في {input.reel.title} من غير حشو."
+            elif input.previous_review_feedback:
+                body = list(body) + [
+                    "بعد المراجعة: وضّحنا الخطوة العملية وسدّينا أي قفزة مش واضحة."
+                ]
+            closer = {
+                "no_loop_needed": "كده النقطة اكتملت، ومفيش لازمة نلفّ عليها.",
+                "clean_close": "كده النقطة اكتملت، ومفيش لازمة نلفّ عليها.",
+                "soft_next_need": "باقي جزء عملي مبني على القرار ده.",
+                "unresolved_practical_need": "جرّب الخطوة دي على شغلك قبل ما تعدّي للفكرة الجاية.",
+            }.get(ending, "كده الجزء ده جاهز للتطبيق.")
+
+        # Spoken placeholder only — never emit curve labels into script_text.
+        script_lines = [opener, *body, closer]
 
         result = GeneratedReel(
             reel_id=input.reel.reel_id,

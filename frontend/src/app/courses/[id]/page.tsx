@@ -128,10 +128,13 @@ export default function CourseDetailPage() {
       audience: values.audience,
       outcome: values.outcome,
       special_notes: values.special_notes || null,
+      course_domain: values.course_domain || null,
       structure_mode: values.structure_mode,
       manual_map_text: values.manual_map_text || null,
       explanation_level: values.explanation_level,
       generation_preset: values.generation_preset,
+      generation_quality_mode: values.generation_quality_mode,
+      target_market: values.target_market,
     });
     setCourse(updated);
     setEditingBrief(false);
@@ -198,7 +201,7 @@ export default function CourseDetailPage() {
     versions.length > 0
       ? versions.reduce((latest, v) => (v.version_number > latest.version_number ? v : latest))
       : null;
-  const showReportTab = course.explanation_level === "full_report";
+  const showReportTab = false; // V1: Teleprompter DOCX only — no report surface
 
   const providerNeedsAttention = diagnostics?.ai_provider === "anthropic" && !diagnostics.ai_provider_ready;
   const providerLabel =
@@ -293,8 +296,6 @@ export default function CourseDetailPage() {
           <Card className="flex flex-col gap-4">
             <GeneratePanel
               courseId={courseId}
-              explanationLevel={course.explanation_level}
-              latestSummary={latestVersion?.summary_text ?? null}
               onVersionCreated={loadAll}
               onJobUpdate={setCurrentJob}
             />

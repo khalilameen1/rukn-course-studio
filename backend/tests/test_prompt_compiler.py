@@ -20,6 +20,11 @@ ALL_RULES = {
     "rukn_quality_rubric": "rubric",
     "rukn_teleprompter_docx_contract": "contract",
     "rukn_high_signal_reel_doctrine": "doctrine",
+    "rukn_dynamic_teaching_curve": "curve",
+    "rukn_creator_persona_engine": "persona",
+    "rukn_creator_critic_loop": "critic",
+    "rukn_student_confusion_layer": "student",
+    "rukn_master_mentor_engine": "mentor",
     "rukn_generation_presets": "presets",
 }
 
@@ -46,7 +51,59 @@ def test_write_and_review_stages_include_high_signal_doctrine():
         selected = select_rules_for_stage(ALL_RULES, stage)
         assert "rukn_high_signal_reel_doctrine" in selected
 
-def test_rebuild_final_course_includes_teleprompter_contract():
+
+def test_write_stages_include_dynamic_teaching_curve():
+    for stage in (
+        PipelineStage.BUILD_COURSE_MAP,
+        PipelineStage.WRITE_SINGLE_REEL,
+        PipelineStage.REVIEW_MODULE,
+    ):
+        selected = select_rules_for_stage(ALL_RULES, stage)
+        assert "rukn_dynamic_teaching_curve" in selected
+
+
+def test_write_stages_include_creator_persona_engine():
+    for stage in (
+        PipelineStage.BUILD_COURSE_MAP,
+        PipelineStage.WRITE_SINGLE_REEL,
+        PipelineStage.REVIEW_SINGLE_REEL,
+        PipelineStage.FINAL_REVIEW,
+    ):
+        selected = select_rules_for_stage(ALL_RULES, stage)
+        assert "rukn_creator_persona_engine" in selected
+
+
+def test_write_stages_include_creator_critic_loop():
+    for stage in (
+        PipelineStage.BUILD_COURSE_MAP,
+        PipelineStage.WRITE_SINGLE_REEL,
+        PipelineStage.REVIEW_MODULE,
+        PipelineStage.FINAL_REVIEW,
+    ):
+        selected = select_rules_for_stage(ALL_RULES, stage)
+        assert "rukn_creator_critic_loop" in selected
+
+
+def test_write_stages_include_student_confusion_layer():
+    for stage in (
+        PipelineStage.BUILD_COURSE_MAP,
+        PipelineStage.WRITE_SINGLE_REEL,
+        PipelineStage.REVIEW_MODULE,
+        PipelineStage.FINAL_REVIEW,
+    ):
+        selected = select_rules_for_stage(ALL_RULES, stage)
+        assert "rukn_student_confusion_layer" in selected
+
+
+def test_write_stages_include_master_mentor_engine():
+    for stage in (
+        PipelineStage.BUILD_COURSE_MAP,
+        PipelineStage.WRITE_SINGLE_REEL,
+        PipelineStage.REVIEW_MODULE,
+        PipelineStage.FINAL_REVIEW,
+    ):
+        selected = select_rules_for_stage(ALL_RULES, stage)
+        assert "rukn_master_mentor_engine" in selected
     selected = select_rules_for_stage(ALL_RULES, PipelineStage.REBUILD_FINAL_COURSE)
     assert "rukn_teleprompter_docx_contract" in selected
 

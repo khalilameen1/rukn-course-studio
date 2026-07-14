@@ -2,46 +2,33 @@
 
 import { useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
-import type { ExplanationLevel, GenerationJob } from "@/lib/types";
+import type { GenerationJob, GenerationQualityMode } from "@/lib/types";
 import StatusBadge, { type StatusTone } from "@/components/ui/StatusBadge";
 
-// "partial" is a resting state awaiting user action (download the partial
-// DOCX, or start over) - not actively progressing, so polling stops here
-// too, same as completed/failed.
 const TERMINAL_STATUSES = new Set<GenerationJob["status"]>(["completed", "failed", "partial"]);
 
-// High-level progress only - never a reel, never internal JSON, never a
-// long report by default. Maps the backend's internal stage tokens (see
-// backend/app/generation/orchestrator.py) to what the user should see.
 const STAGE_LABELS: Record<string, string> = {
   queued: "Preparing course",
-  reading_sources: "Reading sources",
+  reading_sources: "Building course map",
   building_map: "Building course map",
-  generating: "Writing course internally",
-  reviewing_repetition: "Reviewing repetition",
-  reviewing: "Final rebuild",
-  exporting: "Exporting DOCX",
+  generating: "Writing lessons",
+  reviewing_repetition: "Running specialist critic",
+  reviewing: "Rewriting final master version",
+  exporting: "Exporting Teleprompter DOCX",
   done: "Done",
   failed: "Failed",
   partial: "Stopped early",
 };
 
-// The ordered "happy path" of stages, used only for the step indicator
-// below - a small, simplified view of STAGE_LABELS above. "queued" isn't
-// its own step (it's the "nothing started yet" state before step 1), and
-// "done"/"failed"/"partial" are end states shown via the status badge
-// instead of as a step.
 const PROGRESS_STEPS: { key: string; label: string }[] = [
-  { key: "reading_sources", label: "Reading sources" },
-  { key: "building_map", label: "Building map" },
-  { key: "generating", label: "Generating" },
-  { key: "reviewing_repetition", label: "Reviewing repetition" },
-  { key: "reviewing", label: "Final rebuild" },
-  { key: "exporting", label: "Exporting" },
+  { key: "reading_sources", label: "Building course map" },
+  { key: "building_map", label: "Building / rebuilding course map" },
+  { key: "generating", label: "Draft → reviews → final master" },
+  { key: "reviewing_repetition", label: "Specialist critic" },
+  { key: "reviewing", label: "Final master" },
+  { key: "exporting", label: "Exporting Teleprompter DOCX" },
 ];
 
-// Short, jargon-free labels for the backend's error categories (see
-// backend/app/generation/errors.py) - shown alongside error_message.
 const ERROR_CATEGORY_LABELS: Record<string, string> = {
   rate_limit: "Rate limited",
   insufficient_quota: "Out of credits",
@@ -59,6 +46,43 @@ const STATUS_TONE: Record<GenerationJob["status"], StatusTone> = {
   failed: "danger",
   completed: "success",
 };
+
+const QUALITY_MODE_OPTIONS: {
+  value: GenerationQualityMode;
+  label: string;
+  hint: string;
+}[] = [
+  {
+    value: "premium",
+    label: "Premium",
+    hint: "Creator draft → student / critic / mentor review → Creator final master",
+  },
+  {
+    value: "preview",
+    label: "Preview",
+    hint: "Faster direction test; simplified review; still teleprompter-ready",
+  },
+];
+
+function formatElapsed(fromIso: string, toIso?: string | null): string {
+  const start = new Date(fromIso).getTime();
+  const end = toIso ? new Date(toIso).getTime() : Date.now();
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return "—";
+  const sec = Math.floor((end - start) / 1000);
+  if (sec < 60) return `${sec}s`;
+  const min = Math.floor(sec / 60);
+  const rem = sec % 60;
+  return `${min}m ${rem}s`;
+}
+
+function formatSavedAt(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  try {
+    return new Date(iso).toLocaleTimeString();
+  } catch {
+    return "—";
+  }
+}
 
 /** Simple filled-circle/checkmark step row - no icon library, just text+dots. */
 function ProgressSteps({ job }: { job: GenerationJob }) {
@@ -108,25 +132,118 @@ function ProgressSteps({ job }: { job: GenerationJob }) {
   );
 }
 
+function GenerationStatusPanel({ job }: { job: GenerationJob }) {
+  const showStoppedInfo = job.status === "partial" || job.status === "failed";
+  const partialAvailable =
+    job.partial_docx_available ?? Boolean(job.partial_docx_path);
+  const isTerminal = TERMINAL_STATUSES.has(job.status);
+  const completedLessons =
+    job.completed_lessons_count ?? job.completed_reels_count;
+  const totalLessons = job.total_lessons_count ?? 0;
+
+  return (
+    <div className="rounded-lg bg-surface-muted p-4 text-sm">
+      <p className="mb-2 font-medium text-foreground">Generation Status</p>
+      <div className="flex flex-wrap items-center gap-2">
+        <StatusBadge label={job.status} tone={STATUS_TONE[job.status]} />
+        {job.generation_quality_mode ? (
+          <span className="text-xs text-muted">
+            {job.generation_quality_mode === "preview" ? "Preview" : "Premium"}
+          </span>
+        ) : null}
+        <span className="text-muted">
+          {job.last_progress_message ||
+            (job.current_stage ? STAGE_LABELS[job.current_stage] ?? job.current_stage : "—")}
+        </span>
+      </div>
+      <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-border">
+        <div
+          className="h-full rounded-full bg-accent transition-all"
+          style={{ width: `${job.progress_percent}%` }}
+        />
+      </div>
+      <ProgressSteps job={job} />
+      <dl className="mt-3 grid gap-1.5 text-xs text-muted sm:grid-cols-2">
+        <div>
+          <dt className="inline text-foreground">Current step: </dt>
+          <dd className="inline">
+            {job.last_progress_message ||
+              (job.current_stage ? STAGE_LABELS[job.current_stage] ?? job.current_stage : "—")}
+          </dd>
+        </div>
+        <div>
+          <dt className="inline text-foreground">Module / lesson: </dt>
+          <dd className="inline">
+            {job.current_module_index != null
+              ? `M${job.current_module_index}${
+                  job.current_lesson_index != null ? ` · L${job.current_lesson_index}` : ""
+                }`
+              : "—"}
+          </dd>
+        </div>
+        <div>
+          <dt className="inline text-foreground">Completed: </dt>
+          <dd className="inline">
+            {completedLessons}
+            {totalLessons ? ` / ${totalLessons}` : ""} lesson(s)
+          </dd>
+        </div>
+        <div>
+          <dt className="inline text-foreground">Last saved: </dt>
+          <dd className="inline">{formatSavedAt(job.last_saved_at)}</dd>
+        </div>
+        <div>
+          <dt className="inline text-foreground">Elapsed: </dt>
+          <dd className="inline">
+            {formatElapsed(job.created_at, isTerminal ? job.updated_at : null)}
+          </dd>
+        </div>
+        <div>
+          <dt className="inline text-foreground">Estimated duration: </dt>
+          <dd className="inline">{job.estimated_duration_summary || "—"}</dd>
+        </div>
+        <div>
+          <dt className="inline text-foreground">Estimated usage: </dt>
+          <dd className="inline">{job.estimated_usage_summary || "—"}</dd>
+        </div>
+        <div>
+          <dt className="inline text-foreground">Partial DOCX available: </dt>
+          <dd className="inline">{partialAvailable ? "Yes" : "No"}</dd>
+        </div>
+      </dl>
+      {showStoppedInfo ? (
+        <p className="mt-3 text-muted">
+          Stopped after: {job.last_completed_step ?? "the very first step"} (
+          {completedLessons} lesson(s) completed). You can download partial output if available,
+          then regenerate.
+        </p>
+      ) : null}
+      {showStoppedInfo && job.error_message ? (
+        <p className="mt-1 text-red-600 dark:text-red-400">
+          {job.error_category
+            ? `${ERROR_CATEGORY_LABELS[job.error_category] ?? job.error_category}: `
+            : ""}
+          {job.error_message}
+        </p>
+      ) : null}
+      {/* Critic / student / mentor notes and drafts are never shown here. */}
+    </div>
+  );
+}
+
 export default function GeneratePanel({
   courseId,
-  explanationLevel,
-  latestSummary,
   onVersionCreated,
   onJobUpdate,
 }: {
   courseId: number;
-  explanationLevel: ExplanationLevel;
-  latestSummary: string | null;
   onVersionCreated: () => void;
-  /** Called whenever the local job state changes - the parent page's
-   * Output panel uses this to show download/partial-status UI without
-   * needing its own copy of the polling logic. */
   onJobUpdate?: (job: GenerationJob | null) => void;
 }) {
   const [job, setJob] = useState<GenerationJob | null>(null);
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [qualityMode, setQualityMode] = useState<GenerationQualityMode>("premium");
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
@@ -160,7 +277,9 @@ export default function GeneratePanel({
     setStarting(true);
     setError(null);
     try {
-      const started = await api.generateCourse(courseId);
+      const started = await api.generateCourse(courseId, {
+        generation_quality_mode: qualityMode,
+      });
       updateJob(started);
       if (TERMINAL_STATUSES.has(started.status)) {
         if (started.status === "completed") onVersionCreated();
@@ -175,15 +294,31 @@ export default function GeneratePanel({
   }
 
   const isRunning = job ? !TERMINAL_STATUSES.has(job.status) : false;
-  const justCompleted = job?.status === "completed";
-  // A partial/failed job already exists - the primary button is now
-  // explicitly a fresh restart, not a first run, per
-  // POST /courses/{course_id}/generate always starting a brand-new job.
   const hasUnresolvedIssue = job ? job.status === "partial" || job.status === "failed" : false;
-  const showStoppedInfo = job ? job.status === "partial" || job.status === "failed" : false;
 
   return (
     <div className="flex flex-col gap-4">
+      <div className="flex flex-col gap-2">
+        <label className="text-sm text-foreground">
+          Generation quality
+          <select
+            className="mt-1 block w-full max-w-xs rounded-md border border-border bg-surface px-3 py-2 text-sm"
+            value={qualityMode}
+            disabled={starting || isRunning}
+            onChange={(e) => setQualityMode(e.target.value as GenerationQualityMode)}
+          >
+            {QUALITY_MODE_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <p className="text-xs text-muted">
+          {QUALITY_MODE_OPTIONS.find((o) => o.value === qualityMode)?.hint}
+        </p>
+      </div>
+
       <button
         onClick={handleGenerate}
         disabled={starting || isRunning}
@@ -198,58 +333,9 @@ export default function GeneratePanel({
 
       {error ? <p className="text-sm text-red-600 dark:text-red-400">{error}</p> : null}
 
-      {job ? (
-        <div className="rounded-lg bg-surface-muted p-4 text-sm">
-          <div className="flex items-center gap-2">
-            <StatusBadge label={job.status} tone={STATUS_TONE[job.status]} />
-            {job.current_stage ? (
-              <span className="text-muted">{STAGE_LABELS[job.current_stage] ?? job.current_stage}</span>
-            ) : null}
-          </div>
-          <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-border">
-            <div
-              className="h-full rounded-full bg-accent transition-all"
-              style={{ width: `${job.progress_percent}%` }}
-            />
-          </div>
-          <ProgressSteps job={job} />
-          {showStoppedInfo ? (
-            <p className="mt-3 text-muted">
-              Stopped after: {job.last_completed_step ?? "the very first step"} (
-              {job.completed_modules_count} module(s), {job.completed_reels_count} reel(s)
-              completed)
-            </p>
-          ) : null}
-          {showStoppedInfo && job.error_message ? (
-            <p className="mt-1 text-red-600 dark:text-red-400">
-              {job.error_category
-                ? `${ERROR_CATEGORY_LABELS[job.error_category] ?? job.error_category}: `
-                : ""}
-              {job.error_message}
-            </p>
-          ) : null}
-        </div>
-      ) : null}
+      {job ? <GenerationStatusPanel job={job} /> : null}
 
-      {/* Downloads live in the Output panel now (it can see this job via
-          onJobUpdate above, plus the course's version history) - this
-          panel stays focused on the run itself. */}
-
-      {/* explanation_level controls what, if anything, shows beyond the
-          DOCX itself - default (final_only) shows nothing extra here. */}
-      {justCompleted && explanationLevel === "short_summary" && latestSummary ? (
-        <div className="rounded-lg bg-surface-muted p-4 text-sm">
-          <p className="mb-1 font-medium">Summary</p>
-          <p className="text-muted">{latestSummary}</p>
-        </div>
-      ) : null}
-
-      {justCompleted && explanationLevel === "full_report" ? (
-        <p className="text-sm text-muted">
-          See the <span className="font-medium text-foreground">Report</span> section below for a
-          full breakdown.
-        </p>
-      ) : null}
+      {/* V1: Teleprompter DOCX only — no summary/report panels. */}
     </div>
   );
 }

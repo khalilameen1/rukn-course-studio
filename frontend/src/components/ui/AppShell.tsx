@@ -32,7 +32,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
                 className="inline-block h-2.5 w-2.5 rounded-full bg-accent shadow-[0_0_0_3px_var(--accent-soft)]"
               />
               <span className="text-sm font-semibold tracking-tight text-foreground">
-                Rukn Course Studio
+                ROKN Course Studio
               </span>
             </Link>
             <nav className="flex flex-wrap items-center gap-1 text-sm">

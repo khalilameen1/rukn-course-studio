@@ -4,7 +4,14 @@ from typing import Any, Optional
 from sqlalchemy import JSON, Column
 from sqlmodel import Field, SQLModel
 
-from app.models.enums import ExplanationLevel, GenerationPreset, StructureMode
+from app.models.enums import (
+    ExplanationLevel,
+    GenerationPreset,
+    GenerationQualityMode,
+    StructureMode,
+    TargetMarket,
+    WebResearchMode,
+)
 
 
 def _utcnow() -> datetime:
@@ -37,10 +44,27 @@ class Course(SQLModel, table=True):
     outcome: str
     special_notes: Optional[str] = None
     course_type: str = Field(default="practical_skill")
+    # Optional domain label (e.g. "meta_ads", "excel") — course-specific, not Admin Knowledge.
+    course_domain: Optional[str] = Field(default=None)
     structure_mode: StructureMode
-    manual_map_text: Optional[str] = None
+    # User-provided or Generate-Course-Map result — course-specific plan only.
+    manual_map_text: Optional[str] = Field(default=None)
     explanation_level: ExplanationLevel = Field(default=ExplanationLevel.FINAL_ONLY)
     generation_preset: GenerationPreset = Field(default=GenerationPreset.BALANCED)
+    # Preview = cheaper direction test; Premium = full locked pipeline (default).
+    generation_quality_mode: GenerationQualityMode = Field(
+        default=GenerationQualityMode.PREMIUM
+    )
+    # Autonomous gap fill by default — research missing facts without asking.
+    web_research_mode: WebResearchMode = Field(
+        default=WebResearchMode.AUTONOMOUS_GAP_FILL
+    )
+    # Default Egypt: local market realism for practical courses.
+    target_market: TargetMarket = Field(default=TargetMarket.EGYPT)
+    # Persistent Web Source Memory cache across generation jobs (internal).
+    web_source_memory_json: Optional[dict[str, Any]] = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
     status: str = Field(default="draft")
     active_rules_snapshot_json: Optional[dict[str, Any]] = Field(
         default=None, sa_column=Column(JSON, nullable=True)

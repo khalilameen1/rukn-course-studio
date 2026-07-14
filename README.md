@@ -1,4 +1,4 @@
-# Rukn Course Studio
+# ROKN Course Studio
 
 Internal tool that generates full DOCX practical-skill courses for Rukn from a
 course brief, admin-managed fixed rules, and optional sources / manual course
@@ -147,11 +147,25 @@ reachable via `/health` — start the backend first if you see "unreachable".
 - `/admin` — Admin Knowledge Center (CRUD + activate fixed Rukn rules)
 - `/courses` — List courses
 - `/courses/new` — Create course brief
-- `/courses/[id]` — Tabs: Brief, Sources, Generate, Versions, Report (Report tab
-  only when `explanation_level` is `full_report`)
+- `/courses/[id]` — Sources + Generate + download Teleprompter DOCX
 
-Generation shows **high-level progress only** (no reel-by-reel output). After a
-successful run, download the latest DOCX from the Generate or Versions tab.
+### V1 output lock (Final)
+
+**User-facing output is only the Teleprompter DOCX** (plus progress/status,
+and optional partial DOCX if a run stops early).
+
+DOCX contains only: course title, module headings, lesson headings, spoken
+transcript. Never: production notes, asset briefs, sources/citations,
+reviews, scores, planning labels, Project/bridge blocks.
+
+All map/draft/review/mentor/research/market/evergreen/originality/
+recordability/promise gates stay **internal** and rewrite scripts silently.
+
+**Cancelled for V1 (do not implement):** Production Pack, asset planning,
+separate JSON user downloads, course update-impact scan product UI.
+
+Generation shows high-level progress only. Download the Teleprompter DOCX
+from the Output panel after a successful run.
 
 ## Source types
 
@@ -192,7 +206,9 @@ style.** That authority comes only from:
 
 - **Rukn Admin Knowledge** - specifically `rukn_writing_style`,
   `rukn_practical_course_rules`, `rukn_teleprompter_docx_contract`,
-  `rukn_quality_rubric`, and `rukn_high_signal_reel_doctrine`
+  `rukn_quality_rubric`, `rukn_high_signal_reel_doctrine`,
+  `rukn_creator_critic_loop`, `rukn_student_confusion_layer`, and
+  `rukn_master_mentor_engine`
   (`app/models/admin_knowledge_item.py`, loaded per stage by
   `select_rules_for_stage`) - and
 - **explicit user instructions** (`user_notes` sources, always passed
@@ -212,7 +228,8 @@ naturally talks*, never *what Rukn's course looks like*.
 1. Explicit user instructions (`user_notes`)
 2. Rukn Admin Knowledge (`rukn_writing_style`, `rukn_practical_course_rules`,
    `rukn_teleprompter_docx_contract`, `rukn_quality_rubric`,
-   `rukn_high_signal_reel_doctrine`)
+   `rukn_high_signal_reel_doctrine`, `rukn_dynamic_teaching_curve`,
+   `rukn_creator_persona_engine`)
 3. The teleprompter DOCX contract specifically (`rukn_teleprompter_docx_contract`)
 4. The course brief / target learner (title, audience, outcome, structure mode)
 5. Scientific/factual sources (`scientific_reference`)
@@ -274,11 +291,210 @@ defines Rukn's writing standard against shallow short-form habits:
   `app/validators/anti_template_checker.py`) catch obvious failures even
   under `FakeProvider`.
 
-Seed seeds the doctrine for new installs. Existing DBs get missing keys on
-next startup (idempotent create-only). To intentionally replace *selected*
-system defaults on an already-seeded database (forbidden phrases, quality
-rubric, high-signal doctrine, teleprompter contract — and optional firewall /
-flow-guide keys when shipped), use:
+## Dynamic teaching curve
+
+`rukn_dynamic_teaching_curve` (Admin Knowledge) plus
+`app/generation/teaching_curves.py` make the course feel like a human teacher,
+not a machine on one fixed line:
+
+- **No fixed course-wide depth, voice, reel length, or energy.**
+- Before each **module**, plan a compact internal `module_curve` (role, energy
+  curve, depth pattern, variation goal, risk).
+- Before each **lesson/reel**, plan a compact internal `lesson_curve` (natural
+  length/depth, teaching energy, tension, speech density, explanation mode,
+  hook strength, ending motion, compression/expansion).
+- Curves are **planning decisions** passed compactly into write prompts
+  (`WriteSingleReelInput.module_curve` / `lesson_curve`). The idea controls the
+  curve; labels never become DOCX headings or script meta.
+- Quiet lessons may stay quiet; long connected lessons may stay long; short
+  complete lessons may stay short. Forced viral / sales overperformance and
+  flat same-length / same-hook modules are flagged by
+  `app/validators/teaching_curve_checker.py`.
+
+## Synthetic creator persona
+
+`rukn_creator_persona_engine` (Admin Knowledge) plus
+`app/generation/creator_persona.py` give the model a stronger internal state:
+
+- **Synthetic only** — not a real person, clone, or named-creator imitation.
+- Before generation, plan a compact `course_creator_persona` (domain identity,
+  audience psychology, creator instinct, never-do list, trust/seller avoidances).
+- Before each module, `module_persona_adjustment` (shift, audience need, feel).
+- Before each lesson, `lesson_persona_state` (real point, heat, viral_intent:
+  viral_worthy / quiet_useful / corrective_strong / technical_spine, fake risks).
+- Compact profiles go into map/write/review prompts; full Admin Knowledge is
+  stable stage context (`prompt_compiler` v1.4). Labels never appear in DOCX.
+- Local checks (`app/validators/creator_persona_checker.py`) flag imitation cues,
+  fake AI-Egyptian slang, superlative spam, flow-template leaks, and viral heat
+  on quiet spine lessons.
+
+## Final generation architecture (locked)
+
+The writing brain is **complete**. Do **not** add more persona layers.
+The **Creator Agent does not self-criticize** — separate agents review.
+
+Per lesson/reel:
+
+1. **Creator Agent** writes the full first draft (uninterrupted)
+2. **Student Agent** reviews the completed draft (broad learner confusion)
+3. **Specialist Critic Agent** reviews the completed draft (accuracy, weakness,
+   filler, realism, language, domain)
+4. **Master Mentor Agent** reviews draft + review signals (hook, loop, pacing,
+   creator instinct, subtle academic gaps)
+5. **Creator Agent** writes the **Final Master Version** — absorbs valid
+   feedback and rewrites naturally (never pastes review comments into script)
+6. Save only Final Master as `script_text`
+7. Export only Final Master to Teleprompter DOCX
+
+Never export: first draft, student/critic/mentor reviews, internal labels,
+evidence notes, sources, citations, needs_review, needs_confirmation, scores.
+
+Agency: one draft + one review bundle + one final rewrite; up to **2** final
+rebuilds only if a serious issue remains. Fatal leftovers are tracked
+internally (`needs_review` on the job for admin/debug) — never printed beside
+the script or in DOCX. No infinite debates / open-ended multi-agent chat.
+
+### Persistent Source Memory (uploads)
+
+PDFs and uploaded sources are processed **once** into persistent Source Memory
+(`source_analyses.source_memory_json`: facts, examples, terminology, summary,
+`source_hash`, extraction version). Generation prompts receive only relevant
+memory snippets per lesson — never the full PDF/extracted text repeatedly.
+If `source_hash` is unchanged: do not re-extract, do not re-read, reuse memory.
+
+### Cost Hygiene + Trusted Knowledge Gate
+
+Quality-first with **no waste**:
+- Compact stage Admin Knowledge packs (`map_planning_rules_pack`,
+  `lesson_writing_rules_pack`, `review_rules_pack`, `final_export_rules_pack`)
+- Web research per **distinct information need** (Research Need → Research Memory),
+  reused unless stale / low-confidence / platform-current freshness requires refresh
+- Factual authority only from trusted educational/official/academic sources —
+  social posts, forums, TikTok, Reddit comments are **not** factual authority
+- Academic/book/course knowledge is **transformed** into Rukn spoken Egyptian
+  Arabic teleprompter format (not academic prose)
+- Identical retry inputs are blocked; max 2 Final Master rebuilds; Premium
+  Creator → Student → Specialist → Mentor → Final rewrite stays intact
+- Usage panel: total est. cost, cost/lesson, web searches, source memory reuse,
+  waste warnings (never in DOCX)
+
+### Autonomous web research (`web_research_mode`)
+
+Default: **`autonomous_gap_fill`**. Alternative: `disabled`.
+
+When uploads are incomplete, Rukn researches missing factual/practical gaps
+from trusted web sources **without asking the user**. Results go into internal
+Web Source Memory (cached on the course — same query is not re-fetched) +
+Evidence Ledger. Job telemetry tracks `web_searches_count`. If a claim is not
+well supported: omit or safely rewrite — never hallucinate, never show
+"needs confirmation".
+
+Sensitive domains (religious/legal/medical/financial/high-stakes science):
+stricter sources, weaker claims omitted; human reviewer reads the clean final
+script outside the app. Evidence/risk flags may live on the job for admin
+debug only — never in DOCX or normal UI.
+
+### Course map two-pass (before any lesson)
+
+The course map itself uses the same creator → student → specialist → mentor →
+rebuild loop. The first map draft is never accepted as final. Only the **Final
+Course Map** starts lesson generation. Users are not asked to approve the map.
+
+### Duration rules (Premium)
+
+- Serious Premium courses normally aim for **≥ ~120 minutes** total estimated
+  spoken time; if the plan is shorter and not a mini/preview, rebuild with real
+  depth (bridges, examples, practical steps) — never motivational padding.
+- Lessons normally **~2–5 minutes**; under ~2 minutes → merge or expand with real
+  value only; over ~5 minutes allowed when a connected idea would go shallow if
+  split. No fixed maximum lesson count.
+
+### Final course quality gates (pre-export)
+
+Before DOCX export, Rukn runs local gates (no new agents):
+
+1. **Promise fulfillment** — does the course deliver the brief outcome?
+2. **Learner level** — consistent targeting for the 80% serious learner
+3. **Recordability** — spoken teleprompter rhythm; strip written tone / leaks
+4. **Application** — practical courses need clear do-steps
+5. **Repetition** — merge/rewrite near-duplicate hooks/lessons
+6. **Course ending** — complete the journey without sales/fake motivation
+7. **Egyptian market reality** — default `target_market=egypt`; local clients,
+   budgets, WhatsApp/FB/IG; no US/EU-translated fluff (unless market is global/custom)
+8. **Evergreen durability** — principles over exact salaries/prices/dates/UI
+   button positions; demos support lessons, they are not button-click tutorials
+9. **Originality + rights** — sources are knowledge only (facts/concepts), never
+   writing templates; no close paraphrase, catchphrases, distinctive examples,
+   or creator imitation; free/public sources still not free to copy
+
+Gates may rewrite scripts internally. DOCX stays spoken transcript only.
+After generation the UI can show: Course generated · lessons · ~duration ·
+complete/partial · optional internal flag count (never critic notes).
+
+`target_market`: `egypt` (default) | `arab_market` | `global` | `custom`.
+
+### Preview vs Premium (`generation_quality_mode`)
+
+| | **Premium** (default) | **Preview** |
+|---|---|---|
+| Use | Real course generation | Faster direction tests |
+| Pipeline | Full Student + Critic + Mentor AI review bundle | Simplified local review only |
+| Output | Final Master teleprompter script | Still teleprompter-ready |
+| UI | Mode label only — never raw temperature or agent internals |
+
+Internal reviews stay hidden. Users see progress/status, estimated usage, last
+saved, and partial DOCX availability. On quota/rate/timeout/provider error:
+completed lessons persist, clear stopped status, partial DOCX downloadable when
+lessons exist; regenerate starts a new job (mid-pipeline pair-resume remains
+unsupported by design).
+
+### Locked multi-agent review loop (Admin Knowledge)
+
+`rukn_creator_critic_loop` — the Creator **does not self-criticize**. Roles:
+
+1. **Creator Agent** — full first draft, uninterrupted
+2. **Student Agent** — broad ~80% learner confusion on the completed draft
+   (`rukn_student_confusion_layer`)
+3. **Specialist Critic Agent** — accuracy, weakness, filler, realism, language,
+   domain problems (harsh domain instructor; not a social commenter)
+4. **Master Mentor Agent** — hook, loop, pacing, creator instinct, subtle
+   academic gaps (`rukn_master_mentor_engine`; synthetic, not a named clone)
+5. **Creator Agent** — Final Master Version: absorb valid feedback and rewrite
+   naturally (never paste review comments into the script)
+
+Only Final Master becomes `script_text` / Teleprompter DOCX. Never export
+first draft, student/critic/mentor reviews, labels, evidence, sources,
+citations, needs_review, needs_confirmation, or quality scores.
+
+User progress only: Writing first draft → Checking student clarity → Running
+specialist critic → Consulting master mentor → Rewriting final master version
+→ Saving lesson X/Y.
+
+## Master Creator-Academic Mentor
+
+Synthetic spiritual mentor of the course creator: platform instinct + academic
+awareness. Does **not** write instead of the creator; does **not** imitate any
+named creator. Compact `mentor_review` is internal only. Progress may show
+"Consulting master mentor" without exposing mentor notes.
+
+## Student Confusion Layer
+
+Represents broad serious learners (not the top 5% genius, not rare edge cases).
+Catches missing terms, skipped steps, unclear transitions, and practical
+confusion ("يعني إيه؟" / "طب أطبق ده إزاي؟"). Follows an **80% rule**: fix
+blockers for most learners; ignore rare/philosophical/textbook expansion asks.
+Does **not** turn courses into beginner padding. Reviews stay internal;
+progress may show "Checking student clarity" without exposing review text.
+
+Critic/`student_review`/`mentor_review` stay compact and hidden. Users see
+**progress/status only**. Prefer: one draft call + one review-bundle call +
+one final-rewrite call (prompt_compiler v1.7) — not unbounded multi-agent
+credit burn. Hard limit: one draft / one review bundle / one final rewrite.
+On quota/rate/timeout the run stops cleanly and may offer partial DOCX.
+
+Seed seeds doctrine, curve, persona, critic-loop, student-layer, and mentor
+keys for new installs. Existing DBs get missing keys on next startup. To
+intentionally replace *selected* system defaults, use:
 
 ```powershell
 cd backend
@@ -772,9 +988,13 @@ you use.
 
 Tables are created via `SQLModel.metadata.create_all(engine)` on every
 backend startup (`backend/app/db.py` `init_db`, called from `main.py`'s
-lifespan) - the same for SQLite and Postgres, since it's plain SQLAlchemy
-DDL, not SQLite-specific. There is no separate migration tool (e.g. Alembic)
-in this MVP.
+lifespan). There is no Alembic migration tool in this MVP.
+
+On startup, `init_db()` also runs SQLite/Postgres-safe `ALTER TABLE ... ADD
+COLUMN` helpers for newly introduced columns (`_ensure_course_columns`,
+`_ensure_course_source_columns`, `_ensure_source_analysis_columns`,
+`_ensure_generation_job_columns`). **Restart the backend after deploy** so
+ALTERs apply. Existing courses and Admin Knowledge rows are preserved.
 
 - **First deploy against a brand-new database:** no manual step needed -
   `create_all` creates every table automatically the first time the backend
@@ -790,6 +1010,10 @@ in this MVP.
   `docs/BUILD_PLAN.md`. Example: `courses` gained a `generation_preset`
   column (see "Generation presets" above) - existing local/production
   databases need this column added the same way before that code deploys.
+  Same for `courses.target_market` (default `'egypt'`) — added via
+  `_ensure_course_columns` on SQLite startup; Postgres needs the matching
+  `ALTER TABLE courses ADD COLUMN target_market TEXT DEFAULT 'egypt'` if
+  the table already exists.
   Same situation for `generation_jobs`' new resilience columns
   (`last_completed_step`, `completed_modules_count`, `completed_reels_count`,
   `error_category`, `partial_docx_path`, `course_map_json`,

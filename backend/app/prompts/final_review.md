@@ -9,6 +9,10 @@ Last check before export. Re-verify the whole course yourself - do not assume ev
 - Any claim not grounded in `sources` when sources were provided, or any invented specific when they weren't.
 - Full `rules_context` compliance, including forbidden phrases and structure/pedagogy rules.
 - Whether the course actually delivers on `course_map.main_thread`, front to back.
+- One last Master Creator-Academic Mentor pass (synthetic only — not a named creator):
+  course spine/playlist strength, flat pacing across modules, fake loops, overhype vs quiet
+  dignity. Do not dump `mentor_review` into actions text; issue terse rebuild instructions only.
+  Never surface drafts, student_review, critic notes, or mentor_review in any user-facing field.
 
 ## Output
 

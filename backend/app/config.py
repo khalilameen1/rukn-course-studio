@@ -37,7 +37,7 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    app_name: str = "Rukn Course Studio API"
+    app_name: str = "ROKN Course Studio API"
     environment: str = "development"
 
     # Highest priority: if set, used as-is (after normalizing the
@@ -100,6 +100,10 @@ class Settings(BaseSettings):
     storage_extracted_dir: Path | None = None
     storage_outputs_dir: Path | None = None
     storage_templates_dir: Path | None = None
+
+    # Upload safety (course sources).
+    max_upload_bytes: int = 25 * 1024 * 1024
+    max_notes_chars: int = 200_000
 
     @model_validator(mode="after")
     def _resolve_storage_dirs(self) -> "Settings":

@@ -130,7 +130,6 @@ def test_render_numbers_modules_and_lessons_in_order():
         "Module 1 — Getting Started",
         "Lesson 1 — Opening Excel",
         "Lesson 2 — Basic Formulas",
-        "Project",
         "Module 2 — Budgets",
         "Lesson 1 — Totals",
     ]
@@ -146,15 +145,15 @@ def test_render_includes_script_text_under_each_lesson():
     assert "Use SUM to add a column." in body_texts
 
 
-def test_render_adds_project_paragraph_after_module_when_present():
+def test_render_excludes_bridge_project_from_v1_docx():
+    """V1 Teleprompter DOCX: no Project heading / bridge text (map-only)."""
     document = render_final_course_docx(_sample_final_course())
 
     project_headings = [text for style, text in _headings(document) if text == "Project"]
-    # Module 2 has no bridge_project, so there must be exactly one overall.
-    assert len(project_headings) == 1
-
-    body_texts = [p.text for p in document.paragraphs]
-    assert "Build a starter budget sheet" in body_texts
+    assert project_headings == []
+    body = _all_text(document)
+    assert "Build a starter budget sheet" not in body
+    assert "bridge project" not in body.lower()
 
 
 def test_render_excludes_internal_pipeline_language():

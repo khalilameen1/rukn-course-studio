@@ -1,91 +1,112 @@
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from fastapi.responses import FileResponse
 from sqlmodel import Session, select
 
 from app.ai.factory import AIProviderConfigError
-from app.crud import ai_usage_events, course_versions
+from app.crud import ai_usage_events, course_versions, courses, generation_jobs
 from app.db import get_session
+from app.generation.generation_state import ACTIVE_LOCK_STATUSES, is_active_lock_status
 from app.generation.orchestrator import run_generation_job
 from app.models.enums import JobStatus
 from app.models.generation_job import GenerationJob
 from app.routers.deps import get_course_or_404
 from app.schemas.ai_usage import CourseAIUsage
+from app.schemas.course import CourseRead
 from app.schemas.course_version import CourseVersionRead
-from app.schemas.generation_job import GenerationJobRead
+from app.schemas.generation_job import GenerateCourseRequest, GenerationJobRead
 
 router = APIRouter(prefix="/courses/{course_id}", tags=["generation"])
 
 DOCX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
-# Statuses that mean "a run is actively in flight" for a course - see
-# `generate_course`'s duplicate-run guard below (§10).
-_ACTIVE_JOB_STATUSES = (JobStatus.PENDING, JobStatus.RUNNING)
 
-
-def _has_active_job(session: Session, course_id: int) -> bool:
+def _get_active_job(session: Session, course_id: int) -> GenerationJob | None:
     statement = select(GenerationJob).where(
         GenerationJob.course_id == course_id,
-        GenerationJob.status.in_(_ACTIVE_JOB_STATUSES),
+        GenerationJob.status.in_(tuple(ACTIVE_LOCK_STATUSES)),
     )
-    return session.exec(statement).first() is not None
+    return session.exec(statement).first()
 
 
-@router.post("/generate", response_model=GenerationJobRead, status_code=201)
-def generate_course(course_id: int, session: Session = Depends(get_session)):
-    """Kick off a generation run.
+@router.post("/generate-map", response_model=CourseRead)
+def generate_course_map(course_id: int, session: Session = Depends(get_session)):
+    """Build Final Course Map via Creator→Student→Specialist→Mentor→rebuild.
 
-    Runs `run_generation_job` (see app/generation/orchestrator.py)
-    synchronously for MVP - the request waits for the full pipeline to
-    finish and returns the completed (or failed) job. That function is
-    already structured to be handed to a background task/queue instead
-    later without any change here: swap this call for
-    `background_tasks.add_task(run_generation_job, course_id)` and return
-    the just-created pending job instead.
-
-    On success, this also produces a real .docx (see
-    app/services/docx_export.py) and a new CourseVersion, so `/versions`
-    and `/download/latest` are populated afterward. Which AIProvider the
-    pipeline (docs/ARCHITECTURE.md §6) actually runs against - FakeProvider
-    or a real one - is decided by `AI_PROVIDER` (app/ai/factory.py), never
-    exposed here or to the frontend.
-
-    Idempotency/run-locking (§10): rejects with 409 if a `GenerationJob`
-    for this course already exists with status `pending`/`running`. Note
-    on the synchronous single-process design used today: because
-    `run_generation_job` runs the *entire* pipeline inside this request
-    (there is no background worker, no queue), a `GenerationJob` row is
-    created and immediately flipped to `RUNNING` before any AI call
-    happens, and this whole request holds the DB connection/GIL for the
-    full run. Two literally-concurrent requests for the same course could
-    theoretically both pass this check in the narrow window between "no
-    job row exists yet" and "the first job row is committed as RUNNING" -
-    but that window is a single, uninterrupted synchronous Python
-    function's first few lines (no I/O, no `await`), which in practice
-    makes true concurrent duplication effectively impossible for this MVP.
-    A real distributed lock (e.g. a DB-level advisory lock) would close
-    that theoretical gap completely, but would be over-engineering for a
-    single-process synchronous MVP - not added here; documented instead.
-    "Regenerate from Scratch" (starting a brand-new job once the previous
-    one reached a terminal state) is unaffected by this check and
-    continues to work exactly as before.
+    Saves editable map text on the course (`manual_map_text`). Course-specific
+    only — never Admin Knowledge. Internal reviews are not returned.
     """
     get_course_or_404(session, course_id)
-    if _has_active_job(session, course_id):
-        raise HTTPException(
-            status_code=409,
-            detail="A generation run is already in progress for this course.",
-        )
+    from app.generation.course_map_generate import generate_and_save_course_map
+
     try:
-        return run_generation_job(course_id)
+        course, _map_text = generate_and_save_course_map(session, course_id)
+        return course
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except AIProviderConfigError as exc:
-        # Server misconfiguration (e.g. AI_PROVIDER=anthropic with no API
-        # key) - a clear, actionable error, not a raw stack trace and not a
-        # silent fallback to a different provider.
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.post("/generate", response_model=GenerationJobRead)
+def generate_course(
+    course_id: int,
+    response: Response,
+    body: GenerateCourseRequest | None = None,
+    session: Session = Depends(get_session),
+):
+    """Kick off a generation run (or return the existing active run).
+
+    Idempotent: if a pending/running/paused job already exists, return it
+    (200) instead of starting a duplicate. New runs return 201.
+    """
+    course = get_course_or_404(session, course_id)
+    active = _get_active_job(session, course_id)
+    if active is not None:
+        response.status_code = 200
+        return active
+
+    request = body or GenerateCourseRequest()
+    updates: dict = {}
+    if course.generation_quality_mode != request.generation_quality_mode:
+        updates["generation_quality_mode"] = request.generation_quality_mode
+    if getattr(course, "web_research_mode", None) != request.web_research_mode:
+        updates["web_research_mode"] = request.web_research_mode
+    if updates:
+        courses.update(session, course_id, **updates)
+    try:
+        job = run_generation_job(
+            course_id,
+            generation_quality_mode=request.generation_quality_mode,
+            web_research_mode=request.web_research_mode,
+        )
+        response.status_code = 201
+        return job
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except AIProviderConfigError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.post("/generate/{job_id}/cancel", response_model=GenerationJobRead)
+def cancel_generation(
+    course_id: int, job_id: int, session: Session = Depends(get_session)
+):
+    """Mark an active job canceled and release the generation lock."""
+    get_course_or_404(session, course_id)
+    job = generation_jobs.get(session, job_id)
+    if job is None or job.course_id != course_id:
+        raise HTTPException(status_code=404, detail="Generation job not found")
+    if not is_active_lock_status(job.status):
+        return job
+    return generation_jobs.update(
+        session,
+        job_id,
+        status=JobStatus.CANCELED,
+        current_stage="canceled",
+        last_progress_message="Generation canceled",
+    )
 
 
 @router.get("/ai-usage", response_model=CourseAIUsage)
@@ -93,10 +114,32 @@ def course_ai_usage(course_id: int, session: Session = Depends(get_session)):
     """This course's cumulative estimated AI spend across every run - see
     app/routers/ai_usage.py's module docstring for the same "estimated app
     usage, not a real balance" caveat."""
+    from app.crud import generation_jobs
+
     get_course_or_404(session, course_id)
     events = ai_usage_events.list(session, course_id=course_id)
     total = round(sum((e.estimated_cost_usd or 0.0) for e in events), 6)
-    return CourseAIUsage(course_id=course_id, estimated_cost_usd=total, event_count=len(events))
+    jobs = generation_jobs.list(session, course_id=course_id)
+    latest = max(jobs, key=lambda j: j.id) if jobs else None
+    panel = getattr(latest, "usage_by_stage_json", None) or {}
+    return CourseAIUsage(
+        course_id=course_id,
+        estimated_cost_usd=total,
+        event_count=len(events),
+        cost_per_completed_lesson=panel.get("cost_per_completed_lesson"),
+        web_searches_count=(
+            panel.get("web_searches_count")
+            if panel
+            else getattr(latest, "web_searches_count", None)
+        ),
+        source_memories_reused=(
+            panel.get("source_memories_reused")
+            if panel
+            else getattr(latest, "reused_source_memory_count", None)
+        ),
+        research_memory_reuses=panel.get("research_memory_reuses"),
+        warnings=list(panel.get("warnings") or getattr(latest, "waste_warnings_json", None) or []),
+    )
 
 
 @router.get("/versions", response_model=list[CourseVersionRead])

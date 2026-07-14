@@ -36,6 +36,11 @@ export const SOURCE_CATEGORY_OPTIONS: SourceCategoryOption[] = [
     label: "Raw / mixed material",
     helper: "Unsorted material — the system will pick out only what's useful.",
   },
+  {
+    value: "transcript",
+    label: "Transcript",
+    helper: "Spoken lesson/transcript for this course — knowledge only, never Admin Knowledge.",
+  },
 ];
 
 function toLookup(options: SourceCategoryOption[], key: "label" | "helper") {

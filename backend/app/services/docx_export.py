@@ -3,17 +3,14 @@
 Renders a `FinalCourse` (see app/schemas/generation.py) into a real .docx
 following the teleprompter contract (see the `rukn_teleprompter_docx_contract`
 admin knowledge item, app/seed_admin_knowledge.py): the DOCX is a
-teleprompter-ready lecturer script, not a book/handout/report. It contains
+teleprompter-ready lecturer script, not a book/handout/report. V1 contains
 ONLY the course title, numbered "Module N — title" / "Lesson N — title"
-headings, the spoken script under each lesson, and an optional project
-paragraph after a module - nothing else. There is no code path here that
-touches review results, validation notes, or any other internal-pipeline
-object, so none of that can ever leak into the exported file.
+headings, and the spoken script under each lesson — nothing else.
 
-Module/lesson numbers are computed here from position, not taken from
-`module.title`/`reel.title` - the provider's titles are expected to be
-plain descriptive text (e.g. "Getting Started"), with this module solely
-responsible for the "Module N — " / "Lesson N — " prefix.
+Bridge projects, production notes, asset briefs, reviews, scores, sources,
+citations, and planning labels must never appear in the export. Bridge
+projects may still exist on the internal course map for teaching structure;
+they are not rendered into the DOCX.
 
 If an admin has an active `docx_template` knowledge item (see
 app/models/admin_knowledge.py), that should eventually drive
@@ -111,13 +108,7 @@ def render_final_course_docx(final_course: FinalCourse) -> DocxDocument:
             for line in (reel.script_text or "").splitlines():
                 if line.strip():
                     _set_rtl(document.add_paragraph(line))
-
-        if module.bridge_project:
-            # Labeled as a plain "Project" heading (not "Bridge project:") -
-            # this is task/project text shown directly to the student, not
-            # an internal planning note, so it must not read like one.
-            _set_rtl(document.add_heading("Project", level=3))
-            _set_rtl(document.add_paragraph(module.bridge_project))
+        # V1: never render bridge_project / Project blocks into the DOCX.
 
     return document
 
@@ -238,10 +229,7 @@ def render_partial_course_docx(final_course: FinalCourse) -> DocxDocument:
             for line in (reel.script_text or "").splitlines():
                 if line.strip():
                     _set_rtl(document.add_paragraph(line))
-
-        if module.bridge_project:
-            _set_rtl(document.add_heading("Project", level=3))
-            _set_rtl(document.add_paragraph(module.bridge_project))
+        # V1: never render bridge_project / Project blocks into the DOCX.
 
     return document
 

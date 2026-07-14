@@ -16,7 +16,12 @@ from abc import ABC, abstractmethod
 
 from pydantic import BaseModel, Field
 
-from app.models.enums import ExplanationLevel, GenerationPreset, StructureMode
+from app.models.enums import (
+    ExplanationLevel,
+    GenerationPreset,
+    StructureMode,
+    TargetMarket,
+)
 from app.schemas.generation import (
     CourseMap,
     FinalCourse,
@@ -38,6 +43,7 @@ class CourseBrief(BaseModel):
     explanation_level: ExplanationLevel
     generation_preset: GenerationPreset = GenerationPreset.BALANCED
     manual_map_text: str | None = None
+    target_market: TargetMarket = TargetMarket.EGYPT
 
 
 class SourceExcerpt(BaseModel):
@@ -94,6 +100,14 @@ class BuildCourseMapInput(BaseModel):
     brief: CourseBrief
     sources: list[SourceExcerpt] = Field(default_factory=list)
     rules_context: dict[str, str] = Field(default_factory=dict)
+    # Compact synthetic creator persona (internal). Guides map planning tone/
+    # variety; never appears in DOCX.
+    course_creator_persona: dict[str, str] = Field(default_factory=dict)
+    # Two-pass map: first_draft then final_master after student/critic/mentor.
+    map_phase: str = "first_draft"
+    previous_map_feedback: list[str] = Field(default_factory=list)
+    # Quality mode hint for duration floor (premium vs preview/mini).
+    generation_quality_mode: str = "premium"
 
 
 class WriteSingleReelInput(BaseModel):
@@ -104,17 +118,37 @@ class WriteSingleReelInput(BaseModel):
     prior_reels_in_module: list[PriorReelSummary] = Field(default_factory=list)
     sources: list[SourceExcerpt] = Field(default_factory=list)
     rules_context: dict[str, str] = Field(default_factory=dict)
-    # Populated on a retry (see app/generation/orchestrator.py
-    # `_write_and_review_reel`): the previous attempt's review instructions,
-    # so the rewrite actually targets what was wrong last time instead of
-    # blindly regenerating from scratch.
+    # `first_draft`: creator writes the full draft uninterrupted.
+    # `final_master`: creator rewrites after the combined review bundle.
+    # See orchestrator `_write_and_review_reel`. Never expose drafts in DOCX.
+    write_phase: str = "first_draft"
+    # For `final_master`: compact combined student + critic + mentor feedback
+    # from the completed first draft. Empty when writing `first_draft`.
     previous_review_feedback: list[str] = Field(default_factory=list)
+    # Dynamic Teaching Curve (internal planning only — never DOCX). Compact
+    # label dicts from app/generation/teaching_curves.py; guide voice/length/
+    # energy for this write. Omitted labels mean "provider may ignore".
+    module_curve: dict[str, str] = Field(default_factory=dict)
+    lesson_curve: dict[str, str] = Field(default_factory=dict)
+    # Synthetic field-specific viral educator persona (internal — never DOCX).
+    course_creator_persona: dict[str, str] = Field(default_factory=dict)
+    module_persona_adjustment: dict[str, str] = Field(default_factory=dict)
+    lesson_persona_state: dict[str, str] = Field(default_factory=dict)
+    # Market realism for examples / client scenarios (prompt + local gates).
+    target_market: TargetMarket = TargetMarket.EGYPT
 
 
 class ReviewSingleReelInput(BaseModel):
     reel_plan: ReelPlan
     generated_reel: GeneratedReel
     rules_context: dict[str, str] = Field(default_factory=dict)
+    # Compact lesson persona + review reminders (internal).
+    lesson_persona_state: dict[str, str] = Field(default_factory=dict)
+    persona_review_reminders: list[str] = Field(default_factory=list)
+    # `draft_bundle`: Student Agent + Specialist Critic Agent + Master Mentor
+    # Agent review of the completed first draft (Creator does not self-criticize).
+    # `sanity_check`: optional compact post-final pass — prefer local validators.
+    review_mode: str = "draft_bundle"
 
 
 class ReviewFiveReelsInput(BaseModel):

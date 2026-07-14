@@ -296,7 +296,8 @@ def test_map_gets_full_text_for_short_source(session):
 
     run_generation(session, course.id, provider=provider)
 
-    assert provider.map_calls[0].sources[0].text == short_text
+    assert short_text in provider.map_calls[0].sources[0].text
+    assert "UNTRUSTED_REFERENCE_MATERIAL" in provider.map_calls[0].sources[0].text
 
 
 def test_map_gets_summary_not_full_text_for_long_source(session):
@@ -333,7 +334,8 @@ def test_reel_gets_full_text_for_short_source(session):
     # the full short source text.
     assert len(provider.reel_calls) >= FakeProvider.DEFAULT_MODULE_COUNT * FakeProvider.DEFAULT_REELS_PER_MODULE
     for reel_input in provider.reel_calls:
-        assert reel_input.sources[0].text == short_text
+        assert short_text in reel_input.sources[0].text
+        assert "UNTRUSTED_REFERENCE_MATERIAL" in reel_input.sources[0].text
 
 
 def test_reel_never_gets_full_text_of_a_long_source(session):
@@ -356,35 +358,50 @@ def test_reel_never_gets_full_text_of_a_long_source(session):
         assert len(excerpt_text) < len(long_text)
 
 
-def test_local_validators_run_before_ai_review_and_can_skip_it(session):
-    """FakeProvider's templated openings legitimately trip the local
-    opening_checker (see the comment on test_reel_gets_full_text_for_short_source
-    above) - so across a full run, at least one reel should be caught
-    locally, meaning the AI review call was skipped for that attempt."""
+def test_local_validators_feed_review_bundle_and_ai_review_still_runs(session):
+    """Local validators contribute to the draft review bundle; AI draft_bundle
+    review still runs once per reel. Write count is 2× reels, so review calls
+    stay strictly below write calls."""
     course = _make_course(session)
     provider = RecordingProvider()
 
     job = run_generation(session, course.id, provider=provider)
 
     reel_logs = [e for e in job.log_json if e["step"] == "reel"]
-    assert any(e["caught_locally"] for e in reel_logs)
-    # Every locally-caught attempt means one fewer AI review call than
-    # total write attempts.
+    assert all(e["attempts"] >= 2 for e in reel_logs)
+    assert provider.review_single_reel_calls == len(reel_logs)
     assert provider.review_single_reel_calls < len(provider.reel_calls)
+    assert len(provider.reel_calls) >= 2 * len(reel_logs)
+    phases = [c.write_phase for c in provider.reel_calls]
+    assert phases.count("first_draft") == len(reel_logs)
+    assert phases.count("final_master") >= len(reel_logs)
 
 
-def test_forbidden_phrase_short_circuits_ai_review_entirely(session):
-    """Direct, precise test of the short-circuit: a provider whose reel
-    always contains a forbidden phrase should never reach the AI reviewer."""
-    from app.generation.orchestrator import _write_and_review_reel
+def test_forbidden_phrase_feeds_review_bundle_then_one_final_rewrite(session):
+    """Draft may contain a forbidden phrase; reviewers see the completed draft;
+    creator gets exactly one Final Master rewrite — no unbounded loop."""
+    from app.generation.orchestrator import WRITES_PER_REEL, _write_and_review_reel
     from app.schemas.generation import CourseMap, GeneratedReel, ModulePlan, ReelPlan, ReviewStatus
 
     class AlwaysForbiddenProvider(FakeProvider):
         def __init__(self):
             super().__init__()
             self.review_calls = 0
+            self.phases: list[str] = []
 
         def write_single_reel(self, input):  # noqa: A002
+            self.phases.append(input.write_phase)
+            if input.write_phase == "final_master":
+                # Final rewrite removes the forbidden phrase.
+                return GeneratedReel(
+                    reel_id=input.reel.reel_id,
+                    module_id=input.module.module_id,
+                    title=input.reel.title,
+                    script_text="خلّينا نثبت فرق عملي من غير حشو في أول جملة.",
+                    used_ideas=["idea"],
+                    used_examples=["example"],
+                    self_check_status=ReviewStatus.PASS,
+                )
             return GeneratedReel(
                 reel_id=input.reel.reel_id,
                 module_id=input.module.module_id,
@@ -397,6 +414,7 @@ def test_forbidden_phrase_short_circuits_ai_review_entirely(session):
 
         def review_single_reel(self, input):  # noqa: A002
             self.review_calls += 1
+            assert input.review_mode == "draft_bundle"
             return super().review_single_reel(input)
 
     module = ModulePlan(module_id="m1", title="Module", purpose="p", reels=[])
@@ -409,7 +427,7 @@ def test_forbidden_phrase_short_circuits_ai_review_entirely(session):
         )
     }
 
-    generated, attempts, caught_locally = _write_and_review_reel(
+    generated, attempts, caught_locally, needs_review = _write_and_review_reel(
         provider=provider,
         course_map=course_map,
         module=module,
@@ -421,9 +439,11 @@ def test_forbidden_phrase_short_circuits_ai_review_entirely(session):
     )
 
     assert caught_locally is True
-    assert provider.review_calls == 0
-    assert attempts == 3  # 1 initial + 2 retries (MAX_REEL_REWRITE_ATTEMPTS)
-    assert generated.script_text  # still returns the (flagged) reel, not None
+    assert provider.review_calls == 1
+    assert attempts == WRITES_PER_REEL
+    assert provider.phases == ["first_draft", "final_master"]
+    assert "في الريل ده" not in generated.script_text
+    assert needs_review is False
 
 
 def test_stage_history_includes_reading_sources_and_reviewing_repetition(session, monkeypatch):
@@ -462,10 +482,11 @@ def test_summary_text_is_meaningful(session):
     version = course_versions.list(session, course_id=course.id)[0]
     assert course.title in version.summary_text
     assert "module" in version.summary_text.lower()
-    assert "reel" in version.summary_text.lower()
+    assert "lesson" in version.summary_text.lower()
 
 
 def test_report_text_only_populated_for_full_report_level(session):
+    # V1 lock: report_text is never user-facing product output (always None).
     plain_course = _make_course(session, explanation_level=ExplanationLevel.FINAL_ONLY)
     run_generation(session, plain_course.id)
     plain_version = course_versions.list(session, course_id=plain_course.id)[0]
@@ -476,9 +497,7 @@ def test_report_text_only_populated_for_full_report_level(session):
     )
     run_generation(session, full_report_course.id)
     full_version = course_versions.list(session, course_id=full_report_course.id)[0]
-    assert full_version.report_text is not None
-    assert "Course:" in full_version.report_text
-    assert "Review checkpoints run" in full_version.report_text
+    assert full_version.report_text is None
 
 
 def test_two_modules_review_runs_for_even_module_count(session):

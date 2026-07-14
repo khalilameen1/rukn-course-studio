@@ -67,10 +67,16 @@ def test_scientific_reference_excerpt_is_extracted_not_copied_verbatim(session):
 
     assert job.status == JobStatus.COMPLETED
     assert provider.map_calls, "expected at least one build_course_map call"
+    assert len(provider.map_calls) >= 2  # first_draft + final_master
+    assert provider.map_calls[0].map_phase == "first_draft"
+    assert any(c.map_phase == "final_master" for c in provider.map_calls)
 
     map_excerpts = provider.map_calls[0].sources
-    assert len(map_excerpts) == 1
-    excerpt = map_excerpts[0]
+    scientific = [e for e in map_excerpts if e.category == SourceCategory.SCIENTIFIC_REFERENCE.value]
+    assert scientific, "expected scientific_reference among map sources"
+    # Prefer the uploaded excerpt (positive source_id) over web gap-fill rows.
+    upload_excerpts = [e for e in scientific if e.source_id > 0]
+    excerpt = upload_excerpts[0] if upload_excerpts else scientific[0]
 
     assert excerpt.category == SourceCategory.SCIENTIFIC_REFERENCE.value
     # The compiled excerpt must be shorter than the source - i.e. an
@@ -86,8 +92,9 @@ def test_scientific_reference_excerpt_is_extracted_not_copied_verbatim(session):
     # not the raw source either).
     assert provider.reel_calls, "expected at least one write_single_reel call"
     reel_excerpts = provider.reel_calls[0].sources
-    assert len(reel_excerpts) == 1
-    assert len(reel_excerpts[0].text) < len(SCIENTIFIC_SOURCE_TEXT)
+    reel_sci = [e for e in reel_excerpts if e.category == SourceCategory.SCIENTIFIC_REFERENCE.value and e.source_id > 0]
+    assert reel_sci
+    assert len(reel_sci[0].text) < len(SCIENTIFIC_SOURCE_TEXT)
 
     # The run snapshot (§2/§3) must record this source as actually used.
     used_source_ids = job.run_snapshot_json["source_ids_used"]

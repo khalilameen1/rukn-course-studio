@@ -15,25 +15,37 @@ export default function AdminKnowledgePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [editingItem, setEditingItem] = useState<AdminKnowledgeItem | null>(null);
+  const [showInactive, setShowInactive] = useState(false);
 
   const refresh = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      setItems(await api.listKnowledgeItems());
+      setItems(await api.listKnowledgeItems({ includeInactive: showInactive }));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load knowledge items");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [showInactive]);
 
   useEffect(() => {
-    // Standard fetch-on-mount; `refresh` is also reused by the mutation
-    // handlers below, so it isn't inlined here.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     refresh();
   }, [refresh]);
+
+  async function handleCleanup() {
+    if (!confirm("Deactivate duplicate active Admin Knowledge items (keep newest per key)?")) {
+      return;
+    }
+    try {
+      const report = await api.cleanupKnowledgeDuplicates();
+      alert(report.message);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Cleanup failed");
+    }
+  }
 
   async function handleSubmit(values: KnowledgeItemFormValues) {
     const payload = {
@@ -69,10 +81,24 @@ export default function AdminKnowledgePage() {
     <div className="flex flex-col gap-8">
       <PageHeader
         title="Admin Knowledge Center"
-        description="Fixed Rukn rules used by every generation run - structure, style, pedagogy, formatting, and templates. Only one version per key is active at a time."
+        description="This area is for global ROKN rules that apply to all courses. Course-specific PDFs, transcripts, and maps belong on the course — not here."
       />
 
       {error ? <p className="text-sm text-red-600 dark:text-red-400">{error}</p> : null}
+
+      <div className="flex flex-wrap items-center gap-3 text-sm">
+        <label className="flex items-center gap-2 text-muted">
+          <input
+            type="checkbox"
+            checked={showInactive}
+            onChange={(e) => setShowInactive(e.target.checked)}
+          />
+          Show inactive / archived versions
+        </label>
+        <button type="button" className="btn-secondary" onClick={handleCleanup}>
+          Clean duplicate active items
+        </button>
+      </div>
 
       {loading ? (
         <p className="text-sm text-muted">Loading...</p>

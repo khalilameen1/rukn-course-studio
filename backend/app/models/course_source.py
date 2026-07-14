@@ -18,10 +18,16 @@ class CourseSource(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     course_id: int = Field(foreign_key="courses.id", index=True)
     source_category: SourceCategory
+    # Display title (filename fallback). Course-specific — never Admin Knowledge.
+    title: Optional[str] = Field(default=None)
     original_filename: Optional[str] = None
     file_path: Optional[str] = None
     mime_type: Optional[str] = None
     extracted_text: Optional[str] = None
     priority: Priority = Field(default=Priority.MEDIUM)
     status: str = Field(default="uploaded")
+    # Cost hygiene: when False, source is kept but not injected into generation.
+    include_in_generation: bool = Field(default=True)
+    # Content hash of extracted/pasted text (aligned with Source Memory).
+    source_hash: Optional[str] = Field(default=None, index=True)
     created_at: datetime = Field(default_factory=_utcnow)

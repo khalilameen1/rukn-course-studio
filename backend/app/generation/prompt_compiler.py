@@ -68,7 +68,7 @@ DEFAULT_MAX_TOTAL_CHARS = 6000
 # for traceability - so an old run's snapshot can be compared against
 # whatever version is active today. Not read by anything at runtime other
 # than the snapshot builder.
-PROMPT_COMPILER_VERSION = "1.1"
+PROMPT_COMPILER_VERSION = "2.5"
 
 # Stage -> the admin-knowledge keys actually relevant to it. Missing/
 # inactive keys are simply omitted (never an error) - see
@@ -81,49 +81,108 @@ _STAGE_RULE_KEYS: dict[PipelineStage, tuple[str, ...]] = {
         "rukn_core_rules",
         "rukn_practical_course_rules",
         "rukn_high_signal_reel_doctrine",
+        "rukn_dynamic_teaching_curve",
+        "rukn_creator_persona_engine",
+        "rukn_creator_critic_loop",
+        "rukn_student_confusion_layer",
+        "rukn_master_mentor_engine",
+        "rukn_market_evergreen_gates",
+        "rukn_originality_rights_gate",
+        "rukn_cost_hygiene_trusted_knowledge",
     ),
     PipelineStage.WRITE_SINGLE_REEL: (
         "rukn_core_rules",
         "rukn_practical_course_rules",
         "rukn_writing_style",
         "rukn_high_signal_reel_doctrine",
+        "rukn_dynamic_teaching_curve",
+        "rukn_creator_persona_engine",
+        "rukn_creator_critic_loop",
+        "rukn_student_confusion_layer",
+        "rukn_master_mentor_engine",
         "rukn_teleprompter_docx_contract",
+        "rukn_market_evergreen_gates",
+        "rukn_originality_rights_gate",
+        "rukn_cost_hygiene_trusted_knowledge",
     ),
     PipelineStage.REVIEW_SINGLE_REEL: (
         "rukn_writing_style",
         "rukn_high_signal_reel_doctrine",
+        "rukn_dynamic_teaching_curve",
+        "rukn_creator_persona_engine",
+        "rukn_creator_critic_loop",
+        "rukn_student_confusion_layer",
+        "rukn_master_mentor_engine",
         "rukn_forbidden_phrases",
         "rukn_quality_rubric",
+        "rukn_market_evergreen_gates",
+        "rukn_originality_rights_gate",
+        "rukn_cost_hygiene_trusted_knowledge",
     ),
     PipelineStage.REVIEW_FIVE_REELS: (
         "rukn_writing_style",
         "rukn_high_signal_reel_doctrine",
+        "rukn_dynamic_teaching_curve",
+        "rukn_creator_persona_engine",
+        "rukn_creator_critic_loop",
+        "rukn_student_confusion_layer",
+        "rukn_master_mentor_engine",
         "rukn_forbidden_phrases",
         "rukn_quality_rubric",
+        "rukn_market_evergreen_gates",
+        "rukn_originality_rights_gate",
     ),
     PipelineStage.REVIEW_MODULE: (
         "rukn_writing_style",
         "rukn_high_signal_reel_doctrine",
+        "rukn_dynamic_teaching_curve",
+        "rukn_creator_persona_engine",
+        "rukn_creator_critic_loop",
+        "rukn_student_confusion_layer",
+        "rukn_master_mentor_engine",
         "rukn_forbidden_phrases",
         "rukn_quality_rubric",
+        "rukn_market_evergreen_gates",
+        "rukn_originality_rights_gate",
     ),
     PipelineStage.REVIEW_TWO_MODULES: (
         "rukn_writing_style",
         "rukn_high_signal_reel_doctrine",
+        "rukn_dynamic_teaching_curve",
+        "rukn_creator_persona_engine",
+        "rukn_creator_critic_loop",
+        "rukn_student_confusion_layer",
+        "rukn_master_mentor_engine",
         "rukn_forbidden_phrases",
         "rukn_quality_rubric",
+        "rukn_market_evergreen_gates",
+        "rukn_originality_rights_gate",
     ),
     PipelineStage.FINAL_REVIEW: (
         "rukn_forbidden_phrases",
         "rukn_quality_rubric",
         "rukn_high_signal_reel_doctrine",
+        "rukn_dynamic_teaching_curve",
+        "rukn_creator_persona_engine",
+        "rukn_creator_critic_loop",
+        "rukn_student_confusion_layer",
+        "rukn_master_mentor_engine",
         "rukn_teleprompter_docx_contract",
+        "rukn_market_evergreen_gates",
+        "rukn_originality_rights_gate",
     ),
     PipelineStage.REBUILD_FINAL_COURSE: (
         "rukn_writing_style",
         "rukn_high_signal_reel_doctrine",
+        "rukn_dynamic_teaching_curve",
+        "rukn_creator_persona_engine",
+        "rukn_creator_critic_loop",
+        "rukn_student_confusion_layer",
+        "rukn_master_mentor_engine",
         "rukn_forbidden_phrases",
         "rukn_teleprompter_docx_contract",
+        "rukn_market_evergreen_gates",
+        "rukn_originality_rights_gate",
     ),
 }
 
@@ -133,6 +192,15 @@ def select_rules_for_stage(all_rules: dict[str, str], stage: PipelineStage) -> d
     just omitted, never an error (an admin may not have activated it)."""
     keys = _STAGE_RULE_KEYS.get(stage, ())
     return {key: all_rules[key] for key in keys if key in all_rules}
+
+
+def select_packed_rules_for_stage(
+    all_rules: dict[str, str], stage: PipelineStage
+) -> dict[str, str]:
+    """Stage keys compacted into one Cost Hygiene pack — no full Admin dump."""
+    from app.generation.knowledge_packs import build_stage_rules_pack
+
+    return build_stage_rules_pack(select_rules_for_stage(all_rules, stage), stage)
 
 
 # --- Prompt caching preparation (§8) ------------------------------------
@@ -153,6 +221,13 @@ STABLE_RULE_KEYS: tuple[str, ...] = (
     "rukn_quality_rubric",
     "rukn_teleprompter_docx_contract",
     "rukn_high_signal_reel_doctrine",
+    "rukn_dynamic_teaching_curve",
+    "rukn_creator_persona_engine",
+    "rukn_creator_critic_loop",
+    "rukn_student_confusion_layer",
+    "rukn_master_mentor_engine",
+    "rukn_market_evergreen_gates",
+    "rukn_originality_rights_gate",
 )
 
 
@@ -199,6 +274,13 @@ ALLOWED_USE_BY_CATEGORY: dict[str, list[str]] = {
         "simplify_for_target_learner",
         "rephrase_into_rukn_style",
     ],
+    SourceCategory.TRANSCRIPT.value: [
+        "extract_factual_knowledge",
+        "identify_concepts",
+        "select_relevant_content",
+        "simplify_for_target_learner",
+        "rephrase_into_rukn_style",
+    ],
     SourceCategory.FLOW_REFERENCE.value: [
         "analyze_speech_mechanics",
         "identify_idea_progression",
@@ -224,6 +306,18 @@ DISALLOWED_USE_BY_CATEGORY: dict[str, list[str]] = {
         "imitate_source_tone",
         "copy_source_structure",
         "copy_source_wording",
+        "copy_distinctive_examples",
+        "close_paraphrase_or_translate_source",
+        "use_as_course_format_template",
+        "make_final_script_sound_like_source",
+        "disguised_rewrite_of_one_source",
+    ],
+    SourceCategory.TRANSCRIPT.value: [
+        "imitate_source_tone",
+        "copy_source_structure",
+        "copy_source_wording",
+        "copy_source_filler",
+        "close_paraphrase_or_translate_source",
         "use_as_course_format_template",
         "make_final_script_sound_like_source",
     ],
@@ -233,6 +327,8 @@ DISALLOWED_USE_BY_CATEGORY: dict[str, list[str]] = {
         "copy_wording",
         "copy_catchphrases_or_signature_lines",
         "copy_exact_hook_structure",
+        "copy_verbal_style_or_creator_identity",
+        "copy_distinctive_examples",
         "treat_as_rukn_format",
         "treat_as_reel_template",
         "force_same_section_order",
@@ -254,13 +350,15 @@ DISALLOWED_USE_BY_CATEGORY: dict[str, list[str]] = {
 STYLE_CONTAMINATION_WARNING_BY_CATEGORY: dict[str, str | None] = {
     SourceCategory.SCIENTIFIC_REFERENCE.value: (
         "Knowledge source only - academic/formal/translated tone must not leak into "
-        "the spoken script; rephrase fully into Rukn style, never imitate this "
-        "source's wording or structure."
+        "the spoken script; rephrase fully into Rukn style. Facts/concepts only — "
+        "never copy wording, distinctive examples, hooks, or structure; free sources "
+        "are still not free to copy."
     ),
     SourceCategory.FLOW_REFERENCE.value: (
-        "Style/flow reference only - never a format or knowledge source. Do not copy "
-        "any wording, catchphrases, or structure from it, and it never overrides "
-        "Rukn's own lesson/reel structure."
+        "Style/flow reference only - never a format or knowledge source. Use for "
+        "pacing, progression, tension, transitions, and human rhythm only. Do not "
+        "copy wording, catchphrases, distinctive examples, verbal style, or creator "
+        "identity, and it never overrides Rukn's own lesson/reel structure."
     ),
     SourceCategory.OLD_COURSE.value: (
         "Previous course/attempt - may be outdated; reuse selectively, verify before reuse."
@@ -279,9 +377,10 @@ STYLE_CONTAMINATION_WARNING_BY_CATEGORY: dict[str, str | None] = {
 _CATEGORY_AUTHORITY_RANK: dict[str, int] = {
     SourceCategory.USER_NOTES.value: 0,
     SourceCategory.SCIENTIFIC_REFERENCE.value: 1,
-    SourceCategory.FLOW_REFERENCE.value: 2,
-    SourceCategory.OLD_COURSE.value: 3,
-    SourceCategory.RAW_MATERIAL.value: 4,
+    SourceCategory.TRANSCRIPT.value: 2,
+    SourceCategory.FLOW_REFERENCE.value: 3,
+    SourceCategory.OLD_COURSE.value: 4,
+    SourceCategory.RAW_MATERIAL.value: 5,
 }
 
 
@@ -299,7 +398,11 @@ def _order_by_authority(excerpts: list[SourceExcerpt]) -> list[SourceExcerpt]:
 class SourceForCompiler:
     """Plain input to `compile_source_context` - deliberately decoupled
     from the orchestrator's DB-backed `UsableSource`/`CourseSource` types.
-    Callers convert their own source representation into this shape."""
+    Callers convert their own source representation into this shape.
+
+    `text` should already be Source Memory / snippet text — not a full PDF.
+    `memory` is the persistent Source Memory payload when available.
+    """
 
     source_id: int
     category: str
@@ -307,6 +410,7 @@ class SourceForCompiler:
     text: str
     summary: str | None = None
     chunks: list[dict] | None = None
+    memory: dict | None = None
 
 
 _RAW_MATERIAL_MARKER = (
@@ -315,10 +419,33 @@ _RAW_MATERIAL_MARKER = (
 
 
 def _factual_excerpt_text(source: SourceForCompiler, query_text: str) -> str:
-    """Shared "short source -> full text, else summary + relevant chunks"
-    behavior for scientific_reference / old_course / raw_material - the
-    same approach app/generation/orchestrator.py previously duplicated
-    across `_excerpt_text_for_map` and `_excerpt_text_for_reel`."""
+    """Inject Source Memory snippets only — never re-send a full long PDF.
+
+    Prefer persistent `memory` (facts/examples/terminology + relevant chunks).
+    Fall back to summary + keyword chunks. Cap size hard.
+    Short originals stay whole when `original_chars` is under the short cap.
+    """
+    from app.generation.source_memory_store import (
+        MEMORY_SNIPPET_MAX_CHARS,
+        format_memory_snippet,
+    )
+
+    if source.memory:
+        original = int(source.memory.get("original_chars") or 0)
+        text = source.text or ""
+        if original and original <= SHORT_SOURCE_MAX_CHARS and text:
+            # Orchestrator already put the full short body into `text`.
+            return text[:SHORT_SOURCE_MAX_CHARS]
+        if not original and len(text) <= SHORT_SOURCE_MAX_CHARS and text:
+            return text
+        return format_memory_snippet(
+            source.memory,
+            query_text=query_text,
+            chunks=source.chunks,
+            max_chars=MEMORY_SNIPPET_MAX_CHARS,
+        )
+
+    # Caller already compacted `text` via memory formatting in most paths.
     text = source.text or ""
     if len(text) <= SHORT_SOURCE_MAX_CHARS:
         return text
@@ -326,10 +453,13 @@ def _factual_excerpt_text(source: SourceForCompiler, query_text: str) -> str:
     if source.chunks:
         relevant = select_relevant_chunks(source.chunks, query_text)
         if relevant:
-            return "\n\n".join(chunk.get("text", "") for chunk in relevant)
+            joined = "\n\n".join(
+                (chunk.get("text") or "")[:500] for chunk in relevant
+            )
+            return joined[:MEMORY_SNIPPET_MAX_CHARS]
 
     if source.summary:
-        return source.summary
+        return source.summary[:MEMORY_SNIPPET_MAX_CHARS]
     return text[:SHORT_SOURCE_MAX_CHARS]
 
 
@@ -498,6 +628,9 @@ _THINGS_NOT_TO_COPY: tuple[str, ...] = (
     "this source's exact opening line wording",
     "any repeated catchphrases or signature lines",
     "this source's overall section order",
+    "verbal style or creator identity",
+    "distinctive examples or signature teaching moves",
+    "any phrasing that would imitate the source author",
 )
 
 _FLOW_PROFILE_FIELD_ORDER: tuple[str, ...] = (
@@ -569,17 +702,27 @@ def _build_flow_profile_text(source: SourceForCompiler) -> str:
 
 
 def _build_excerpt(source: SourceForCompiler, query_text: str) -> SourceExcerpt:
+    from app.generation.source_isolation import wrap_untrusted
+
     if source.category == SourceCategory.FLOW_REFERENCE.value:
-        text = _build_flow_profile_text(source)
+        # Flow profile is derived heuristics — still untrusted as style orders.
+        text = wrap_untrusted(
+            _build_flow_profile_text(source),
+            label=f"flow_profile:{source.source_id}",
+        )
     elif source.category == SourceCategory.USER_NOTES.value:
-        # Always full text, unmodified - only the overall budget step
-        # below may ever trim it, and only as a last resort.
-        text = source.text or ""
+        # Notes are highest-priority data but still fenced — never override Admin.
+        text = wrap_untrusted(source.text or "", label=f"user_notes:{source.source_id}")
     elif source.category == SourceCategory.RAW_MATERIAL.value:
-        text = _RAW_MATERIAL_MARKER + _factual_excerpt_text(source, query_text)
+        text = wrap_untrusted(
+            _RAW_MATERIAL_MARKER + _factual_excerpt_text(source, query_text),
+            label=f"raw_material:{source.source_id}",
+        )
     else:
-        # scientific_reference, old_course, and any other factual category.
-        text = _factual_excerpt_text(source, query_text)
+        text = wrap_untrusted(
+            _factual_excerpt_text(source, query_text),
+            label=f"{source.category}:{source.source_id}",
+        )
 
     return SourceExcerpt(
         source_id=source.source_id,

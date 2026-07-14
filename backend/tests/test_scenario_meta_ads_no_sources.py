@@ -119,8 +119,9 @@ def test_full_generation_with_fake_provider_no_sources(session):
     assert any(t.startswith("Lesson 1 —") for t in paragraph_texts)
     # FakeProvider's placeholder script text (app/ai/fake_provider.py) -
     # proves actual spoken-script paragraphs exist under a lesson heading,
-    # not just the headings themselves.
-    assert any("يلا نبدأ" in t for t in paragraph_texts)
+    # not just the headings themselves. Opener wording varies with
+    # lesson_curve.hook_strength; the must_cover body line is stable.
+    assert any("النقطة دي مهمة" in t for t in paragraph_texts)
 
     # Same real file must never surface any of the internal review/
     # validation/quality-check machinery this pipeline run generated along
@@ -200,13 +201,27 @@ def test_download_latest_docx_via_real_api_endpoints(tmp_path, monkeypatch):
         "last_completed_step",
         "completed_modules_count",
         "completed_reels_count",
+        "total_lessons_count",
+        "needs_review_count",
         "error_category",
         "partial_docx_path",
+        "current_module_index",
+        "current_lesson_index",
+        "last_progress_message",
+        "last_saved_at",
+        "estimated_usage_summary",
+        "estimated_duration_summary",
+        "internal_risk_count",
+        "generation_quality_mode",
+        "web_research_mode",
         "run_snapshot_json",
         "output_score_json",
         "budget_warning",
         "created_at",
         "updated_at",
+        "run_status",
+        "completed_lessons_count",
+        "partial_docx_available",
     }
     assert job_body["status"] == "completed"
     assert job_body["current_stage"] == "done"

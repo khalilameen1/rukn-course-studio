@@ -54,6 +54,8 @@ class SourceCategory(str, Enum):
     OLD_COURSE = "old_course"
     USER_NOTES = "user_notes"
     RAW_MATERIAL = "raw_material"
+    # Spoken/pasted lesson transcript for this course (course-specific, never Admin Knowledge).
+    TRANSCRIPT = "transcript"
 
 
 class Priority(str, Enum):
@@ -68,13 +70,17 @@ class JobStatus(str, Enum):
     one completed reel) - see app/generation/orchestrator.py's error
     handling for exactly how that's decided. `FAILED` means nothing usable
     was saved yet (e.g. the run failed before the course map even
-    finished)."""
+    finished). `PAUSED` / `CANCELED` support cooperative stop without
+    starting a duplicate run.
+    """
 
     PENDING = "pending"
     RUNNING = "running"
+    PAUSED = "paused"
     PARTIAL = "partial"
     FAILED = "failed"
     COMPLETED = "completed"
+    CANCELED = "canceled"
 
 
 class GenerationPreset(str, Enum):
@@ -88,3 +94,47 @@ class GenerationPreset(str, Enum):
     CREATIVE = "creative"
     FUSION = "fusion"
     STRICT_TELEPROMPTER = "strict_teleprompter"
+
+
+class GenerationQualityMode(str, Enum):
+    """Operational depth of the multi-agent draft → review → Final Master pipeline.
+
+    Creator Agent writes; Student / Specialist Critic / Master Mentor review
+    the completed draft; Creator writes Final Master. Creator never
+    self-criticizes.
+
+    - PREMIUM: full draft + Student/Critic/Mentor AI review bundle + final rewrite
+      (default for real course generation).
+    - PREVIEW: cheaper/faster; simplified local review; still teleprompter-ready.
+
+    Never expose raw temperature or internal agent details in the UI.
+    """
+
+    PREVIEW = "preview"
+    PREMIUM = "premium"
+
+
+class WebResearchMode(str, Enum):
+    """How missing factual/practical gaps are filled after uploaded sources.
+
+    - DISABLED: use uploaded/pasted sources only.
+    - AUTONOMOUS_GAP_FILL (default): research missing facts from trusted web
+      sources without asking the user. Never ask for routine confirmations.
+    """
+
+    DISABLED = "disabled"
+    AUTONOMOUS_GAP_FILL = "autonomous_gap_fill"
+
+
+class TargetMarket(str, Enum):
+    """Course-level learner market context for examples and practical advice.
+
+    Default EGYPT: Egyptian/Arab practical market realism (not US/EU translation).
+    GLOBAL: avoid over-localizing; still ban literal-translation tone.
+    CUSTOM: respect special_notes / brief for market; still evergreen + clean Arabic.
+    """
+
+    EGYPT = "egypt"
+    ARAB_MARKET = "arab_market"
+    GLOBAL = "global"
+    CUSTOM = "custom"

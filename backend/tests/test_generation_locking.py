@@ -49,12 +49,12 @@ def _create_course(client) -> int:
     return response.json()["id"]
 
 
-def test_generate_returns_409_when_a_job_is_already_pending(tmp_path, monkeypatch):
+def test_generate_returns_existing_when_a_job_is_already_pending(tmp_path, monkeypatch):
     client, engine = _make_client(tmp_path, monkeypatch)
     course_id = _create_course(client)
 
     with Session(engine) as session:
-        generation_jobs.create(
+        job = generation_jobs.create(
             session,
             course_id=course_id,
             status=JobStatus.PENDING,
@@ -62,34 +62,41 @@ def test_generate_returns_409_when_a_job_is_already_pending(tmp_path, monkeypatc
             progress_percent=0,
             log_json=[],
         )
+        jid = job.id
 
     response = client.post(f"/courses/{course_id}/generate")
 
-    assert response.status_code == 409
-    assert "already in progress" in response.json()["detail"]
+    assert response.status_code == 200
+    assert response.json()["id"] == jid
 
     with Session(engine) as session:
         jobs = generation_jobs.list(session, course_id=course_id)
     assert len(jobs) == 1  # no second job was created
 
 
-def test_generate_returns_409_when_a_job_is_already_running(tmp_path, monkeypatch):
+def test_generate_returns_existing_when_a_job_is_already_running(tmp_path, monkeypatch):
     client, engine = _make_client(tmp_path, monkeypatch)
     course_id = _create_course(client)
 
     with Session(engine) as session:
-        generation_jobs.create(
+        job = generation_jobs.create(
             session,
             course_id=course_id,
             status=JobStatus.RUNNING,
             current_stage="generating",
-            progress_percent=40,
+            progress_percent=20,
             log_json=[],
         )
+        jid = job.id
 
     response = client.post(f"/courses/{course_id}/generate")
 
-    assert response.status_code == 409
+    assert response.status_code == 200
+    assert response.json()["id"] == jid
+
+    with Session(engine) as session:
+        jobs = generation_jobs.list(session, course_id=course_id)
+    assert len(jobs) == 1
 
 
 def test_regenerate_from_scratch_still_works_once_previous_job_is_terminal(tmp_path, monkeypatch):

@@ -105,7 +105,7 @@ export default function LoginPage() {
 
   return (
     <div className="mx-auto flex max-w-sm flex-col gap-6">
-      <PageHeader title="Sign in" description="Rukn Course Studio - internal access only." />
+      <PageHeader title="Sign in" description="ROKN Course Studio - internal access only." />
 
       <Card>
         <form onSubmit={handleSubmit} className="flex flex-col gap-4">

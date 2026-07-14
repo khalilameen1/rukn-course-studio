@@ -15,8 +15,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Rukn Course Studio",
-  description: "Internal tool for generating Rukn practical-skill courses as DOCX.",
+  title: "ROKN Course Studio",
+  description: "Internal tool for generating ROKN practical-skill courses as DOCX.",
 };
 
 export default function RootLayout({
