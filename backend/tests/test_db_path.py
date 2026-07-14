@@ -112,6 +112,12 @@ def test_frontend_origin_is_merged_into_cors_origins():
     assert "https://rukn-frontend.onrender.com" in settings.cors_origins
 
 
+def test_frontend_origin_trailing_slash_is_normalized():
+    settings = Settings(frontend_origin="https://rukn-frontend.onrender.com/")
+    assert settings.frontend_origin == "https://rukn-frontend.onrender.com"
+    assert "https://rukn-frontend.onrender.com/" not in settings.cors_origins
+
+
 def test_health_endpoint_never_exposes_database_url_or_credentials(monkeypatch):
     """Regression guard: /health must never leak DATABASE_URL (or any
     credentials embedded in it), even if a real Postgres URL with a

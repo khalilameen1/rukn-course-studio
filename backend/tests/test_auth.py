@@ -178,6 +178,18 @@ def test_auth_rejected_response_still_carries_cors_headers():
     assert response.headers["access-control-allow-origin"] == "http://localhost:3000"
 
 
+def test_login_failure_still_carries_cors_headers():
+    """Wrong password must return 401 *with* CORS headers so the UI can
+    show the real message instead of Network/CORS/API URL error."""
+    response = client.post(
+        "/auth/login",
+        json={"username": "admin", "password": "wrong"},
+        headers={"Origin": "http://localhost:3000"},
+    )
+    assert response.status_code == 401
+    assert response.headers["access-control-allow-origin"] == "http://localhost:3000"
+
+
 def test_diagnostics_is_public_even_without_token():
     response = client.get("/auth/diagnostics")
 

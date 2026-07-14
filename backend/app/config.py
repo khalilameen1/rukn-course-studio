@@ -3,6 +3,8 @@ from pathlib import Path, PurePosixPath
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.cors_origins import normalize_cors_origins, normalize_origin
+
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 REPO_ROOT = BACKEND_DIR.parent
 STORAGE_DIR = REPO_ROOT / "storage"
@@ -85,6 +87,9 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _merge_frontend_origin(self) -> "Settings":
+        # Trailing slash / path paste mistakes break CORS exact-match.
+        self.frontend_origin = normalize_origin(self.frontend_origin)
+        self.cors_origins = normalize_cors_origins(list(self.cors_origins or []))
         if self.frontend_origin and self.frontend_origin not in self.cors_origins:
             self.cors_origins = [*self.cors_origins, self.frontend_origin]
         return self
