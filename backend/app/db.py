@@ -214,6 +214,7 @@ def _ensure_generation_job_columns() -> None:
         "research_memory_reuse_count": "INTEGER DEFAULT 0",
         "waste_warnings_json": "TEXT",
         "usage_by_stage_json": "TEXT",
+        "cancel_requested": BOOLEAN_NOT_NULL_DEFAULT_FALSE,
     }
     try:
         inspector = inspect(engine)

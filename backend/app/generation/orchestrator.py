@@ -71,6 +71,8 @@ from app.generation.budget_guard import (
     check_runaway_hard_cap,
     compute_budget_warning,
 )
+from app.generation import cancellation as generation_cancellation
+from app.generation.cancellation import GenerationCanceled
 from app.generation.errors import classify_provider_error, error_message_for
 from app.security.secret_redaction import redact_secrets
 from app.generation.output_scoring import OutputScoreReport, score_final_course
@@ -405,7 +407,7 @@ def run_generation(
     preset_value: str = course.generation_preset.value
     needs_review_total = 0
 
-    def flush(**job_fields) -> None:
+    def flush(**job_fields) -> GenerationJob:
         nonlocal job
         refresh_usage = bool(job_fields.pop("refresh_usage", False))
         # Persist heartbeat whenever we checkpoint saved work.
@@ -427,6 +429,18 @@ def run_generation(
         if refresh_usage:
             # Optional emergency hard cap (disabled unless AI_RUNAWAY_HARD_CAP_USD set).
             check_runaway_hard_cap(session, job_id=job.id, course_id=course_id)
+        return job
+
+    def _abort_if_canceled() -> None:
+        generation_cancellation.stop_job_if_cancel_requested(
+            session,
+            job,
+            course_id,
+            logs,
+            flush,
+            usable_sources=usable_sources,
+            rules_context=rules_context,
+        )
 
     try:
         # --- Steps 1-3: load context -----------------------------------
@@ -626,6 +640,7 @@ def run_generation(
             progress_percent=5,
             last_progress_message=PROGRESS_PLANNING_MAP,
         )
+        _abort_if_canceled()
 
         # --- Steps 4-5: build (or convert) the course map ---------------
         # Both the "manual map supplied" and "generate from scratch" cases
@@ -803,6 +818,7 @@ def run_generation(
                 )
 
                 lesson_n = reels_done + 1
+                _abort_if_canceled()
                 flush(
                     current_stage="generating",
                     current_module_index=module_index + 1,
@@ -897,8 +913,10 @@ def run_generation(
                     ),
                     refresh_usage=True,
                 )
+                _abort_if_canceled()
 
                 if reels_done % 5 == 0:
+                    _abort_if_canceled()
                     flush(current_stage="reviewing_repetition")
                     window = all_reels[-5:]
                     result = provider.review_five_reels(
@@ -933,6 +951,7 @@ def run_generation(
                 )
 
             flush(current_stage="reviewing_repetition")
+            _abort_if_canceled()
             module_result = provider.review_module(
                 ReviewModuleInput(
                     module=module,
@@ -959,6 +978,7 @@ def run_generation(
                 pending_pair = (module, module_reels)
             else:
                 prev_module, prev_reels = pending_pair
+                _abort_if_canceled()
                 flush(current_stage="reviewing_repetition")
                 two_result = provider.review_two_modules(
                     ReviewTwoModulesInput(
@@ -985,6 +1005,8 @@ def run_generation(
         if pending_pair is not None:
             logs.append({"step": "review_2modules", "skipped": "unpaired trailing module"})
             flush()
+
+        _abort_if_canceled()
 
         # --- Step 12: final review ---------------------------------------
         final_result = provider.final_review(
@@ -1194,6 +1216,8 @@ def run_generation(
             refresh_usage=True,
         )
 
+    except GenerationCanceled as canceled_exc:
+        return canceled_exc.job
     except Exception as exc:  # noqa: BLE001 - convert any failure into a FAILED/PARTIAL job
         # Never persist secrets or full private prompts in log_json.
         logs.append(

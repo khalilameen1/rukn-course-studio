@@ -34,6 +34,7 @@ class GenerationJobRead(BaseModel):
     id: int
     course_id: int
     status: JobStatus
+    cancel_requested: bool = False
     current_stage: Optional[str]
     progress_percent: int
     output_docx_path: Optional[str]

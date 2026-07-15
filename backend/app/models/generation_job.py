@@ -27,6 +27,9 @@ class GenerationJob(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     course_id: int = Field(foreign_key="courses.id", index=True)
     status: JobStatus = Field(default=JobStatus.PENDING)
+    # Set by POST /cancel while the worker is still running; orchestrator
+    # checks between stages and finalizes to canceled/partial when safe.
+    cancel_requested: bool = Field(default=False)
     current_stage: Optional[str] = None
     progress_percent: int = Field(default=0)
     log_json: list[dict[str, Any]] = Field(

@@ -243,11 +243,13 @@ def test_cancel_releases_lock(tmp_path, monkeypatch):
 
     res = client.post(f"/courses/{cid}/generate/{jid}/cancel")
     assert res.status_code == 200
-    assert res.json()["status"] == "canceled"
-    # Now a new generate can start (FakeProvider via default)
-    monkeypatch.setattr(orch.settings, "storage_outputs_dir", tmp_path / "out")
+    body = res.json()
+    assert body["status"] == "running"
+    assert body["cancel_requested"] is True
+    # Lock stays held while the worker is still active.
     res2 = client.post(f"/courses/{cid}/generate")
-    assert res2.status_code == 201
+    assert res2.status_code == 200
+    assert res2.json()["id"] == jid
 
 
 def test_schema_validation_rejects_bad_payload():

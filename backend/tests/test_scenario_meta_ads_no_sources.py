@@ -194,6 +194,7 @@ def test_download_latest_docx_via_real_api_endpoints(tmp_path, monkeypatch):
         "id",
         "course_id",
         "status",
+        "cancel_requested",
         "current_stage",
         "progress_percent",
         "output_docx_path",

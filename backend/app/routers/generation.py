@@ -8,6 +8,7 @@ from app.ai.factory import AIProviderConfigError
 from app.config import settings
 from app.crud import ai_usage_events, course_versions, courses, generation_jobs
 from app.db import get_session
+from app.generation.cancellation import CANCEL_REQUESTED_MESSAGE, request_cancel
 from app.generation.generation_state import ACTIVE_LOCK_STATUSES, is_active_lock_status
 from app.generation.orchestrator import run_generation_job
 from app.models.enums import JobStatus
@@ -144,7 +145,12 @@ def latest_generation_job(course_id: int, session: Session = Depends(get_session
 def cancel_generation(
     course_id: int, job_id: int, request: Request, session: Session = Depends(get_session)
 ):
-    """Mark an active job canceled and release the generation lock."""
+    """Request cooperative cancel for an active job.
+
+    Does not release the generation lock until the orchestrator stops between
+    stages. While the worker is still running, status stays active and
+    `cancel_requested` is true.
+    """
     from app.services.audit import record_audit
 
     get_course_or_404(session, course_id)
@@ -153,13 +159,15 @@ def cancel_generation(
         raise HTTPException(status_code=404, detail="Generation job not found")
     if not is_active_lock_status(job.status):
         return job
-    updated = generation_jobs.update(
-        session,
-        job_id,
-        status=JobStatus.CANCELED,
-        current_stage="canceled",
-        last_progress_message="Generation canceled",
-    )
+    if job.cancel_requested:
+        return job
+    updated = request_cancel(session, job_id)
+    if updated.last_progress_message != CANCEL_REQUESTED_MESSAGE:
+        updated = generation_jobs.update(
+            session,
+            job_id,
+            last_progress_message=CANCEL_REQUESTED_MESSAGE,
+        )
     record_audit(
         session,
         action="generation_cancel",

@@ -138,6 +138,7 @@ export interface GenerationJob {
   id: number;
   course_id: number;
   status: JobStatus;
+  cancel_requested?: boolean;
   current_stage: string | null;
   progress_percent: number;
   output_docx_path: string | null;

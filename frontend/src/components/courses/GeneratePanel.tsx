@@ -145,8 +145,10 @@ function GenerationStatusPanel({ job }: { job: GenerationJob }) {
     : -1;
   const isDone = job.status === "completed" || job.current_stage === "done";
   const currentLabel =
-    job.last_progress_message ||
-    (job.current_stage ? STAGE_LABELS[job.current_stage] ?? job.current_stage : "Preparing");
+    job.cancel_requested && job.status === "running"
+      ? "Cancel requested. The current step may finish before the run stops."
+      : job.last_progress_message ||
+        (job.current_stage ? STAGE_LABELS[job.current_stage] ?? job.current_stage : "Preparing");
 
   const completedSteps = PROGRESS_STEPS.filter((_, i) => isDone || i < currentIndex).map(
     (s) => s.label,
@@ -319,8 +321,10 @@ export default function GeneratePanel({
     setError(null);
     try {
       const canceled = await api.cancelGeneration(courseId, job.id);
-      if (pollRef.current) clearInterval(pollRef.current);
       updateJob(canceled);
+      if (!TERMINAL_STATUSES.has(canceled.status)) {
+        pollJob(canceled.id);
+      }
     } catch (err) {
       setError(formatApiErrorForDisplay(err));
     } finally {
