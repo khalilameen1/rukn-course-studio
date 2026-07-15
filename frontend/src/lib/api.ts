@@ -53,38 +53,73 @@ export class ApiError extends Error {
   }
 }
 
-/**
- * User-facing diagnostics for Generation / AI Usage failures.
- * Never includes token values or secrets — only whether a token was present.
- */
-export function formatApiErrorForDisplay(err: unknown): string {
-  if (err instanceof ApiError) {
-    if (err.status === 401) {
-      return "Session expired or not authenticated. Please log in again.";
-    }
-    if (err.status === 404) {
-      return `API route not found: ${err.method} ${err.path}`;
-    }
-    if (err.isNetworkError) {
-      return (
-        `Browser could not reach this endpoint. Check CORS/preflight for ` +
-        `${err.method} ${err.path}. (token=${err.tokenPresent})`
-      );
-    }
-    const statusPart = err.status != null ? `status ${err.status}` : "no status";
-    const detail = err.message?.trim() ? err.message : "Request failed";
-    return (
-      `${err.method} ${err.path} — ${statusPart} — token=${err.tokenPresent} — ${detail}`
-    );
+const LOGIN_PATH = "/auth/login";
+const NETWORK_ERROR_MESSAGE = "Network/CORS/API URL error";
+
+function normalizeApiDetail(detail: unknown): string {
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    return detail
+      .map((item) => {
+        if (typeof item === "string") return item;
+        if (item && typeof item === "object" && "msg" in item) {
+          return String((item as { msg: unknown }).msg);
+        }
+        return JSON.stringify(item);
+      })
+      .join("; ");
   }
-  if (err instanceof Error) {
-    return err.message;
+  if (detail && typeof detail === "object") {
+    if ("msg" in detail) return String((detail as { msg: unknown }).msg);
+    if ("detail" in detail) return normalizeApiDetail((detail as { detail: unknown }).detail);
+    return JSON.stringify(detail);
   }
   return "Request failed";
 }
 
-const LOGIN_PATH = "/auth/login";
-const NETWORK_ERROR_MESSAGE = "Network/CORS/API URL error";
+/**
+ * Short, user-facing error copy for product surfaces (Generate, courses, AI usage).
+ * Deployment diagnostics on /login keep richer detail via describeError().
+ */
+export function formatApiErrorForDisplay(err: unknown): string {
+  if (err instanceof ApiError) {
+    if (err.status === 401) {
+      return "Session expired. Please sign in again.";
+    }
+    if (err.isNetworkError) {
+      return "Could not reach the server. Check your connection or API URL.";
+    }
+    if (err.status === 403) {
+      return err.message || "You do not have permission for this action.";
+    }
+    if (err.status === 404) {
+      return err.message || "The requested item was not found.";
+    }
+    if (err.status === 409) {
+      return err.message || "Another action is already in progress.";
+    }
+    if (err.status === 422) {
+      return err.message || "Please check your input and try again.";
+    }
+    if (err.status === 429) {
+      return "Too many requests. Please wait a moment and try again.";
+    }
+    if (err.status === 503) {
+      return err.message || "The AI provider is not configured or unavailable.";
+    }
+    if (err.status != null && err.status >= 500) {
+      return "Something went wrong on the server. Try again in a moment.";
+    }
+    return err.message || "Request failed";
+  }
+  if (err instanceof Error) {
+    if (err.message === NETWORK_ERROR_MESSAGE) {
+      return "Could not reach the server. Check your connection or API URL.";
+    }
+    return err.message;
+  }
+  return "Request failed";
+}
 
 async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
   const isFormData = init.body instanceof FormData;
@@ -132,7 +167,7 @@ async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
     let detail = res.statusText;
     try {
       const data = await res.json();
-      if (data?.detail) detail = data.detail;
+      if (data?.detail != null) detail = normalizeApiDetail(data.detail);
     } catch {
       // response body wasn't JSON; keep statusText
     }
@@ -194,7 +229,7 @@ async function downloadFile(path: string, filename: string): Promise<void> {
     let detail = res.statusText;
     try {
       const data = await res.json();
-      if (data?.detail) detail = data.detail;
+      if (data?.detail != null) detail = normalizeApiDetail(data.detail);
     } catch {
       // response body wasn't JSON; keep statusText
     }
@@ -351,6 +386,10 @@ export const api = {
   getJob: (jobId: number) => apiFetch<GenerationJob>(`/jobs/${jobId}`),
   getLatestJob: (courseId: number) =>
     apiFetch<GenerationJob>(`/courses/${courseId}/generate/latest`),
+  cancelGeneration: (courseId: number, jobId: number) =>
+    apiFetch<GenerationJob>(`/courses/${courseId}/generate/${jobId}/cancel`, {
+      method: "POST",
+    }),
   listVersions: (courseId: number) =>
     apiFetch<CourseVersion[]>(`/courses/${courseId}/versions`),
   downloadLatestDocx: (courseId: number, filename: string) =>

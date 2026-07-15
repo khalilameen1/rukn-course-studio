@@ -54,11 +54,13 @@ export default function KnowledgeItemGrid({
   onEdit,
   onDelete,
   onActivate,
+  actionBusy = null,
 }: {
   items: AdminKnowledgeItem[];
   onEdit: (item: AdminKnowledgeItem) => void;
   onDelete: (item: AdminKnowledgeItem) => void;
   onActivate: (item: AdminKnowledgeItem) => void;
+  actionBusy?: string | null;
 }) {
   return (
     <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -87,19 +89,28 @@ export default function KnowledgeItemGrid({
             </div>
 
             <div className="mt-1 flex gap-3 text-sm">
-              <button onClick={() => onEdit(item)} className="hover:underline">
+              <button
+                onClick={() => onEdit(item)}
+                disabled={Boolean(actionBusy)}
+                className="hover:underline disabled:opacity-50"
+              >
                 Edit
               </button>
               {!item.is_active ? (
-                <button onClick={() => onActivate(item)} className="hover:underline">
-                  Activate
+                <button
+                  onClick={() => onActivate(item)}
+                  disabled={Boolean(actionBusy)}
+                  className="hover:underline disabled:opacity-50"
+                >
+                  {actionBusy === `activate-${item.id}` ? "Activating…" : "Activate"}
                 </button>
               ) : null}
               <button
                 onClick={() => onDelete(item)}
-                className="text-red-600 hover:underline dark:text-red-400"
+                disabled={Boolean(actionBusy)}
+                className="text-red-600 hover:underline disabled:opacity-50 dark:text-red-400"
               >
-                Delete
+                {actionBusy === `delete-${item.id}` ? "Deleting…" : "Delete"}
               </button>
             </div>
           </Card>

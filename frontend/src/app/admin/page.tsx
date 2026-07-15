@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { api } from "@/lib/api";
+import { api, formatApiErrorForDisplay } from "@/lib/api";
 import type { AdminKnowledgeItem } from "@/lib/types";
 import KnowledgeItemForm, {
   type KnowledgeItemFormValues,
@@ -17,6 +17,7 @@ export default function AdminKnowledgePage() {
   const [error, setError] = useState<string | null>(null);
   const [editingItem, setEditingItem] = useState<AdminKnowledgeItem | null>(null);
   const [showInactive, setShowInactive] = useState(false);
+  const [actionBusy, setActionBusy] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -24,7 +25,7 @@ export default function AdminKnowledgePage() {
     try {
       setItems(await api.listKnowledgeItems({ includeInactive: showInactive }));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load knowledge items");
+      setError(formatApiErrorForDisplay(err));
     } finally {
       setLoading(false);
     }
@@ -36,6 +37,8 @@ export default function AdminKnowledgePage() {
   }, [refresh]);
 
   async function handleCleanup() {
+    if (actionBusy) return;
+    setActionBusy("cleanup");
     try {
       const preview = await api.cleanupKnowledgeDuplicates({ dryRun: true, confirm: false });
       const count =
@@ -55,29 +58,40 @@ export default function AdminKnowledgePage() {
       alert(report.message);
       await refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Cleanup failed");
+      setError(formatApiErrorForDisplay(err));
+    } finally {
+      setActionBusy(null);
     }
   }
 
   async function handleSubmit(values: KnowledgeItemFormValues) {
-    const payload = {
-      key: values.key,
-      title: values.title,
-      item_type: values.item_type,
-      content_text: values.item_type === "docx_template" ? null : values.content_text,
-      file_path: values.item_type === "docx_template" ? values.file_path : null,
-    };
+    if (actionBusy) return;
+    setActionBusy(editingItem ? `save-${editingItem.id}` : "create");
+    try {
+      const payload = {
+        key: values.key,
+        title: values.title,
+        item_type: values.item_type,
+        content_text: values.item_type === "docx_template" ? null : values.content_text,
+        file_path: values.item_type === "docx_template" ? values.file_path : null,
+      };
 
-    if (editingItem) {
-      await api.updateKnowledgeItem(editingItem.id, payload);
-      setEditingItem(null);
-    } else {
-      await api.createKnowledgeItem(payload);
+      if (editingItem) {
+        await api.updateKnowledgeItem(editingItem.id, payload);
+        setEditingItem(null);
+      } else {
+        await api.createKnowledgeItem(payload);
+      }
+      await refresh();
+    } catch (err) {
+      setError(formatApiErrorForDisplay(err));
+    } finally {
+      setActionBusy(null);
     }
-    await refresh();
   }
 
   async function handleDelete(item: AdminKnowledgeItem) {
+    if (actionBusy) return;
     if (
       !confirm(
         `Archive "${item.title}" (deactivate)? The row is kept as inactive. ` +
@@ -86,18 +100,33 @@ export default function AdminKnowledgePage() {
     ) {
       return;
     }
-    await api.deleteKnowledgeItem(item.id, {
-      confirm: true,
-      dryRun: false,
-      purge: false,
-    });
-    if (editingItem?.id === item.id) setEditingItem(null);
-    await refresh();
+    setActionBusy(`delete-${item.id}`);
+    try {
+      await api.deleteKnowledgeItem(item.id, {
+        confirm: true,
+        dryRun: false,
+        purge: false,
+      });
+      if (editingItem?.id === item.id) setEditingItem(null);
+      await refresh();
+    } catch (err) {
+      setError(formatApiErrorForDisplay(err));
+    } finally {
+      setActionBusy(null);
+    }
   }
 
   async function handleActivate(item: AdminKnowledgeItem) {
-    await api.activateKnowledgeItem(item.id);
-    await refresh();
+    if (actionBusy) return;
+    setActionBusy(`activate-${item.id}`);
+    try {
+      await api.activateKnowledgeItem(item.id);
+      await refresh();
+    } catch (err) {
+      setError(formatApiErrorForDisplay(err));
+    } finally {
+      setActionBusy(null);
+    }
   }
 
   return (
@@ -120,8 +149,13 @@ export default function AdminKnowledgePage() {
           />
           Show inactive / archived versions
         </label>
-        <button type="button" className="btn-secondary" onClick={handleCleanup}>
-          Clean duplicate active items
+        <button
+          type="button"
+          className="btn-secondary"
+          disabled={Boolean(actionBusy)}
+          onClick={handleCleanup}
+        >
+          {actionBusy === "cleanup" ? "Working…" : "Clean duplicate active items"}
         </button>
       </div>
 
@@ -138,6 +172,7 @@ export default function AdminKnowledgePage() {
           onEdit={setEditingItem}
           onDelete={handleDelete}
           onActivate={handleActivate}
+          actionBusy={actionBusy}
         />
       )}
 

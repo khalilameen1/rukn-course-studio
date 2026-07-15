@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { api, ApiError } from "@/lib/api";
+import { api, ApiError, formatApiErrorForDisplay } from "@/lib/api";
 import { setToken } from "@/lib/auth";
 import { API_BASE_URL, API_BASE_URL_CONFIGURED } from "@/lib/config";
 import type { DiagnosticsResponse } from "@/lib/types";
@@ -97,7 +97,7 @@ export default function LoginPage() {
       setToken(access_token);
       router.replace("/");
     } catch (err) {
-      setError(describeError(err));
+      setError(formatApiErrorForDisplay(err));
     } finally {
       setSubmitting(false);
     }
@@ -155,6 +155,25 @@ export default function LoginPage() {
         <CheckLine label="Backend /auth/diagnostics" check={diagnostics} />
         {diagnosticsData ? (
           <>
+            <p>
+              ai_provider: {diagnosticsData.ai_provider} · ready=
+              {String(diagnosticsData.ai_provider_ready)}
+              {diagnosticsData.ai_model_name ? ` · model=${diagnosticsData.ai_model_name}` : ""}
+            </p>
+            {diagnosticsData.provider_reachable ? (
+              <p>
+                provider_reachable: {diagnosticsData.provider_reachable}
+                {diagnosticsData.last_successful_request_at
+                  ? ` · last ok ${new Date(diagnosticsData.last_successful_request_at).toLocaleString()}`
+                  : ""}
+              </p>
+            ) : null}
+            {diagnosticsData.last_error_message ? (
+              <p>
+                last_error: {diagnosticsData.last_error_category ?? "unknown"} —{" "}
+                {diagnosticsData.last_error_message}
+              </p>
+            ) : null}
             <p>
               auth_enabled: {String(diagnosticsData.auth_enabled)} · database:{" "}
               {diagnosticsData.database_backend}

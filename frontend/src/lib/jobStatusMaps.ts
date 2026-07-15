@@ -21,7 +21,7 @@ export const JOB_STATUS_LABEL: Record<JobStatus, string> = {
   pending: "Pending",
   running: "Running",
   paused: "Paused",
-  partial: "Partial",
+  partial: "Stopped early",
   failed: "Failed",
   canceled: "Canceled",
   completed: "Completed",
@@ -32,4 +32,6 @@ export const JOB_TERMINAL_STATUSES: ReadonlySet<JobStatus> = new Set([
   "failed",
   "partial",
   "canceled",
+  // Treat paused as terminal in the UI until cooperative cancel/resume exists.
+  "paused",
 ]);

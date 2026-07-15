@@ -242,6 +242,7 @@ export default function GeneratePanel({
 }) {
   const [job, setJob] = useState<GenerationJob | null>(null);
   const [starting, setStarting] = useState(false);
+  const [canceling, setCanceling] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [qualityMode, setQualityMode] = useState<GenerationQualityMode>("premium");
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -304,6 +305,24 @@ export default function GeneratePanel({
     }, 1500);
   }
 
+  async function handleCancel() {
+    if (!job) return;
+    if (!confirm("Stop this generation run? Work already saved may still be available as a partial DOCX.")) {
+      return;
+    }
+    setCanceling(true);
+    setError(null);
+    try {
+      const canceled = await api.cancelGeneration(courseId, job.id);
+      if (pollRef.current) clearInterval(pollRef.current);
+      updateJob(canceled);
+    } catch (err) {
+      setError(formatApiErrorForDisplay(err));
+    } finally {
+      setCanceling(false);
+    }
+  }
+
   async function handleGenerate() {
     setStarting(true);
     setError(null);
@@ -352,17 +371,29 @@ export default function GeneratePanel({
         </p>
       </div>
 
-      <button
-        onClick={handleGenerate}
-        disabled={starting || isRunning}
-        className="btn-primary w-fit"
-      >
-        {starting || isRunning
-          ? "Generating..."
-          : hasUnresolvedIssue
-            ? "Regenerate from Scratch"
-            : "Generate Final DOCX"}
-      </button>
+      <div className="flex flex-wrap items-center gap-3">
+        <button
+          onClick={handleGenerate}
+          disabled={starting || isRunning || canceling}
+          className="btn-primary w-fit"
+        >
+          {starting || isRunning
+            ? "Generating..."
+            : hasUnresolvedIssue
+              ? "Regenerate from Scratch"
+              : "Generate Final DOCX"}
+        </button>
+        {isRunning ? (
+          <button
+            type="button"
+            onClick={handleCancel}
+            disabled={canceling || starting}
+            className="btn-secondary w-fit"
+          >
+            {canceling ? "Stopping…" : "Stop generation"}
+          </button>
+        ) : null}
+      </div>
 
       {error ? <p className="text-sm text-red-600 dark:text-red-400">{error}</p> : null}
 

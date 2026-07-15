@@ -114,6 +114,8 @@ export interface CourseSource {
   extracted_text: string | null;
   priority: Priority;
   status: string;
+  /** Human-readable status from backend computed field. */
+  status_message?: string;
   include_in_generation?: boolean;
   source_hash?: string | null;
   display_title?: string;
@@ -218,6 +220,11 @@ export interface DiagnosticsResponse {
   // never a credential/key value.
   ai_provider: string;
   ai_provider_ready: boolean;
+  ai_model_name?: string;
+  provider_reachable?: string;
+  last_successful_request_at?: string | null;
+  last_error_category?: string | null;
+  last_error_message?: string | null;
 }
 
 /** Estimated app usage only — never a real Anthropic account balance. */
@@ -237,4 +244,9 @@ export interface CourseAIUsage {
   course_id: number;
   estimated_cost_usd: number;
   event_count: number;
+  cost_per_completed_lesson?: number | null;
+  web_searches_count?: number;
+  source_memories_reused?: number;
+  research_memory_reuses?: number;
+  warnings?: string[];
 }

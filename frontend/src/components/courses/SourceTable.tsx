@@ -6,6 +6,8 @@ import Card from "@/components/ui/Card";
 import EmptyState from "@/components/ui/EmptyState";
 import StatusBadge from "@/components/ui/StatusBadge";
 import { SOURCE_CATEGORY_HELPERS, SOURCE_CATEGORY_LABELS, SOURCE_CATEGORY_OPTIONS } from "@/lib/sourceCategories";
+import { sourceStatusLabel } from "@/lib/sourceStatusMaps";
+import { formatApiErrorForDisplay } from "@/lib/api";
 
 export default function SourceTable({
   sources,
@@ -32,7 +34,7 @@ export default function SourceTable({
     } catch (err) {
       setRowErrors((prev) => ({
         ...prev,
-        [source.id]: err instanceof Error ? err.message : "Failed to update type",
+        [source.id]: formatApiErrorForDisplay(err),
       }));
     } finally {
       setSavingId(null);
@@ -80,7 +82,7 @@ export default function SourceTable({
               </td>
               <td className="px-4 py-3 text-muted">{source.priority}</td>
               <td className="px-4 py-3">
-                <StatusBadge label={source.status} tone="neutral" />
+                <StatusBadge label={sourceStatusLabel(source)} tone="neutral" />
               </td>
               <td className="px-4 py-3">
                 <div className="flex items-center gap-3">

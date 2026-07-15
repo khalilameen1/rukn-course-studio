@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import { api } from "@/lib/api";
+import { api, formatApiErrorForDisplay } from "@/lib/api";
 import type {
   Course,
   CourseSource,
@@ -27,6 +27,11 @@ import EmptyState from "@/components/ui/EmptyState";
 import PageHeader from "@/components/ui/PageHeader";
 import SectionPanel from "@/components/ui/SectionPanel";
 import StatusBadge from "@/components/ui/StatusBadge";
+import {
+  COURSE_DISPLAY_STATUS_LABEL,
+  COURSE_DISPLAY_STATUS_TONE,
+  deriveCourseDisplayStatus,
+} from "@/lib/courseDisplayStatus";
 import { SOURCE_CATEGORY_LABELS } from "@/lib/sourceCategories";
 import { GENERATION_PRESET_LABELS } from "@/lib/generationPresets";
 
@@ -53,6 +58,7 @@ function Field({ label, value }: { label: string; value: string }) {
 export default function CourseDetailPage() {
   const params = useParams<{ id: string }>();
   const courseId = Number(params.id);
+  const invalidId = !Number.isFinite(courseId) || courseId <= 0;
 
   const [course, setCourse] = useState<Course | null>(null);
   const [sources, setSources] = useState<CourseSource[]>([]);
@@ -73,6 +79,11 @@ export default function CourseDetailPage() {
   const [courseUsage, setCourseUsage] = useState<{ cost: number; events: number } | null>(null);
 
   const loadAll = useCallback(async () => {
+    if (invalidId) {
+      setLoading(false);
+      setError("Invalid course link.");
+      return;
+    }
     setError(null);
     try {
       const [courseData, sourcesData, versionsData] = await Promise.all([
@@ -90,11 +101,11 @@ export default function CourseDetailPage() {
         // optional signal
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load course");
+      setError(formatApiErrorForDisplay(err));
     } finally {
       setLoading(false);
     }
-  }, [courseId]);
+  }, [courseId, invalidId]);
 
   useEffect(() => {
     // Standard fetch-on-mount; `loadAll` is also reused after mutations
@@ -104,6 +115,7 @@ export default function CourseDetailPage() {
   }, [loadAll]);
 
   useEffect(() => {
+    if (invalidId) return;
     // Lightweight Inputs/Output panel signals - failures here shouldn't
     // block the rest of the workspace from loading.
     api
@@ -120,7 +132,7 @@ export default function CourseDetailPage() {
       .getCourseAIUsage(courseId)
       .then((usage) => setCourseUsage({ cost: usage.estimated_cost_usd, events: usage.event_count }))
       .catch(() => setCourseUsage(null));
-  }, [courseId]);
+  }, [courseId, invalidId]);
 
   async function handleBriefSubmit(values: CourseFormValues) {
     const updated = await api.updateCourse(courseId, {
@@ -171,7 +183,7 @@ export default function CourseDetailPage() {
     try {
       await api.downloadLatestDocx(courseId, `course_${courseId}_v${version.version_number}.docx`);
     } catch (err) {
-      setDownloadError(err instanceof Error ? err.message : "Download failed");
+      setDownloadError(formatApiErrorForDisplay(err));
     } finally {
       setDownloadingLatest(false);
     }
@@ -183,10 +195,14 @@ export default function CourseDetailPage() {
     try {
       await api.downloadPartialDocx(jobId, `course_${courseId}_job_${jobId}_partial.docx`);
     } catch (err) {
-      setDownloadError(err instanceof Error ? err.message : "Download failed");
+      setDownloadError(formatApiErrorForDisplay(err));
     } finally {
       setDownloadingPartial(false);
     }
+  }
+
+  if (invalidId) {
+    return <p className="text-sm text-red-600 dark:text-red-400">Invalid course link.</p>;
   }
 
   if (loading) {
@@ -219,9 +235,20 @@ export default function CourseDetailPage() {
     .map(([category, count]) => `${count} ${SOURCE_CATEGORY_LABELS[category as SourceCategory]}`)
     .join(", ");
 
+  const displayStatus = deriveCourseDisplayStatus(
+    versions.length > 0,
+    currentJob?.status ?? null,
+  );
+
   return (
     <div className="flex flex-col gap-8">
-      <PageHeader title={course.title} description={course.audience} />
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <PageHeader title={course.title} description={course.audience} />
+        <StatusBadge
+          label={COURSE_DISPLAY_STATUS_LABEL[displayStatus]}
+          tone={COURSE_DISPLAY_STATUS_TONE[displayStatus]}
+        />
+      </div>
 
       <div className="grid gap-4 lg:grid-cols-3">
         <SectionPanel label="Inputs" description="Brief, sources, rules, preset" framed>
