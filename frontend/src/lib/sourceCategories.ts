@@ -41,13 +41,15 @@ export const SOURCE_CATEGORY_OPTIONS: SourceCategoryOption[] = [
   },
   {
     value: "raw_material",
-    label: "Raw / mixed material",
-    helper: "Unsorted material — the system will pick out only what's useful.",
+    label: "Raw / mixed material (let system classify)",
+    helper:
+      "Unsorted material — the system classifies topic fit and extracts only what is useful for this course.",
   },
   {
     value: "transcript",
-    label: "Transcript",
-    helper: "Spoken lesson/transcript for this course — knowledge only, never Admin Knowledge.",
+    label: "Transcript / knowledge for this course",
+    helper:
+      "Spoken transcript for this course. The system classifies topic fit: same-topic content becomes distilled raw material; off-topic content is used only for natural spoken Arabic calibration — never facts, hooks, or structure.",
   },
 ];
 

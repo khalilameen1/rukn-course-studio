@@ -128,3 +128,280 @@ body {
   padding: 0.85rem;
   box-shadow: var(--shadow-sm);
 }
+
+/* New Course workspace — NotebookLM / Google-style surfaces */
+.nc-step-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  border-radius: 9999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  padding: 0.35rem 0.85rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--muted);
+  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+}
+.nc-step-pill[data-active="true"] {
+  border-color: rgba(15, 118, 110, 0.35);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.nc-step-pill[data-done="true"] {
+  color: var(--foreground);
+}
+
+.nc-dropzone {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  min-height: 11rem;
+  border-radius: 1.25rem;
+  border: 2px dashed color-mix(in srgb, var(--border) 100%, transparent);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--surface) 96%, var(--accent-soft)) 0%,
+    var(--surface) 100%
+  );
+  padding: 1.5rem 1.25rem;
+  text-align: center;
+  cursor: pointer;
+  transition:
+    border-color 0.2s ease,
+    background 0.2s ease,
+    box-shadow 0.2s ease,
+    transform 0.15s ease;
+}
+.nc-dropzone:hover {
+  border-color: rgba(15, 118, 110, 0.35);
+  box-shadow: var(--shadow-md);
+}
+.nc-dropzone[data-active="true"] {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent-soft) 55%, var(--surface));
+  transform: scale(1.01);
+}
+
+.nc-chat-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 18rem;
+  max-height: 28rem;
+  border-radius: 1.25rem;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+.nc-chat-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1rem 1rem 0.5rem;
+}
+.nc-chat-bubble {
+  max-width: 92%;
+  margin-left: auto;
+  border-radius: 1.125rem 1.125rem 0.25rem 1.125rem;
+  background: linear-gradient(135deg, #0f766e 0%, #0d9488 100%);
+  color: #fff;
+  padding: 0.75rem 1rem;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  box-shadow: 0 2px 8px rgba(15, 118, 110, 0.2);
+}
+.nc-chat-bubble-meta {
+  margin-top: 0.35rem;
+  font-size: 0.6875rem;
+  opacity: 0.85;
+}
+.nc-composer {
+  border-top: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface-muted) 40%, var(--surface));
+  padding: 0.75rem 1rem 1rem;
+}
+.nc-composer-input {
+  width: 100%;
+  resize: none;
+  border: none;
+  background: transparent;
+  font-size: 0.9375rem;
+  line-height: 1.5;
+  outline: none;
+  min-height: 2.5rem;
+  max-height: 8rem;
+}
+.nc-source-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  border-radius: 1rem;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  padding: 0.75rem 0.85rem;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.nc-source-card:hover {
+  border-color: rgba(15, 118, 110, 0.25);
+  box-shadow: var(--shadow-sm);
+}
+
+.nc-field-label {
+  display: block;
+  margin-bottom: 0.35rem;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.nc-hero-input {
+  width: 100%;
+  border: none;
+  border-bottom: 2px solid var(--border);
+  background: transparent;
+  padding: 0.5rem 0 0.65rem;
+  font-size: 1.375rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+.nc-hero-input:focus {
+  border-bottom-color: var(--accent);
+}
+.nc-hero-input::placeholder {
+  color: color-mix(in srgb, var(--muted) 70%, transparent);
+  font-weight: 500;
+}
+
+.nc-map-editor {
+  min-height: 16rem;
+  width: 100%;
+  resize: vertical;
+  border-radius: 1rem;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface-muted) 35%, var(--surface));
+  padding: 1rem 1.1rem;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 0.8125rem;
+  line-height: 1.6;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.nc-map-editor:focus {
+  border-color: rgba(15, 118, 110, 0.45);
+  box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.1);
+}
+
+.nc-action-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 10;
+  margin: 0 -0.25rem;
+  border-radius: 1.25rem;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  backdrop-filter: blur(12px);
+  padding: 0.85rem 1.1rem;
+  box-shadow: 0 -4px 24px rgba(28, 31, 29, 0.06);
+}
+
+.nc-composer-card {
+  border-radius: 1.125rem;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  padding: 0.85rem 1rem;
+  box-shadow: var(--shadow-sm);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.nc-composer-card:focus-within {
+  border-color: rgba(15, 118, 110, 0.35);
+  box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.08);
+}
+.nc-composer-card-tools {
+  margin-bottom: 0.65rem;
+}
+.nc-composer-send {
+  display: flex;
+  height: 2.25rem;
+  width: 2.25rem;
+  shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  background: var(--accent);
+  color: var(--accent-foreground);
+  transition: opacity 0.15s ease;
+}
+.nc-composer-send:hover {
+  background: #0d5f58;
+}
+.nc-composer-send:disabled {
+  opacity: 0.4;
+}
+
+.nc-intent-option {
+  display: block;
+  cursor: pointer;
+  border-radius: 0.875rem;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  padding: 0.65rem 0.85rem;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.nc-intent-option:hover {
+  border-color: rgba(15, 118, 110, 0.25);
+}
+.nc-intent-option-active {
+  border-color: rgba(15, 118, 110, 0.45);
+  background: color-mix(in srgb, var(--accent-soft) 50%, var(--surface));
+}
+
+.nc-readiness-panel {
+  border-radius: 1.25rem;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface-muted) 35%, var(--surface));
+  padding: 1rem 1.1rem;
+  box-shadow: var(--shadow-sm);
+}
+
+.nc-error-panel {
+  border-radius: 1rem;
+  border: 1px solid color-mix(in srgb, #dc2626 25%, var(--border));
+  background: color-mix(in srgb, #fef2f2 55%, var(--surface));
+  padding: 0.85rem 1rem;
+}
+
+.nc-map-workspace {
+  border-radius: 1.125rem;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface-muted) 25%, var(--surface));
+  padding: 0.25rem;
+}
+.nc-map-workspace .nc-composer-input {
+  min-height: 14rem;
+  max-height: 28rem;
+  padding: 0.85rem 0.5rem;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 0.8125rem;
+  line-height: 1.65;
+}
+
+.nc-progress-card {
+  border-radius: 1rem;
+  border: 1px solid var(--border);
+  background: var(--surface-muted);
+  padding: 1rem 1.1rem;
+}
+.nc-progress-section-title {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}

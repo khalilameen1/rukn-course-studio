@@ -1,6 +1,7 @@
 """Persistent Source Memory — no full PDF in generation prompts."""
 
 from app.generation.prompt_compiler import SourceForCompiler, compile_source_context
+from app.generation.source_distillation import DISTILLED_LABEL
 from app.generation.source_memory_store import (
     build_source_memory_payload,
     compiler_text_from_memory,
@@ -29,7 +30,7 @@ def test_source_memory_built_once_without_full_prompt_dump():
     assert memory["facts"] or memory["summary"]
     snippet = format_memory_snippet(memory, query_text="ROAS attribution shop")
     assert len(snippet) < len(LONG_PDF) // 4
-    assert "Source memory" in snippet or "Summary" in snippet
+    assert DISTILLED_LABEL in snippet or "Summary" in snippet or "Useful concepts" in snippet
     assert LONG_PDF[:200] not in snippet or len(snippet) < 2000
 
 
@@ -66,7 +67,7 @@ def test_compile_context_uses_memory_not_full_pdf():
     assert len(excerpts) == 1
     assert len(excerpts[0].text) < len(LONG_PDF) // 4
     assert "UNTRUSTED_REFERENCE_MATERIAL" in excerpts[0].text
-    assert "Facts:" in excerpts[0].text or "Summary:" in excerpts[0].text
+    assert DISTILLED_LABEL in excerpts[0].text or "Useful concepts" in excerpts[0].text
 
 
 def test_web_research_reuses_cached_memory_without_repeat_search():

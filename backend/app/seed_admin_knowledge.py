@@ -1095,6 +1095,117 @@ Use mainly in review stages, final rewrite, and export sanity — not every
 prompt. Rejection/checklist layer only — never a writing template.
 """
 
+SOURCE_DISTILLATION_GATE = """# ROKN General Source Distillation Gate
+
+All course sources are raw material — not final authority and not a format/style
+model. V1 remains Teleprompter DOCX only. Never copy sources literally. Never
+inherit source format, tone, structure, filler, or market assumptions.
+
+## 1. Core rule
+Every source may be academic, shallow, outdated, US/Western, theoretical,
+repetitive, filler-heavy, poorly structured, or partially harmful. Extract only
+what serves the current course promise. Downgrade or discard the rest silently.
+
+## 2. Source distillation
+Extract only: useful concepts; accurate distinctions; learner objections;
+practical warnings; valid examples to rebuild; current relevant terminology;
+verified useful steps; gaps to cover; mistakes to avoid.
+Discard/downgrade: filler; repetition; weak examples; off-promise content;
+outdated claims; old tool behavior; US-only assumptions when Egypt/Arab context
+applies; academic theory that does not help application; surface advice; source
+structure that weakens the course; translated/stiff/non-ROKN language.
+
+## 3. Academic sources
+Academic sources may inform depth and accuracy. Final script must not sound
+academic. Convert theory to useful explanation, definitions to decision logic,
+abstract concepts to practical meaning, long discussion to what the learner
+needs now. Do not copy academic wording. Do not turn the course into a book
+chapter.
+
+## 4. Shallow sources
+A shallow source may still contain one useful point. Do not reject entirely.
+Extract useful candidate ideas only. Verify and rebuild. Do not inherit its
+shallowness, filler, or hype.
+
+## 5. Outdated sources
+If a source may be old: do not trust current tool behavior from it; check
+official docs for platform/tool behavior; keep durable principles only if still
+valid; remove or rewrite outdated steps. Official current documentation
+overrides old sources.
+
+## 6. Foreign-market sources
+If a source assumes US/Western market: do not copy assumptions blindly; adapt
+examples and advice to target market (default Egypt/Arab unless user chose
+otherwise); keep universal principles; rewrite execution for realistic local
+conditions (budget, channels, client behavior).
+
+## 7. Source format must not affect ROKN format
+No source may override: Teleprompter DOCX contract; ROKN spoken Egyptian Arabic;
+readability line breaks; no citations in final DOCX; no internal notes; no
+academic formatting; no article style; no source headings copied blindly; no
+course map copied blindly from source structure.
+
+## 8. Prompt compiler rule
+When using any source memory, treat it as **distilled raw material** only.
+The model receives: extracted useful points; relevance notes; outdated warnings;
+market adaptation notes; blocked content warnings — not the full source
+repeatedly, not the source as equal authority, not the source format.
+"""
+
+TRANSCRIPT_TOPIC_RELEVANCE_GATE = """# ROKN Transcript Topic Relevance Gate
+
+A transcript may be unrelated to the course topic or about the exact same topic.
+Never treat all transcripts the same. V1 remains Teleprompter DOCX only.
+
+## 1. Topic relevance classification
+For every transcript, classify topic relevance: same_topic, adjacent_topic,
+off_topic, unclear — even when the user chose Transcript or Raw material.
+
+## 2. Off-topic transcript
+If off_topic: Natural Colloquial Calibration only — avoid stiff, translated, or
+robotic Arabic. Do not use for facts, claims, examples, hooks, course map,
+lesson structure, terminology, recommendations, or tool behavior.
+
+## 3. Same-topic transcript
+If same_topic: may be course raw material. Extract useful concepts, learner
+objections, common mistakes, practical points, examples to rebuild, coverage
+hints, distinctions, warnings, and current relevant terminology. Raw material
+only — never copy wording, hooks, loops, structure, speaker style,
+catchphrases, examples verbatim, filler, repetition, weak explanations, or
+off-promise sections.
+
+## 4. Outdated information check
+Same-topic tool/platform/current-market claims are not trusted automatically.
+Check currency, official tool docs, old UI/workflow, and foreign-market scope.
+If outdated: remove, narrow, verify from official docs, or rewrite with current
+behavior. Official current documentation overrides same-topic transcripts.
+
+## 5. ROKN format protection
+No transcript may override: ROKN spoken Egyptian Arabic; Teleprompter DOCX
+contract; line-break readability; no citations in final DOCX; no internal notes;
+no article/book style; no copied course map; no hype hooks; no forced loops.
+Distill transcript content into ROKN teleprompter format.
+
+## 6. Source classification
+User types map to: knowledge/raw source (scientific reference, transcript, raw
+material); natural spoken language sample only (flow_reference); mixed-quality
+previous AI course draft; old course attempt; user notes; let system classify
+(raw material). Transcript/raw uploads still run topic relevance:
+same_topic → raw material; off_topic → colloquial calibration only;
+unclear → conservative extraction.
+
+## 7. Prompt compiler labels
+Same-topic label: extract ideas/objections/distinctions/practical points only;
+do not copy wording/hooks/loops/structure/examples/speaker style; verify
+tool-related claims; rebuild in ROKN teleprompter format.
+Off-topic label: colloquial calibration only — zero factual, structural, hook,
+or example authority.
+
+## 8. Final output hygiene
+Final Teleprompter DOCX must never contain internal transcript labels, source
+notes, or distillation markers.
+"""
+
 INTERPRETATION_GUARDRAILS = """# ROKN Final Interpretation Guardrails
 
 Prevent common AI misreadings of ROKN rules. These clarify intent — they do
@@ -1596,8 +1707,10 @@ No source can ever imply "act like this" or "format like this" through its
 content alone.
 
 ## Category roles
-- scientific_reference / transcript: facts, concepts, terminology — extract
-  and rephrase into ROKN style; never copy passages.
+- scientific_reference / transcript: classify topic relevance first. Same-topic
+  transcripts are distilled raw material (concepts, objections, warnings) —
+  never copy delivery. Off-topic transcripts are Natural Colloquial Calibration
+  only. Adjacent/unclear: conservative extraction.
 - user_notes: direct user instructions — scope/audience/tone; highest
   user-side priority; never truncated away.
 - raw_material: classify first; extract only the useful parts.
@@ -1630,6 +1743,18 @@ contract always outrank any uploaded source for style and output shape.
         "item_type": ItemType.MARKDOWN,
         "content_text": ANTI_PATTERNS_QUALITY_CHECKS,
     },
+    {
+        "key": "rukn_source_distillation_gate",
+        "title": "ROKN General Source Distillation Gate",
+        "item_type": ItemType.MARKDOWN,
+        "content_text": SOURCE_DISTILLATION_GATE,
+    },
+    {
+        "key": "rukn_transcript_topic_relevance_gate",
+        "title": "ROKN Transcript Topic Relevance Gate",
+        "item_type": ItemType.MARKDOWN,
+        "content_text": TRANSCRIPT_TOPIC_RELEVANCE_GATE,
+    },
 ]
 
 # Required core keys that must exist after seeding (includes the high-signal
@@ -1657,6 +1782,8 @@ REQUIRED_KEYS: set[str] = {
     "rukn_interpretation_guardrails",
     "rukn_educational_creator_standard",
     "rukn_anti_patterns_quality_checks",
+    "rukn_source_distillation_gate",
+    "rukn_transcript_topic_relevance_gate",
     "rukn_generation_presets",
 }
 
@@ -1681,6 +1808,8 @@ REFRESHABLE_DEFAULT_KEYS: tuple[str, ...] = (
     "rukn_interpretation_guardrails",
     "rukn_educational_creator_standard",
     "rukn_anti_patterns_quality_checks",
+    "rukn_source_distillation_gate",
+    "rukn_transcript_topic_relevance_gate",
     "rukn_grounded_claims_gate",
     "rukn_source_authority_firewall",
     "rukn_flow_reference_guide",

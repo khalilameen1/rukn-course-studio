@@ -140,21 +140,30 @@ function GenerationStatusPanel({ job }: { job: GenerationJob }) {
   const completedLessons =
     job.completed_lessons_count ?? job.completed_reels_count;
   const totalLessons = job.total_lessons_count ?? 0;
+  const currentIndex = job.current_stage
+    ? PROGRESS_STEPS.findIndex((step) => step.key === job.current_stage)
+    : -1;
+  const isDone = job.status === "completed" || job.current_stage === "done";
+  const currentLabel =
+    job.last_progress_message ||
+    (job.current_stage ? STAGE_LABELS[job.current_stage] ?? job.current_stage : "Preparing");
+
+  const completedSteps = PROGRESS_STEPS.filter((_, i) => isDone || i < currentIndex).map(
+    (s) => s.label,
+  );
+  const inProgressStep =
+    !isDone && currentIndex >= 0 ? PROGRESS_STEPS[currentIndex]?.label : currentLabel;
 
   return (
-    <div className="rounded-lg bg-surface-muted p-4 text-sm">
-      <p className="mb-2 font-medium text-foreground">Generation Status</p>
-      <div className="flex flex-wrap items-center gap-2">
+    <div className="nc-progress-card text-sm">
+      <p className="font-medium text-foreground">Generating course</p>
+      <div className="mt-2 flex flex-wrap items-center gap-2">
         <StatusBadge label={JOB_STATUS_LABEL[job.status]} tone={JOB_STATUS_TONE[job.status]} />
         {job.generation_quality_mode ? (
           <span className="text-xs text-muted">
             {job.generation_quality_mode === "preview" ? "Preview" : "Premium"}
           </span>
         ) : null}
-        <span className="text-muted">
-          {job.last_progress_message ||
-            (job.current_stage ? STAGE_LABELS[job.current_stage] ?? job.current_stage : "—")}
-        </span>
       </div>
       <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-border">
         <div
@@ -162,36 +171,42 @@ function GenerationStatusPanel({ job }: { job: GenerationJob }) {
           style={{ width: `${job.progress_percent}%` }}
         />
       </div>
+      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+        <div>
+          <p className="nc-progress-section-title">Current step</p>
+          <p className="mt-1 text-foreground">{currentLabel}</p>
+          {totalLessons > 0 ? (
+            <p className="mt-1 text-xs text-muted">
+              Lesson {completedLessons + (isTerminal ? 0 : 1)} of {totalLessons}
+              {job.current_module_index != null ? ` · Module ${job.current_module_index}` : ""}
+            </p>
+          ) : null}
+        </div>
+        <div>
+          <p className="nc-progress-section-title">Saved progress</p>
+          <p className="mt-1 text-xs text-muted">
+            {completedLessons} lesson(s) saved · last update {formatSavedAt(job.last_saved_at)}
+          </p>
+        </div>
+      </div>
+      {completedSteps.length > 0 ? (
+        <div className="mt-4">
+          <p className="nc-progress-section-title">Completed</p>
+          <ul className="mt-1 space-y-1 text-xs text-foreground">
+            {completedSteps.map((label) => (
+              <li key={label}>✓ {label}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {!isTerminal && inProgressStep ? (
+        <div className="mt-3">
+          <p className="nc-progress-section-title">In progress</p>
+          <p className="mt-1 text-xs text-foreground">{inProgressStep}</p>
+        </div>
+      ) : null}
       <ProgressSteps job={job} />
       <dl className="mt-3 grid gap-1.5 text-xs text-muted sm:grid-cols-2">
-        <div>
-          <dt className="inline text-foreground">Current step: </dt>
-          <dd className="inline">
-            {job.last_progress_message ||
-              (job.current_stage ? STAGE_LABELS[job.current_stage] ?? job.current_stage : "—")}
-          </dd>
-        </div>
-        <div>
-          <dt className="inline text-foreground">Module / lesson: </dt>
-          <dd className="inline">
-            {job.current_module_index != null
-              ? `M${job.current_module_index}${
-                  job.current_lesson_index != null ? ` · L${job.current_lesson_index}` : ""
-                }`
-              : "—"}
-          </dd>
-        </div>
-        <div>
-          <dt className="inline text-foreground">Completed: </dt>
-          <dd className="inline">
-            {completedLessons}
-            {totalLessons ? ` / ${totalLessons}` : ""} lesson(s)
-          </dd>
-        </div>
-        <div>
-          <dt className="inline text-foreground">Last saved: </dt>
-          <dd className="inline">{formatSavedAt(job.last_saved_at)}</dd>
-        </div>
         <div>
           <dt className="inline text-foreground">Elapsed: </dt>
           <dd className="inline">
@@ -199,23 +214,14 @@ function GenerationStatusPanel({ job }: { job: GenerationJob }) {
           </dd>
         </div>
         <div>
-          <dt className="inline text-foreground">Estimated duration: </dt>
-          <dd className="inline">{job.estimated_duration_summary || "—"}</dd>
-        </div>
-        <div>
-          <dt className="inline text-foreground">Estimated usage: </dt>
-          <dd className="inline">{job.estimated_usage_summary || "—"}</dd>
-        </div>
-        <div>
-          <dt className="inline text-foreground">Partial DOCX available: </dt>
-          <dd className="inline">{partialAvailable ? "Yes" : "No"}</dd>
+          <dt className="inline text-foreground">Partial DOCX: </dt>
+          <dd className="inline">{partialAvailable ? "Available" : "Not yet"}</dd>
         </div>
       </dl>
       {showStoppedInfo ? (
         <p className="mt-3 text-muted">
-          Stopped after: {job.last_completed_step ?? "the very first step"} (
-          {completedLessons} lesson(s) completed). You can download partial output if available,
-          then regenerate.
+          Stopped after: {job.last_completed_step ?? "the first step"} ({completedLessons} lesson(s)
+          completed). Download partial output if available, then regenerate.
         </p>
       ) : null}
       {showStoppedInfo && job.error_message ? (
@@ -226,7 +232,6 @@ function GenerationStatusPanel({ job }: { job: GenerationJob }) {
           {job.error_message}
         </p>
       ) : null}
-      {/* Critic / student / mentor notes and drafts are never shown here. */}
     </div>
   );
 }
@@ -298,7 +303,7 @@ export default function GeneratePanel({
         if (consecutiveFailures >= 4) {
           if (pollRef.current) clearInterval(pollRef.current);
           setError(
-            "Lost connection while checking generation progress. The run continues on the server — refresh the page to see the latest status."
+            "Connection to status updates was interrupted. The run may still be continuing on the server. Refresh to restore the latest status.",
           );
         }
       }
@@ -378,10 +383,10 @@ export default function GeneratePanel({
           className="btn-primary w-fit"
         >
           {starting || isRunning
-            ? "Generating..."
+            ? "Generating…"
             : hasUnresolvedIssue
-              ? "Regenerate from Scratch"
-              : "Generate Final DOCX"}
+              ? "Start generation again"
+              : "Start generation"}
         </button>
         {isRunning ? (
           <button
@@ -396,6 +401,15 @@ export default function GeneratePanel({
       </div>
 
       {error ? <p className="text-sm text-red-600 dark:text-red-400">{error}</p> : null}
+
+      {!job && !starting && !error ? (
+        <div className="rounded-xl border border-dashed border-border bg-surface/60 px-4 py-6 text-sm text-muted">
+          <p className="font-medium text-foreground">No generation run yet</p>
+          <p className="mt-1">
+            When you start, progress will appear here and can be restored after refresh.
+          </p>
+        </div>
+      ) : null}
 
       {job ? <GenerationStatusPanel job={job} /> : null}
 

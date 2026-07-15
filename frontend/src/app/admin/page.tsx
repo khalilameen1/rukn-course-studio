@@ -132,8 +132,8 @@ export default function AdminKnowledgePage() {
   return (
     <div className="flex flex-col gap-8">
       <PageHeader
-        title="Admin Knowledge Center"
-        description="This area is for global ROKN rules that apply to all courses. Course-specific PDFs, transcripts, and maps belong on the course — not here."
+        title="Admin Knowledge"
+        description="Global ROKN behavior for every course — writing rules, quality gates, and teleprompter contract. Do not upload course PDFs, transcripts, or maps here; add those on each course’s Sources tab."
       />
 
       <DeployDiagnostics />

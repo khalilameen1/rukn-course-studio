@@ -52,7 +52,7 @@ MEMORY_SNIPPET_MAX_CHARS = 1400
 
 CHARS_PER_TOKEN = 4
 
-EXTRACTION_VERSION = "1.1"
+EXTRACTION_VERSION = "1.2"
 
 
 
@@ -410,6 +410,15 @@ def build_source_memory_payload(
 
 
 
+    if category == "transcript":
+        from app.generation.transcript_relevance import apply_transcript_relevance
+
+        apply_transcript_relevance(
+            memory,
+            extracted_text=text,
+            course_promise=course_promise,
+        )
+
     from app.generation.mixed_draft_memory import (
 
         build_mixed_draft_memory,
@@ -492,6 +501,19 @@ def build_source_memory_payload(
 
 
 
+    from app.generation.source_distillation import apply_source_distillation
+
+    target_market = "egypt"
+    if course_promise and isinstance(course_promise, dict):
+        target_market = str(course_promise.get("target_market") or target_market)
+
+    if not memory.get("transcript_colloquial_only"):
+        apply_source_distillation(memory, extracted_text=text, target_market=target_market)
+        if category == "transcript":
+            from app.generation.transcript_relevance import scrub_transcript_delivery_artifacts
+
+            scrub_transcript_delivery_artifacts(memory)
+
     return memory
 
 
@@ -522,11 +544,33 @@ def format_memory_snippet(
 
     )
 
+    from app.generation.transcript_relevance import (
+        format_transcript_colloquial_snippet,
+        is_transcript_colloquial_only,
+    )
 
+    if is_transcript_colloquial_only(memory):
+        return format_transcript_colloquial_snippet(memory, max_chars=max_chars)
 
     if is_mixed_quality_draft_category(str(memory.get("source_type") or memory.get("category") or "")):
 
-        return format_mixed_draft_snippet(memory, max_chars=max_chars)
+        from app.generation.source_distillation import format_distilled_memory_snippet
+
+        base = format_mixed_draft_snippet(memory, max_chars=max_chars)
+        if memory.get("distillation_version"):
+            distilled = format_distilled_memory_snippet(
+                memory, query_text=query_text, chunks=chunks, max_chars=max_chars
+            )
+            combined = f"{distilled}\n\n{base}"
+            return combined[:max_chars] if len(combined) > max_chars else combined
+        return base
+
+    if memory.get("distillation_version"):
+        from app.generation.source_distillation import format_distilled_memory_snippet
+
+        return format_distilled_memory_snippet(
+            memory, query_text=query_text, chunks=chunks, max_chars=max_chars
+        )
 
 
 
@@ -700,7 +744,13 @@ def compiler_text_from_memory(
 
     )
 
+    from app.generation.transcript_relevance import (
+        format_transcript_colloquial_snippet,
+        is_transcript_colloquial_only,
+    )
 
+    if category == "transcript" and memory and is_transcript_colloquial_only(memory):
+        return format_transcript_colloquial_snippet(memory)
 
     if is_mixed_quality_draft_category(category):
 

@@ -1370,9 +1370,11 @@ def _load_usable_sources_with_memory(
         current_hash = compute_source_hash(text)
         category = source.source_category.value
         mixed = is_mixed_quality_draft_category(category)
+        is_transcript = category == "transcript"
+        needs_promise = mixed or is_transcript
 
         promise_ok = True
-        if mixed and analysis and analysis.source_memory_json:
+        if needs_promise and analysis and analysis.source_memory_json:
             existing_fp = (analysis.source_memory_json or {}).get("promise_fingerprint")
             md = (analysis.source_memory_json or {}).get("mixed_draft_memory") or {}
             if not existing_fp:
@@ -1395,7 +1397,7 @@ def _load_usable_sources_with_memory(
             extracted_text=text,
             priority=source.priority.value,
             include_in_generation=getattr(source, "include_in_generation", True),
-            course_promise=promise_dict if mixed else None,
+            course_promise=promise_dict if needs_promise else None,
         )
 
         if analysis and analysis.source_memory_json:
@@ -1408,9 +1410,9 @@ def _load_usable_sources_with_memory(
                 key_points=analysis.key_points_json,
                 avoid_points=analysis.avoid_points_json,
             )
-            if mixed:
+            if needs_promise:
                 memory["promise_fingerprint"] = promise_fp
-                if isinstance(memory.get("mixed_draft_memory"), dict):
+                if mixed and isinstance(memory.get("mixed_draft_memory"), dict):
                     memory["mixed_draft_memory"]["promise_fingerprint"] = promise_fp
             source_analyses.update(
                 session,
@@ -1432,9 +1434,9 @@ def _load_usable_sources_with_memory(
                 key_points=analysis.key_points_json,
                 avoid_points=analysis.avoid_points_json,
             )
-            if mixed:
+            if needs_promise:
                 memory["promise_fingerprint"] = promise_fp
-                if isinstance(memory.get("mixed_draft_memory"), dict):
+                if mixed and isinstance(memory.get("mixed_draft_memory"), dict):
                     memory["mixed_draft_memory"]["promise_fingerprint"] = promise_fp
             source_analyses.update(
                 session,
@@ -1461,9 +1463,9 @@ def _load_usable_sources_with_memory(
                 key_points=built.key_points,
                 avoid_points=built.avoid_points,
             )
-            if mixed:
+            if needs_promise:
                 memory["promise_fingerprint"] = promise_fp
-                if isinstance(memory.get("mixed_draft_memory"), dict):
+                if mixed and isinstance(memory.get("mixed_draft_memory"), dict):
                     memory["mixed_draft_memory"]["promise_fingerprint"] = promise_fp
             analysis = source_analyses.create(
                 session,

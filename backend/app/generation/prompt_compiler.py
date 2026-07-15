@@ -74,7 +74,7 @@ DEFAULT_MAX_TOTAL_CHARS = 6000
 # for traceability - so an old run's snapshot can be compared against
 # whatever version is active today. Not read by anything at runtime other
 # than the snapshot builder.
-PROMPT_COMPILER_VERSION = "2.14"
+PROMPT_COMPILER_VERSION = "2.16"
 
 # Stage -> the admin-knowledge keys actually relevant to it. Missing/
 # inactive keys are simply omitted (never an error) - see
@@ -99,6 +99,8 @@ _STAGE_RULE_KEYS: dict[PipelineStage, tuple[str, ...]] = {
         "rukn_knowledge_priority_ladder",
         "rukn_interpretation_guardrails",
         "rukn_educational_creator_standard",
+        "rukn_source_distillation_gate",
+        "rukn_transcript_topic_relevance_gate",
     ),
     PipelineStage.WRITE_SINGLE_REEL: (
         "rukn_core_rules",
@@ -119,6 +121,8 @@ _STAGE_RULE_KEYS: dict[PipelineStage, tuple[str, ...]] = {
         "rukn_grounded_claims_gate",
         "rukn_interpretation_guardrails",
         "rukn_educational_creator_standard",
+        "rukn_source_distillation_gate",
+        "rukn_transcript_topic_relevance_gate",
     ),
     PipelineStage.REVIEW_SINGLE_REEL: (
         "rukn_writing_style",
@@ -138,6 +142,8 @@ _STAGE_RULE_KEYS: dict[PipelineStage, tuple[str, ...]] = {
         "rukn_interpretation_guardrails",
         "rukn_educational_creator_standard",
         "rukn_anti_patterns_quality_checks",
+        "rukn_source_distillation_gate",
+        "rukn_transcript_topic_relevance_gate",
     ),
     PipelineStage.REVIEW_FIVE_REELS: (
         "rukn_writing_style",
@@ -156,6 +162,8 @@ _STAGE_RULE_KEYS: dict[PipelineStage, tuple[str, ...]] = {
         "rukn_interpretation_guardrails",
         "rukn_educational_creator_standard",
         "rukn_anti_patterns_quality_checks",
+        "rukn_source_distillation_gate",
+        "rukn_transcript_topic_relevance_gate",
     ),
     PipelineStage.REVIEW_MODULE: (
         "rukn_writing_style",
@@ -174,6 +182,8 @@ _STAGE_RULE_KEYS: dict[PipelineStage, tuple[str, ...]] = {
         "rukn_interpretation_guardrails",
         "rukn_educational_creator_standard",
         "rukn_anti_patterns_quality_checks",
+        "rukn_source_distillation_gate",
+        "rukn_transcript_topic_relevance_gate",
     ),
     PipelineStage.REVIEW_TWO_MODULES: (
         "rukn_writing_style",
@@ -192,6 +202,8 @@ _STAGE_RULE_KEYS: dict[PipelineStage, tuple[str, ...]] = {
         "rukn_interpretation_guardrails",
         "rukn_educational_creator_standard",
         "rukn_anti_patterns_quality_checks",
+        "rukn_source_distillation_gate",
+        "rukn_transcript_topic_relevance_gate",
     ),
     PipelineStage.FINAL_REVIEW: (
         "rukn_forbidden_phrases",
@@ -211,6 +223,8 @@ _STAGE_RULE_KEYS: dict[PipelineStage, tuple[str, ...]] = {
         "rukn_interpretation_guardrails",
         "rukn_educational_creator_standard",
         "rukn_anti_patterns_quality_checks",
+        "rukn_source_distillation_gate",
+        "rukn_transcript_topic_relevance_gate",
     ),
     PipelineStage.REBUILD_FINAL_COURSE: (
         "rukn_writing_style",
@@ -230,6 +244,8 @@ _STAGE_RULE_KEYS: dict[PipelineStage, tuple[str, ...]] = {
         "rukn_interpretation_guardrails",
         "rukn_educational_creator_standard",
         "rukn_anti_patterns_quality_checks",
+        "rukn_source_distillation_gate",
+        "rukn_transcript_topic_relevance_gate",
     ),
 }
 
@@ -294,6 +310,8 @@ STABLE_RULE_KEYS: tuple[str, ...] = (
     "rukn_interpretation_guardrails",
     "rukn_educational_creator_standard",
     "rukn_anti_patterns_quality_checks",
+    "rukn_source_distillation_gate",
+    "rukn_transcript_topic_relevance_gate",
 )
 
 
@@ -397,6 +415,17 @@ DISALLOWED_USE_BY_CATEGORY: dict[str, list[str]] = {
         "close_paraphrase_or_translate_source",
         "use_as_course_format_template",
         "make_final_script_sound_like_source",
+        "learn_hooks_from_transcript",
+        "learn_reel_openings",
+        "learn_endings",
+        "learn_viral_tactics",
+        "learn_lesson_structure",
+        "learn_course_map_structure",
+        "copy_catchphrases_or_signature_lines",
+        "copy_exact_hook_structure",
+        "copy_verbal_style_or_creator_identity",
+        "use_tool_behavior_from_transcript",
+        "copy_distinctive_examples",
     ],
     SourceCategory.FLOW_REFERENCE.value: [
         "summarize_as_factual_content",
@@ -861,6 +890,25 @@ def _build_excerpt(source: SourceForCompiler, query_text: str) -> SourceExcerpt:
             _RAW_MATERIAL_MARKER + _factual_excerpt_text(source, query_text),
             label=f"raw_material:{source.source_id}",
         )
+    elif source.category == SourceCategory.TRANSCRIPT.value:
+        from app.generation.transcript_relevance import (
+            is_transcript_colloquial_only,
+            prompt_label_for_relevance,
+        )
+
+        if is_transcript_colloquial_only(source.memory):
+            body = source.text or _build_flow_profile_text(source)
+            text = wrap_untrusted(
+                body,
+                label=f"transcript_off_topic_colloquial:{source.source_id}",
+            )
+        else:
+            rel = (source.memory or {}).get("topic_relevance") or "unclear"
+            prefix = prompt_label_for_relevance(rel) + "\n\n"
+            text = wrap_untrusted(
+                prefix + _factual_excerpt_text(source, query_text),
+                label=f"transcript_course_raw:{source.source_id}",
+            )
     else:
         text = wrap_untrusted(
             _factual_excerpt_text(source, query_text),
@@ -876,7 +924,7 @@ def _build_excerpt(source: SourceForCompiler, query_text: str) -> SourceExcerpt:
         else auth_label
     )
 
-    return SourceExcerpt(
+    excerpt = SourceExcerpt(
         source_id=source.source_id,
         category=source.category,
         priority=source.priority,
@@ -886,6 +934,27 @@ def _build_excerpt(source: SourceForCompiler, query_text: str) -> SourceExcerpt:
         style_contamination_warning=combined_warning,
         authority_type=auth_type.value,
     )
+
+    if (
+        source.category == SourceCategory.TRANSCRIPT.value
+        and is_transcript_colloquial_only(source.memory)
+    ):
+        from app.generation.knowledge_priority_ladder import AuthorityType
+        from app.generation.transcript_relevance import OFF_TOPIC_TRANSCRIPT_LABEL
+
+        fr = SourceCategory.FLOW_REFERENCE.value
+        excerpt.authority_type = AuthorityType.NATURAL_COLLOQUIAL.value
+        excerpt.allowed_use = list(ALLOWED_USE_BY_CATEGORY.get(fr, []))
+        excerpt.disallowed_use = list(DISALLOWED_USE_BY_CATEGORY.get(fr, []))
+        excerpt.style_contamination_warning = OFF_TOPIC_TRANSCRIPT_LABEL
+    elif source.category == SourceCategory.TRANSCRIPT.value and source.memory:
+        from app.generation.transcript_relevance import prompt_label_for_relevance
+
+        rel = source.memory.get("topic_relevance") or "unclear"
+        label = source.memory.get("transcript_prompt_label") or prompt_label_for_relevance(rel)
+        excerpt.style_contamination_warning = f"{combined_warning} {label}".strip()
+
+    return excerpt
 
 
 _PRIORITY_RANK = {"low": 0, "medium": 1, "high": 2}

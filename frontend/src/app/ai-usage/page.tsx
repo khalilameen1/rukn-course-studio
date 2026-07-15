@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { api, formatApiErrorForDisplay } from "@/lib/api";
+import { api } from "@/lib/api";
+import ActionError, { actionErrorFromUnknown } from "@/components/ui/ActionError";
 import type { AIUsageSummary } from "@/lib/types";
 import Card from "@/components/ui/Card";
 import EmptyState from "@/components/ui/EmptyState";
@@ -15,13 +16,13 @@ function money(n: number): string {
 export default function AIUsagePage() {
   const [summary, setSummary] = useState<AIUsageSummary | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<ReturnType<typeof actionErrorFromUnknown> | null>(null);
 
   useEffect(() => {
     api
       .getAIUsageSummary()
       .then(setSummary)
-      .catch((err) => setError(formatApiErrorForDisplay(err)))
+      .catch((err) => setError(actionErrorFromUnknown(err, "Could not load AI usage")))
       .finally(() => setLoading(false));
   }, []);
 
@@ -32,8 +33,15 @@ export default function AIUsagePage() {
         description="Estimated app usage from this product — not your real Anthropic account balance."
       />
 
-      {error ? <p className="text-sm text-red-700">{error}</p> : null}
-      {loading ? <p className="text-sm text-muted">Loading...</p> : null}
+      {error ? <ActionError {...error} /> : null}
+      {loading ? <p className="text-sm text-muted">Loading usage…</p> : null}
+
+      {!loading && !error && !summary ? (
+        <EmptyState
+          title="No AI usage recorded yet"
+          description="Run a fake or real generation to see usage here."
+        />
+      ) : null}
 
       {!loading && !error && summary ? (
         <div className="grid gap-4 sm:grid-cols-2">
@@ -100,7 +108,7 @@ export default function AIUsagePage() {
               </div>
             ) : (
               <EmptyState
-                title="No usage events yet"
+                title="No recent requests yet"
                 description="Run a generation (even with Fake provider) to populate estimated usage here."
               />
             )}

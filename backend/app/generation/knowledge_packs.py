@@ -71,6 +71,30 @@ _EDUCATIONAL_CREATOR_SECTIONS_BY_STAGE: dict[PipelineStage, tuple[int, ...]] = {
     PipelineStage.REBUILD_FINAL_COURSE: (1, 4, 5, 6, 7, 9, 11, 12),
 }
 
+# Numbered sections from SOURCE_DISTILLATION_GATE (seed Admin Knowledge).
+_SOURCE_DISTILLATION_SECTIONS_BY_STAGE: dict[PipelineStage, tuple[int, ...]] = {
+    PipelineStage.BUILD_COURSE_MAP: (1, 2, 6, 7),
+    PipelineStage.WRITE_SINGLE_REEL: (1, 2, 3, 4, 5, 6, 7),
+    PipelineStage.REVIEW_SINGLE_REEL: (1, 2, 3, 7, 8),
+    PipelineStage.REVIEW_FIVE_REELS: (1, 2, 7, 8),
+    PipelineStage.REVIEW_MODULE: (1, 2, 7, 8),
+    PipelineStage.REVIEW_TWO_MODULES: (1, 2, 7, 8),
+    PipelineStage.FINAL_REVIEW: (1, 2, 3, 5, 6, 7, 8),
+    PipelineStage.REBUILD_FINAL_COURSE: (1, 2, 3, 5, 6, 7, 8),
+}
+
+# Numbered sections from TRANSCRIPT_TOPIC_RELEVANCE_GATE (seed Admin Knowledge).
+_TRANSCRIPT_TOPIC_RELEVANCE_SECTIONS_BY_STAGE: dict[PipelineStage, tuple[int, ...]] = {
+    PipelineStage.BUILD_COURSE_MAP: (1, 2, 3, 6),
+    PipelineStage.WRITE_SINGLE_REEL: (1, 2, 3, 4, 5, 6, 7),
+    PipelineStage.REVIEW_SINGLE_REEL: (1, 2, 3, 5, 7, 8),
+    PipelineStage.REVIEW_FIVE_REELS: (1, 2, 5, 8),
+    PipelineStage.REVIEW_MODULE: (1, 2, 5, 8),
+    PipelineStage.REVIEW_TWO_MODULES: (1, 2, 5, 8),
+    PipelineStage.FINAL_REVIEW: (1, 2, 3, 5, 7, 8),
+    PipelineStage.REBUILD_FINAL_COURSE: (1, 2, 3, 5, 7, 8),
+}
+
 # Numbered sections from ANTI_PATTERNS_QUALITY_CHECKS (seed Admin Knowledge).
 _ANTI_PATTERNS_SECTIONS_BY_STAGE: dict[PipelineStage, tuple[int, ...]] = {
     PipelineStage.REVIEW_SINGLE_REEL: (1, 2),
@@ -172,6 +196,43 @@ def stage_educational_creator_standard(
     return "\n\n".join(parts).strip()
 
 
+def stage_source_distillation_gate(
+    full_text: str,
+    stage: PipelineStage,
+    *,
+    max_chars: int = _EDUCATIONAL_CREATOR_STAGE_MAX_CHARS,
+) -> str:
+    """Distillation rules slice — sources are raw material, not authority."""
+    return _stage_numbered_article_slice(
+        full_text,
+        stage,
+        _SOURCE_DISTILLATION_SECTIONS_BY_STAGE,
+        header="# Source distillation gate (stage-relevant only)",
+        lead="All sources are distilled raw material — never copy format or assume authority.",
+        max_chars=max_chars,
+    )
+
+
+def stage_transcript_topic_relevance_gate(
+    full_text: str,
+    stage: PipelineStage,
+    *,
+    max_chars: int = _EDUCATIONAL_CREATOR_STAGE_MAX_CHARS,
+) -> str:
+    """Transcript relevance slice — same-topic raw material vs off-topic colloquial only."""
+    return _stage_numbered_article_slice(
+        full_text,
+        stage,
+        _TRANSCRIPT_TOPIC_RELEVANCE_SECTIONS_BY_STAGE,
+        header="# Transcript topic relevance gate (stage-relevant only)",
+        lead=(
+            "Classify every transcript: same_topic raw material vs off_topic "
+            "colloquial calibration only."
+        ),
+        max_chars=max_chars,
+    )
+
+
 def stage_anti_patterns_quality_checks(
     full_text: str,
     stage: PipelineStage,
@@ -267,6 +328,10 @@ def build_stage_rules_pack(
             chunk = stage_educational_creator_standard(content, stage)
         elif key == "rukn_anti_patterns_quality_checks":
             chunk = stage_anti_patterns_quality_checks(content, stage)
+        elif key == "rukn_source_distillation_gate":
+            chunk = stage_source_distillation_gate(content, stage)
+        elif key == "rukn_transcript_topic_relevance_gate":
+            chunk = stage_transcript_topic_relevance_gate(content, stage)
         else:
             chunk = _compact_article(content)
         if not chunk:
