@@ -252,6 +252,27 @@ export default function GeneratePanel({
     };
   }, []);
 
+  useEffect(() => {
+    // Restore the latest run after a page refresh so an in-flight
+    // generation is visible again (and polling resumes) instead of the
+    // panel silently pretending nothing ever ran. 404 = never generated.
+    let cancelled = false;
+    api
+      .getLatestJob(courseId)
+      .then((latest) => {
+        if (cancelled) return;
+        updateJob(latest);
+        if (!TERMINAL_STATUSES.has(latest.status)) pollJob(latest.id);
+      })
+      .catch(() => {
+        // No run yet - normal empty state.
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [courseId]);
+
   function updateJob(next: GenerationJob | null) {
     setJob(next);
     onJobUpdate?.(next);
@@ -259,16 +280,26 @@ export default function GeneratePanel({
 
   function pollJob(jobId: number) {
     if (pollRef.current) clearInterval(pollRef.current);
+    // Tolerate transient network blips: only stop polling after several
+    // consecutive failures, and tell the user instead of spinning forever.
+    let consecutiveFailures = 0;
     pollRef.current = setInterval(async () => {
       try {
         const latest = await api.getJob(jobId);
+        consecutiveFailures = 0;
         updateJob(latest);
         if (TERMINAL_STATUSES.has(latest.status)) {
           if (pollRef.current) clearInterval(pollRef.current);
           if (latest.status === "completed") onVersionCreated();
         }
-      } catch {
-        if (pollRef.current) clearInterval(pollRef.current);
+      } catch (err) {
+        consecutiveFailures += 1;
+        if (consecutiveFailures >= 4) {
+          if (pollRef.current) clearInterval(pollRef.current);
+          setError(
+            "Lost connection while checking generation progress. The run continues on the server — refresh the page to see the latest status."
+          );
+        }
       }
     }, 1500);
   }

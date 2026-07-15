@@ -135,3 +135,40 @@ def test_no_existing_job_generates_normally(tmp_path, monkeypatch):
 
     assert response.status_code == 201
     assert response.json()["status"] == "completed"
+
+
+def test_latest_generation_job_restores_state_after_refresh(tmp_path, monkeypatch):
+    """GET /generate/latest lets the UI recover an in-flight/most-recent run
+    after page refresh without POSTing a new generation."""
+    client, engine = _make_client(tmp_path, monkeypatch)
+    course_id = _create_course(client)
+
+    # No run yet: normal 404, never a 500.
+    empty = client.get(f"/courses/{course_id}/generate/latest")
+    assert empty.status_code == 404
+
+    with Session(engine) as session:
+        generation_jobs.create(
+            session,
+            course_id=course_id,
+            status=JobStatus.RUNNING,
+            current_stage="generating",
+            progress_percent=40,
+            log_json=[],
+        )
+        newest = generation_jobs.create(
+            session,
+            course_id=course_id,
+            status=JobStatus.RUNNING,
+            current_stage="reviewing",
+            progress_percent=70,
+            log_json=[],
+        )
+        newest_id = newest.id
+
+    response = client.get(f"/courses/{course_id}/generate/latest")
+    assert response.status_code == 200
+    assert response.json()["id"] == newest_id
+
+    missing = client.get("/courses/999999/generate/latest")
+    assert missing.status_code == 404

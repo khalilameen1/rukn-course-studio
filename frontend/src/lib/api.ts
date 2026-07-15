@@ -349,6 +349,8 @@ export const api = {
       body: JSON.stringify(body ?? { generation_quality_mode: "premium" }),
     }),
   getJob: (jobId: number) => apiFetch<GenerationJob>(`/jobs/${jobId}`),
+  getLatestJob: (courseId: number) =>
+    apiFetch<GenerationJob>(`/courses/${courseId}/generate/latest`),
   listVersions: (courseId: number) =>
     apiFetch<CourseVersion[]>(`/courses/${courseId}/versions`),
   downloadLatestDocx: (courseId: number, filename: string) =>

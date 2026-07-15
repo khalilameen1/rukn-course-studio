@@ -123,6 +123,23 @@ def generate_course(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
+@router.get("/generate/latest", response_model=GenerationJobRead)
+def latest_generation_job(course_id: int, session: Session = Depends(get_session)):
+    """Most recent generation job for this course (any status).
+
+    Lets the UI restore progress/status after a page refresh without
+    POSTing /generate (which could look like a new run request). 404 when
+    the course has never been generated - a normal state, not an error.
+    """
+    get_course_or_404(session, course_id)
+    jobs = generation_jobs.list(session, course_id=course_id)
+    if not jobs:
+        raise HTTPException(
+            status_code=404, detail="No generation run for this course yet"
+        )
+    return max(jobs, key=lambda j: j.id)
+
+
 @router.post("/generate/{job_id}/cancel", response_model=GenerationJobRead)
 def cancel_generation(
     course_id: int, job_id: int, request: Request, session: Session = Depends(get_session)
