@@ -46,7 +46,8 @@ def list_knowledge_items(
         return items
     if active_only:
         return filter_active_primary(items)
-    return [i for i in items if i.is_active]
+    # active_only=false without include_inactive: still one primary per key.
+    return filter_active_primary(items)
 
 
 @router.post("/cleanup-duplicates", response_model=dict)
@@ -76,9 +77,23 @@ def cleanup_duplicate_knowledge(
 
 @router.post("", response_model=AdminKnowledgeRead, status_code=201)
 def create_knowledge_item(
-    payload: AdminKnowledgeCreate, session: Session = Depends(get_session)
+    payload: AdminKnowledgeCreate,
+    request: Request,
+    session: Session = Depends(get_session),
 ):
-    return admin_knowledge_items.create(session, **payload.model_dump())
+    created = admin_knowledge_items.create(session, **payload.model_dump())
+    record_audit(
+        session,
+        action="admin_knowledge_create",
+        actor=_actor(request),
+        affected_table="admin_knowledge_items",
+        affected_count=1,
+        dry_run=False,
+        confirmed=True,
+        success=True,
+        details={"id": created.id, "key": created.key},
+    )
+    return created
 
 
 @router.put("/{item_id}", response_model=AdminKnowledgeRead)
@@ -88,11 +103,20 @@ def update_knowledge_item(
     request: Request,
     session: Session = Depends(get_session),
 ):
-    updated = admin_knowledge_items.update(
-        session, item_id, **payload.model_dump(exclude_unset=True)
-    )
+    data = payload.model_dump(exclude_unset=True)
+    activating = data.get("is_active") is True
+    updated = admin_knowledge_items.update(session, item_id, **data)
     if updated is None:
         raise HTTPException(status_code=404, detail="Knowledge item not found")
+    if activating:
+        siblings = [
+            s
+            for s in admin_knowledge_items.list(session, key=updated.key)
+            if s.id != updated.id and s.is_active
+        ]
+        for sibling in siblings:
+            admin_knowledge_items.update(session, sibling.id, is_active=False)
+        updated = admin_knowledge_items.get(session, item_id) or updated
     record_audit(
         session,
         action="admin_knowledge_update",

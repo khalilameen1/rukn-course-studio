@@ -118,6 +118,13 @@ export default function AdminKnowledgePage() {
 
   async function handleActivate(item: AdminKnowledgeItem) {
     if (actionBusy) return;
+    if (
+      !confirm(
+        `Activate "${item.title}" (${item.key})?\n\nThis will deactivate other versions of the same key.`,
+      )
+    ) {
+      return;
+    }
     setActionBusy(`activate-${item.id}`);
     try {
       await api.activateKnowledgeItem(item.id);
@@ -133,8 +140,16 @@ export default function AdminKnowledgePage() {
     <div className="flex flex-col gap-8">
       <PageHeader
         title="Admin Knowledge"
-        description="Global ROKN behavior for every course — writing rules, quality gates, and teleprompter contract. Do not upload course PDFs, transcripts, or maps here; add those on each course’s Sources tab."
+        description="Admin Knowledge is global ROKN behavior used across all courses. Course-specific sources, transcripts, and maps belong on each course page — not here."
       />
+
+      <div className="rounded-xl border border-border bg-surface-muted/50 px-4 py-3 text-sm text-muted">
+        <p className="font-medium text-foreground">Global rules only</p>
+        <p className="mt-1">
+          Edit writing rules, quality gates, and teleprompter contract here. Upload PDFs, transcripts,
+          and course maps from the course workspace Sources tab.
+        </p>
+      </div>
 
       <DeployDiagnostics />
 

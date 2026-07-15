@@ -74,7 +74,7 @@ DEFAULT_MAX_TOTAL_CHARS = 6000
 # for traceability - so an old run's snapshot can be compared against
 # whatever version is active today. Not read by anything at runtime other
 # than the snapshot builder.
-PROMPT_COMPILER_VERSION = "2.16"
+PROMPT_COMPILER_VERSION = "2.17"
 
 # Stage -> the admin-knowledge keys actually relevant to it. Missing/
 # inactive keys are simply omitted (never an error) - see
@@ -97,6 +97,7 @@ _STAGE_RULE_KEYS: dict[PipelineStage, tuple[str, ...]] = {
         "rukn_originality_rights_gate",
         "rukn_cost_hygiene_trusted_knowledge",
         "rukn_knowledge_priority_ladder",
+        "rukn_source_authority_firewall",
         "rukn_interpretation_guardrails",
         "rukn_educational_creator_standard",
         "rukn_source_distillation_gate",
@@ -118,6 +119,7 @@ _STAGE_RULE_KEYS: dict[PipelineStage, tuple[str, ...]] = {
         "rukn_originality_rights_gate",
         "rukn_cost_hygiene_trusted_knowledge",
         "rukn_knowledge_priority_ladder",
+        "rukn_source_authority_firewall",
         "rukn_grounded_claims_gate",
         "rukn_interpretation_guardrails",
         "rukn_educational_creator_standard",
@@ -139,6 +141,7 @@ _STAGE_RULE_KEYS: dict[PipelineStage, tuple[str, ...]] = {
         "rukn_originality_rights_gate",
         "rukn_cost_hygiene_trusted_knowledge",
         "rukn_knowledge_priority_ladder",
+        "rukn_source_authority_firewall",
         "rukn_interpretation_guardrails",
         "rukn_educational_creator_standard",
         "rukn_anti_patterns_quality_checks",
@@ -159,6 +162,7 @@ _STAGE_RULE_KEYS: dict[PipelineStage, tuple[str, ...]] = {
         "rukn_official_tool_docs_gate",
         "rukn_originality_rights_gate",
         "rukn_knowledge_priority_ladder",
+        "rukn_source_authority_firewall",
         "rukn_interpretation_guardrails",
         "rukn_educational_creator_standard",
         "rukn_anti_patterns_quality_checks",
@@ -179,6 +183,7 @@ _STAGE_RULE_KEYS: dict[PipelineStage, tuple[str, ...]] = {
         "rukn_official_tool_docs_gate",
         "rukn_originality_rights_gate",
         "rukn_knowledge_priority_ladder",
+        "rukn_source_authority_firewall",
         "rukn_interpretation_guardrails",
         "rukn_educational_creator_standard",
         "rukn_anti_patterns_quality_checks",
@@ -199,6 +204,7 @@ _STAGE_RULE_KEYS: dict[PipelineStage, tuple[str, ...]] = {
         "rukn_official_tool_docs_gate",
         "rukn_originality_rights_gate",
         "rukn_knowledge_priority_ladder",
+        "rukn_source_authority_firewall",
         "rukn_interpretation_guardrails",
         "rukn_educational_creator_standard",
         "rukn_anti_patterns_quality_checks",
@@ -219,6 +225,7 @@ _STAGE_RULE_KEYS: dict[PipelineStage, tuple[str, ...]] = {
         "rukn_official_tool_docs_gate",
         "rukn_originality_rights_gate",
         "rukn_knowledge_priority_ladder",
+        "rukn_source_authority_firewall",
         "rukn_grounded_claims_gate",
         "rukn_interpretation_guardrails",
         "rukn_educational_creator_standard",
@@ -240,6 +247,7 @@ _STAGE_RULE_KEYS: dict[PipelineStage, tuple[str, ...]] = {
         "rukn_official_tool_docs_gate",
         "rukn_originality_rights_gate",
         "rukn_knowledge_priority_ladder",
+        "rukn_source_authority_firewall",
         "rukn_grounded_claims_gate",
         "rukn_interpretation_guardrails",
         "rukn_educational_creator_standard",
@@ -306,6 +314,7 @@ STABLE_RULE_KEYS: tuple[str, ...] = (
     "rukn_official_tool_docs_gate",
     "rukn_originality_rights_gate",
     "rukn_knowledge_priority_ladder",
+    "rukn_source_authority_firewall",
     "rukn_grounded_claims_gate",
     "rukn_interpretation_guardrails",
     "rukn_educational_creator_standard",

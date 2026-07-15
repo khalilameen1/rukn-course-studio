@@ -1314,13 +1314,17 @@ def run_generation_job(
 
 
 def _load_active_rules(session: Session) -> dict[str, str]:
-    """key -> content_text for every active, text-based admin knowledge item.
+    """key -> content_text for every active primary admin knowledge item.
 
-    docx_template items have no content_text and are skipped here - they
-    aren't text to inject into a prompt.
+    Uses filter_active_primary so duplicate active rows per key cannot
+    nondeterministically override generation rules. docx_template items
+    have no content_text and are skipped.
     """
+    from app.generation.admin_knowledge_cleanup import filter_active_primary
+
     items = admin_knowledge_items.list(session, is_active=True)
-    return {item.key: item.content_text for item in items if item.content_text}
+    primary = filter_active_primary(items)
+    return {item.key: item.content_text for item in primary if item.content_text}
 
 
 def _usable_memory(usable: UsableSource) -> dict | None:

@@ -131,7 +131,7 @@ def test_packed_distillation_gate_is_stage_slice_not_full_dump():
 
 
 def test_prompt_compiler_version_bumped_for_distillation_gate():
-    assert PROMPT_COMPILER_VERSION == "2.16"
+    assert PROMPT_COMPILER_VERSION == "2.17"
 
 
 def test_academic_source_distilled_to_practical_memory_not_literal_dump():

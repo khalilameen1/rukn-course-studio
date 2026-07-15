@@ -1812,7 +1812,6 @@ REFRESHABLE_DEFAULT_KEYS: tuple[str, ...] = (
     "rukn_transcript_topic_relevance_gate",
     "rukn_grounded_claims_gate",
     "rukn_source_authority_firewall",
-    "rukn_flow_reference_guide",
 )
 
 _SEED_BY_KEY: dict[str, dict] = {item["key"]: item for item in SEED_ITEMS}
