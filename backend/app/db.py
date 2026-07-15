@@ -53,6 +53,15 @@ def _is_postgres() -> bool:
     return getattr(engine.dialect, "name", "") == "postgresql"
 
 
+def _json_safe_type(name: str, sql_type: str) -> str:
+    """SQLModel JSON columns must be real JSON on Postgres so the driver
+    deserializes them to dicts/lists; TEXT there would silently hand the ORM
+    raw strings. SQLite stores JSON as TEXT anyway, so TEXT stays correct."""
+    if name.endswith("_json") and _is_postgres():
+        return "JSON"
+    return sql_type
+
+
 def _harden_boolean_not_null_true(conn, table: str, column: str) -> None:
     """Fix default/nullability on an existing boolean column (Postgres-focused).
 
@@ -164,10 +173,26 @@ def _ensure_source_analysis_columns() -> None:
 
 
 def _ensure_generation_job_columns() -> None:
-    """Add newly introduced GenerationJob columns on already-created tables."""
+    """Add newly introduced GenerationJob columns on already-created tables.
+
+    Must cover EVERY model column that postdates the first production deploy:
+    a single missing column makes every ORM SELECT on generation_jobs fail on
+    Postgres (UndefinedColumn), which cascades into 500s on any endpoint that
+    touches jobs (diagnostics, AI usage, generation status).
+    """
     from sqlalchemy import inspect, text
 
     additions: dict[str, str] = {
+        "last_completed_step": "TEXT",
+        "completed_modules_count": "INTEGER DEFAULT 0",
+        "completed_reels_count": "INTEGER DEFAULT 0",
+        "error_category": "TEXT",
+        "partial_docx_path": "TEXT",
+        "course_map_json": "TEXT",
+        "completed_reels_json": "TEXT",
+        "run_snapshot_json": "TEXT",
+        "output_score_json": "TEXT",
+        "budget_warning": "TEXT",
         "current_module_index": "INTEGER",
         "current_lesson_index": "INTEGER",
         "last_progress_message": "TEXT",
@@ -202,7 +227,12 @@ def _ensure_generation_job_columns() -> None:
         for name, sql_type in additions.items():
             if name in existing:
                 continue
-            conn.execute(text(f"ALTER TABLE generation_jobs ADD COLUMN {name} {sql_type}"))
+            conn.execute(
+                text(
+                    "ALTER TABLE generation_jobs ADD COLUMN "
+                    f"{name} {_json_safe_type(name, sql_type)}"
+                )
+            )
 
 
 def _ensure_course_columns() -> None:
@@ -210,6 +240,11 @@ def _ensure_course_columns() -> None:
     from sqlalchemy import inspect, text
 
     additions: dict[str, str] = {
+        "special_notes": "TEXT",
+        "course_type": "TEXT DEFAULT 'practical_skill'",
+        "manual_map_text": "TEXT",
+        "generation_preset": "TEXT DEFAULT 'balanced'",
+        "active_rules_snapshot_json": "TEXT",
         "generation_quality_mode": "TEXT DEFAULT 'premium'",
         "web_research_mode": "TEXT DEFAULT 'autonomous_gap_fill'",
         "target_market": "TEXT DEFAULT 'egypt'",
@@ -229,7 +264,11 @@ def _ensure_course_columns() -> None:
         for name, sql_type in additions.items():
             if name in existing:
                 continue
-            conn.execute(text(f"ALTER TABLE courses ADD COLUMN {name} {sql_type}"))
+            conn.execute(
+                text(
+                    f"ALTER TABLE courses ADD COLUMN {name} {_json_safe_type(name, sql_type)}"
+                )
+            )
 
 
 def _ensure_ai_usage_events_table() -> None:

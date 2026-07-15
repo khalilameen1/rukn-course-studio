@@ -58,19 +58,27 @@ def _provider_health(session: Session | None, config: Settings) -> dict:
     """Never queries the DB (and returns every field as `"unknown"`/`None`)
     if `session` is `None` - keeps `build_diagnostics` usable without a DB
     session for callers/tests that don't need this part."""
+    unknown = {
+        "provider_reachable": "unknown",
+        "last_successful_request_at": None,
+        "last_error_category": None,
+        "last_error_message": None,
+    }
     if session is None:
-        return {
-            "provider_reachable": "unknown",
-            "last_successful_request_at": None,
-            "last_error_category": None,
-            "last_error_message": None,
-        }
+        return unknown
 
-    latest_success = session.exec(
-        select(AIUsageEvent)
-        .where(AIUsageEvent.status == "ok")
-        .order_by(AIUsageEvent.created_at.desc())
-    ).first()
+    # A diagnostics endpoint must never 500 because of a DB schema gap -
+    # that is exactly the failure it exists to help diagnose.
+    from sqlalchemy.exc import SQLAlchemyError
+
+    try:
+        latest_success = session.exec(
+            select(AIUsageEvent)
+            .where(AIUsageEvent.status == "ok")
+            .order_by(AIUsageEvent.created_at.desc())
+        ).first()
+    except SQLAlchemyError:
+        return unknown
 
     if latest_success is None:
         provider_reachable = "unknown"
@@ -81,11 +89,14 @@ def _provider_health(session: Session | None, config: Settings) -> dict:
             created_at = created_at.replace(tzinfo=timezone.utc)
         provider_reachable = "ok" if (now - created_at) <= _RECENT_SUCCESS_WINDOW else "unknown"
 
-    latest_error_job = session.exec(
-        select(GenerationJob)
-        .where(GenerationJob.error_category.is_not(None))
-        .order_by(GenerationJob.updated_at.desc())
-    ).first()
+    try:
+        latest_error_job = session.exec(
+            select(GenerationJob)
+            .where(GenerationJob.error_category.is_not(None))
+            .order_by(GenerationJob.updated_at.desc())
+        ).first()
+    except SQLAlchemyError:
+        latest_error_job = None
 
     return {
         "provider_reachable": provider_reachable,
