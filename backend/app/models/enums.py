@@ -68,16 +68,38 @@ class SourceCategory(str, Enum):
 class SourceOrigin(str, Enum):
     """How the source was produced — separate from file format and user intent.
 
-    A .txt/.docx/.pdf may be a transcript or a written document; extension is
-    not authority. Stored on Source Memory and optionally declared at upload.
+    A .txt/.docx/.pdf may be a transcript, book extract, OCR scan, or notes;
+    extension is not authority. Stored on Source Memory and optionally declared.
     """
 
     WRITTEN_DOCUMENT = "written_document"
+    ACADEMIC_BOOK = "academic_book"
+    PRACTICAL_BOOK = "practical_book"
+    ARTICLE = "article"
+    OLD_COURSE_MATERIAL = "old_course_material"
+    COURSE_TRANSCRIPT = "course_transcript"
     AI_GENERATED_TRANSCRIPT = "ai_generated_transcript"
     HUMAN_TRANSCRIPT = "human_transcript"
-    COURSE_TRANSCRIPT = "course_transcript"
     OLD_COURSE_TRANSCRIPT = "old_course_transcript"
     MEETING_OR_WEBINAR_TRANSCRIPT = "meeting_or_webinar_transcript"
+    SCANNED_PDF = "scanned_pdf"
+    OCR_TEXT = "ocr_text"
+    SCREENSHOT_OR_IMAGE = "screenshot_or_image"
+    TRANSLATED_MATERIAL = "translated_material"
+    USER_NOTES = "user_notes"
+    UNKNOWN = "unknown"
+
+
+class ExtractionMethod(str, Enum):
+    """How text was obtained from the file/paste — not reliability."""
+
+    DIRECT_TEXT = "direct_text"
+    PDF_TEXT = "pdf_text"
+    DOCX_TEXT = "docx_text"
+    DOC_TEXT = "doc_text"
+    OCR = "ocr"
+    PASTED_TEXT = "pasted_text"
+    MANUAL = "manual"
     UNKNOWN = "unknown"
 
 

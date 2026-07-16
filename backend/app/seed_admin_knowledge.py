@@ -1241,6 +1241,64 @@ transcripts: colloquial calibration only. Final DOCX must never mention
 source_origin, ASR errors, or internal cleaning metadata.
 """
 
+SOURCE_IMPERFECTION_GATE = """# ROKN General Source Imperfection Gate
+
+Mistrust / imperfection rules apply to ALL course sources — not only transcripts.
+A book, PDF, DOCX, article, academic paper, or OCR extract may still be imperfect.
+V1 remains Teleprompter DOCX only.
+
+## 1. Provenance fields (internal)
+For every source, track or infer:
+- source_origin: written_document, academic_book, practical_book, article,
+  old_course_material, course_transcript, ai_generated_transcript,
+  human_transcript, scanned_pdf, ocr_text, screenshot_or_image,
+  translated_material, user_notes, unknown (plus meeting/webinar/old course
+  transcript variants when spoken).
+- extraction_method: direct_text, pdf_text, docx_text, doc_text, ocr,
+  pasted_text, manual, unknown.
+- source_risk_flags: outdated_possible, ocr_noise_possible,
+  transcript_noise_possible, foreign_market_context, academic_theory_heavy,
+  shallow_or_generic, translated_or_stiff, repetitive_or_filler,
+  tool_ui_may_be_old, uncertain_terms.
+
+File extension is never authority.
+
+## 2. General mistrust
+No source is automatically current, accurate, clean language, final structure,
+a ROKN style model, directly copyable, a complete course map, or factual
+authority in conflicts. Every source is raw material — extract useful meaning,
+then filter, verify, adapt, and rebuild in ROKN teleprompter format.
+
+## 3. Books and academic sources
+Allowed: durable concepts, simplified definitions, frameworks, distinctions,
+warnings, examples to rebuild, current relevant terminology.
+Blocked: copying book structure/paragraphs; academic wording in final script;
+theoretical detail that does not help application; trusting current tool/UI
+details from old books.
+
+## 4. OCR and scanned PDFs
+Clean obvious artifacts only. Do not confidently use suspicious terms.
+Preserve uncertainty internally. Verify important claims. Never let OCR
+artifacts leak into final DOCX.
+
+## 5. Transcripts are a special subset
+Transcript noise (ASR, filler, timestamps, mixed Arabic/English) still applies
+when origin is transcript-like. Broader Source Imperfection Gate still applies.
+
+## 6. Foreign-market and outdated
+Keep universal principles; adapt execution to Egypt/Arab market. Official docs
+override outdated tool/platform claims. Preserve durable principles only.
+
+## 7. Prompt labels
+Always attach the untrusted-raw-material label. Append transcript, OCR, or
+academic/book warnings when relevant.
+
+## 8. Final DOCX
+Never mention source_origin, extraction_method, source_risk_flags, OCR/ASR
+notes, mistrust notes, correction metadata, internal labels, source names, or
+citations. Spoken teleprompter script only.
+"""
+
 INTERPRETATION_GUARDRAILS = """# ROKN Final Interpretation Guardrails
 
 Prevent common AI misreadings of ROKN rules. These clarify intent — they do
@@ -1790,6 +1848,12 @@ contract always outrank any uploaded source for style and output shape.
         "item_type": ItemType.MARKDOWN,
         "content_text": TRANSCRIPT_TOPIC_RELEVANCE_GATE,
     },
+    {
+        "key": "rukn_source_imperfection_gate",
+        "title": "ROKN General Source Imperfection Gate",
+        "item_type": ItemType.MARKDOWN,
+        "content_text": SOURCE_IMPERFECTION_GATE,
+    },
 ]
 
 # Required core keys that must exist after seeding (includes the high-signal
@@ -1819,6 +1883,7 @@ REQUIRED_KEYS: set[str] = {
     "rukn_anti_patterns_quality_checks",
     "rukn_source_distillation_gate",
     "rukn_transcript_topic_relevance_gate",
+    "rukn_source_imperfection_gate",
     "rukn_generation_presets",
 }
 
@@ -1845,6 +1910,7 @@ REFRESHABLE_DEFAULT_KEYS: tuple[str, ...] = (
     "rukn_anti_patterns_quality_checks",
     "rukn_source_distillation_gate",
     "rukn_transcript_topic_relevance_gate",
+    "rukn_source_imperfection_gate",
     "rukn_grounded_claims_gate",
     "rukn_source_authority_firewall",
 )

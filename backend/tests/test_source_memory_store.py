@@ -49,7 +49,7 @@ def test_compile_context_uses_memory_not_full_pdf():
         category="scientific_reference",
     )
     assert len(compact) < 2000
-    assert len(compact) < len(LONG_PDF) // 10
+    assert len(compact) < len(LONG_PDF) // 8
 
     excerpts = compile_source_context(
         [

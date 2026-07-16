@@ -74,7 +74,7 @@ DEFAULT_MAX_TOTAL_CHARS = 6000
 # for traceability - so an old run's snapshot can be compared against
 # whatever version is active today. Not read by anything at runtime other
 # than the snapshot builder.
-PROMPT_COMPILER_VERSION = "2.19"
+PROMPT_COMPILER_VERSION = "2.20"
 
 # Stage -> the admin-knowledge keys actually relevant to it. Missing/
 # inactive keys are simply omitted (never an error) - see
@@ -102,6 +102,7 @@ _STAGE_RULE_KEYS: dict[PipelineStage, tuple[str, ...]] = {
         "rukn_educational_creator_standard",
         "rukn_source_distillation_gate",
         "rukn_transcript_topic_relevance_gate",
+        "rukn_source_imperfection_gate",
     ),
     PipelineStage.WRITE_SINGLE_REEL: (
         "rukn_core_rules",
@@ -125,6 +126,7 @@ _STAGE_RULE_KEYS: dict[PipelineStage, tuple[str, ...]] = {
         "rukn_educational_creator_standard",
         "rukn_source_distillation_gate",
         "rukn_transcript_topic_relevance_gate",
+        "rukn_source_imperfection_gate",
     ),
     PipelineStage.REVIEW_SINGLE_REEL: (
         "rukn_writing_style",
@@ -147,6 +149,7 @@ _STAGE_RULE_KEYS: dict[PipelineStage, tuple[str, ...]] = {
         "rukn_anti_patterns_quality_checks",
         "rukn_source_distillation_gate",
         "rukn_transcript_topic_relevance_gate",
+        "rukn_source_imperfection_gate",
     ),
     PipelineStage.REVIEW_FIVE_REELS: (
         "rukn_writing_style",
@@ -168,6 +171,7 @@ _STAGE_RULE_KEYS: dict[PipelineStage, tuple[str, ...]] = {
         "rukn_anti_patterns_quality_checks",
         "rukn_source_distillation_gate",
         "rukn_transcript_topic_relevance_gate",
+        "rukn_source_imperfection_gate",
     ),
     PipelineStage.REVIEW_MODULE: (
         "rukn_writing_style",
@@ -189,6 +193,7 @@ _STAGE_RULE_KEYS: dict[PipelineStage, tuple[str, ...]] = {
         "rukn_anti_patterns_quality_checks",
         "rukn_source_distillation_gate",
         "rukn_transcript_topic_relevance_gate",
+        "rukn_source_imperfection_gate",
     ),
     PipelineStage.REVIEW_TWO_MODULES: (
         "rukn_writing_style",
@@ -210,6 +215,7 @@ _STAGE_RULE_KEYS: dict[PipelineStage, tuple[str, ...]] = {
         "rukn_anti_patterns_quality_checks",
         "rukn_source_distillation_gate",
         "rukn_transcript_topic_relevance_gate",
+        "rukn_source_imperfection_gate",
     ),
     PipelineStage.FINAL_REVIEW: (
         "rukn_forbidden_phrases",
@@ -232,6 +238,7 @@ _STAGE_RULE_KEYS: dict[PipelineStage, tuple[str, ...]] = {
         "rukn_anti_patterns_quality_checks",
         "rukn_source_distillation_gate",
         "rukn_transcript_topic_relevance_gate",
+        "rukn_source_imperfection_gate",
     ),
     PipelineStage.REBUILD_FINAL_COURSE: (
         "rukn_writing_style",
@@ -254,6 +261,7 @@ _STAGE_RULE_KEYS: dict[PipelineStage, tuple[str, ...]] = {
         "rukn_anti_patterns_quality_checks",
         "rukn_source_distillation_gate",
         "rukn_transcript_topic_relevance_gate",
+        "rukn_source_imperfection_gate",
     ),
 }
 
@@ -321,6 +329,7 @@ STABLE_RULE_KEYS: tuple[str, ...] = (
     "rukn_anti_patterns_quality_checks",
     "rukn_source_distillation_gate",
     "rukn_transcript_topic_relevance_gate",
+    "rukn_source_imperfection_gate",
 )
 
 
@@ -876,6 +885,10 @@ def _build_flow_profile_text(source: SourceForCompiler) -> str:
 
 def _build_excerpt(source: SourceForCompiler, query_text: str) -> SourceExcerpt:
     from app.generation.source_isolation import wrap_untrusted
+    from app.generation.source_imperfection import (
+        SOURCE_MISTRUST_EXCERPT_BANNER,
+        SOURCE_MISTRUST_LABEL,
+    )
     from app.generation.source_origin import (
         is_transcript_derived_memory,
         prompt_labels_for_origin,
@@ -889,6 +902,22 @@ def _build_excerpt(source: SourceForCompiler, query_text: str) -> SourceExcerpt:
     origin = str(mem.get("source_origin") or "")
     transcript_derived = is_transcript_derived_memory(mem)
     colloquial_only = is_transcript_colloquial_only(mem)
+    labels = list(mem.get("source_prompt_labels") or [])
+    if not labels and mem.get("source_imperfection_version"):
+        labels = [SOURCE_MISTRUST_LABEL]
+    mistrust_prefix = ""
+    if mem.get("source_imperfection_version") or labels:
+        mistrust_prefix = SOURCE_MISTRUST_EXCERPT_BANNER + "\n\n"
+        # Compact origin-specific one-liners only (avoid multi-KB label dumps).
+        extras: list[str] = []
+        if transcript_derived and not colloquial_only:
+            extras.append("[transcript-derived — clean cautiously; do not copy delivery]")
+        if any("OCR" in (x or "") or "OCR/scan" in (x or "") for x in labels):
+            extras.append("[OCR/scan-derived — do not trust suspicious tokens]")
+        if any("academic" in (x or "").lower() or "book" in (x or "").lower() for x in labels):
+            extras.append("[academic/book — distill to practical spoken; no book structure]")
+        if extras:
+            mistrust_prefix += " ".join(extras) + "\n\n"
 
     if source.category == SourceCategory.FLOW_REFERENCE.value and not transcript_derived:
         # Natural colloquial calibration — still untrusted; never structure/facts.
@@ -904,12 +933,14 @@ def _build_excerpt(source: SourceForCompiler, query_text: str) -> SourceExcerpt:
         SourceCategory.OLD_COURSE.value,
     ):
         text = wrap_untrusted(
-            source.text or "",
+            mistrust_prefix + (source.text or ""),
             label=f"mixed_quality_ai_course_draft:{source.source_id}",
         )
     elif source.category == SourceCategory.RAW_MATERIAL.value:
         text = wrap_untrusted(
-            _RAW_MATERIAL_MARKER + _factual_excerpt_text(source, query_text),
+            mistrust_prefix
+            + _RAW_MATERIAL_MARKER
+            + _factual_excerpt_text(source, query_text),
             label=f"raw_material:{source.source_id}",
         )
     elif source.category == SourceCategory.TRANSCRIPT.value or transcript_derived:
@@ -921,19 +952,24 @@ def _build_excerpt(source: SourceForCompiler, query_text: str) -> SourceExcerpt:
             )
         else:
             rel = mem.get("topic_relevance") or "unclear"
-            prefix_parts = list(prompt_labels_for_origin(origin))
+            prefix_parts = [SOURCE_MISTRUST_EXCERPT_BANNER]
+            prefix_parts.append("[transcript-derived — clean cautiously; do not copy delivery]")
             prefix_parts.append(
                 mem.get("transcript_prompt_label") or prompt_label_for_relevance(rel)
             )
             prefix = "\n\n".join(p for p in prefix_parts if p) + "\n\n"
-            label_cat = source.category if source.category != SourceCategory.TRANSCRIPT.value else "transcript"
+            label_cat = (
+                source.category
+                if source.category != SourceCategory.TRANSCRIPT.value
+                else "transcript"
+            )
             text = wrap_untrusted(
                 prefix + _factual_excerpt_text(source, query_text),
                 label=f"{label_cat}_course_raw:{source.source_id}",
             )
     else:
         text = wrap_untrusted(
-            _factual_excerpt_text(source, query_text),
+            mistrust_prefix + _factual_excerpt_text(source, query_text),
             label=f"{source.category}:{source.source_id}",
         )
 
@@ -971,6 +1007,10 @@ def _build_excerpt(source: SourceForCompiler, query_text: str) -> SourceExcerpt:
         label = mem.get("transcript_prompt_label") or prompt_label_for_relevance(rel)
         origin_labels = " ".join(prompt_labels_for_origin(origin))
         excerpt.style_contamination_warning = f"{combined_warning} {origin_labels} {label}".strip()
+    elif mem.get("source_imperfection_version"):
+        excerpt.style_contamination_warning = (
+            f"{combined_warning} {SOURCE_MISTRUST_EXCERPT_BANNER}"
+        ).strip()
 
     return excerpt
 

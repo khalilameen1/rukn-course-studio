@@ -131,7 +131,7 @@ def test_packed_distillation_gate_is_stage_slice_not_full_dump():
 
 
 def test_prompt_compiler_version_bumped_for_distillation_gate():
-    assert PROMPT_COMPILER_VERSION == "2.19"
+    assert PROMPT_COMPILER_VERSION == "2.20"
 
 
 def test_academic_source_distilled_to_practical_memory_not_literal_dump():
@@ -197,7 +197,8 @@ def test_us_market_source_gets_egypt_adaptation_note():
     assert memory.get("market_adaptation_notes")
     snippet = format_memory_snippet(memory)
     assert "Market adaptation" in snippet or "Western" in snippet or "US" in snippet
-    assert "egypt" in snippet.lower() or "Egypt" in str(memory.get("market_adaptation_notes"))
+    notes_blob = " ".join(str(x) for x in (memory.get("market_adaptation_notes") or [])).lower()
+    assert "egypt" in snippet.lower() or "egypt" in notes_blob
 
 
 def test_filler_and_repetition_marked_discarded_not_preserved_in_snippet():

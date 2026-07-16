@@ -135,6 +135,10 @@ TELEPROMPTER_FORBIDDEN_SUBSTRINGS: tuple[str, ...] = (
     "reveal prompts",
     # Transcript / source-origin internal metadata — never DOCX.
     "source_origin",
+    "extraction_method",
+    "source_risk_flags",
+    "source_corrections",
+    "source imperfection",
     "transcript_corrections",
     "transcript imperfection",
     "transcript-derived",
@@ -143,7 +147,9 @@ TELEPROMPTER_FORBIDDEN_SUBSTRINGS: tuple[str, ...] = (
     "asr/transcription",
     "asr",
     "ocr note",
+    "ocr artifact",
     "uncertain_terms",
+    "mistrust",
     "normalized_text_hash",
     "raw_source_hash",
 )

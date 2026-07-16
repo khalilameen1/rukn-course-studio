@@ -298,32 +298,50 @@ def build_source_memory_payload(
 
     raw_text = extracted_text or ""
 
+    from app.generation.source_imperfection import (
+        OCR_LIKE_ORIGINS,
+        TRANSCRIPT_LIKE_ORIGINS,
+        infer_expanded_source_origin,
+        infer_extraction_method,
+        normalize_ocr_text,
+    )
     from app.generation.source_origin import (
         apply_source_origin,
-        infer_source_origin,
         is_transcript_derived_memory,
-        is_transcript_like_origin,
     )
     from app.generation.transcript_imperfection import normalize_transcript_text
 
     pre_origin = None
+    pre_method = None
     if raw_text.strip():
-        pre_origin = infer_source_origin(
+        pre_method = infer_extraction_method(
+            original_filename=original_filename,
+            mime_type=mime_type,
+            text=raw_text,
+        )
+        pre_origin = infer_expanded_source_origin(
             raw_text,
             category=category,
             original_filename=original_filename,
             mime_type=mime_type,
             declared_origin=source_origin,
             title=title,
+            extraction_method=pre_method,
         )
 
     text = raw_text
     transcript_normalization = None
     if raw_text.strip() and (
-        category == "transcript" or is_transcript_like_origin(pre_origin or "")
+        (pre_origin or "") in OCR_LIKE_ORIGINS or pre_method == "ocr"
     ):
-        transcript_normalization = normalize_transcript_text(raw_text)
-        text = transcript_normalization.cleaned_text or raw_text
+        ocr_norm = normalize_ocr_text(raw_text)
+        text = ocr_norm.cleaned_text or text
+    if raw_text.strip() and (
+        category == "transcript"
+        or (pre_origin or "") in TRANSCRIPT_LIKE_ORIGINS
+    ):
+        transcript_normalization = normalize_transcript_text(text)
+        text = transcript_normalization.cleaned_text or text
 
     raw_source_hash = compute_source_hash(raw_text)
     normalized_text_hash = compute_source_hash(text)

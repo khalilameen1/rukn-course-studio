@@ -302,11 +302,12 @@ def format_distilled_memory_snippet(
         terms = _clean_terminology(list(memory.get("terminology") or []))
     if terms:
         parts.append("Terminology (if still current): " + ", ".join(terms[:10]))
-    add_section("Relevance notes", list(memory.get("relevance_notes") or []), cap=3)
+    add_section("Relevance notes", list(memory.get("relevance_notes") or []), cap=2)
     add_section("Outdated warnings", list(memory.get("outdated_warnings") or []), cap=3)
     add_section("Market adaptation", list(memory.get("market_adaptation_notes") or []), cap=2)
     add_section("Blocked / discard", list(memory.get("discarded_signals") or []), cap=4)
-    add_section("Do not inherit", list(memory.get("blocked_content_warnings") or []), cap=3)
+    # Cap tightly — full mistrust doctrine lives in Admin Knowledge + style warning.
+    add_section("Do not inherit", list(memory.get("blocked_content_warnings") or []), cap=2)
 
     # Query-ranked chunk snippets stay internal and short.
     if chunks and query_text:

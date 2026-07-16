@@ -8,7 +8,7 @@ from typing import Any
 
 from app.models.enums import SourceCategory, SourceOrigin
 
-SOURCE_ORIGIN_VERSION = "1.0"
+SOURCE_ORIGIN_VERSION = "2.0"
 
 TRANSCRIPT_LIKE_ORIGINS: frozenset[str] = frozenset(
     {
@@ -122,9 +122,27 @@ def infer_source_origin(
     declared_origin: str | None = None,
     title: str | None = None,
 ) -> str:
-    """Infer source_origin — never treat file extension as authority."""
+    """Infer source_origin — never treat file extension as authority.
+
+    Prefer the expanded provenance classifier; fall back to transcript heuristics.
+    """
     if declared_origin and declared_origin in VALID_SOURCE_ORIGINS:
         return declared_origin
+
+    # Expanded classifier covers books/OCR/articles/etc.
+    try:
+        from app.generation.source_imperfection import infer_expanded_source_origin
+
+        return infer_expanded_source_origin(
+            text,
+            category=category,
+            original_filename=original_filename,
+            mime_type=mime_type,
+            declared_origin=declared_origin,
+            title=title,
+        )
+    except Exception:
+        pass
 
     cues = has_transcript_cues(text)
     title_blob = f"{title or ''} {original_filename or ''}"
@@ -139,7 +157,7 @@ def infer_source_origin(
     if category == SourceCategory.OLD_COURSE.value:
         if cues or _COURSE_SPOKEN_CUE.search(text or ""):
             return SourceOrigin.OLD_COURSE_TRANSCRIPT.value
-        return SourceOrigin.WRITTEN_DOCUMENT.value
+        return SourceOrigin.OLD_COURSE_MATERIAL.value
 
     if _MEETING_CUE.search(f"{text[:1200]} {title_blob}"):
         return SourceOrigin.MEETING_OR_WEBINAR_TRANSCRIPT.value
@@ -163,7 +181,7 @@ def infer_source_origin(
         return SourceOrigin.WRITTEN_DOCUMENT.value
 
     if category == SourceCategory.USER_NOTES.value:
-        return SourceOrigin.UNKNOWN.value
+        return SourceOrigin.USER_NOTES.value
 
     return SourceOrigin.UNKNOWN.value
 
@@ -208,63 +226,33 @@ def apply_source_origin(
     cleaned_text: str | None = None,
     transcript_normalization: Any | None = None,
 ) -> tuple[str, Any | None]:
-    """Resolve origin, apply transcript hygiene when transcript-like."""
-    origin = infer_source_origin(
-        text,
+    """Resolve provenance and apply general source imperfection for every source."""
+    from app.generation.source_imperfection import apply_source_imperfection
+
+    file_format = detect_file_format(
+        original_filename=original_filename,
+        mime_type=mime_type,
+    )
+    memory["file_format"] = file_format
+    memory["source_intent"] = category
+
+    working, normalization = apply_source_imperfection(
+        memory,
+        raw_text=text,
         category=category,
         original_filename=original_filename,
         mime_type=mime_type,
         declared_origin=declared_origin,
         title=title,
+        course_promise=course_promise,
+        pre_cleaned_text=cleaned_text,
     )
-    file_format = detect_file_format(
-        original_filename=original_filename,
-        mime_type=mime_type,
-    )
-
-    memory["source_origin"] = origin
     memory["source_origin_version"] = SOURCE_ORIGIN_VERSION
-    memory["file_format"] = file_format
-    memory["source_intent"] = category
-    if declared_origin and declared_origin in VALID_SOURCE_ORIGINS:
-        memory["declared_source_origin"] = declared_origin
 
-    working_text = cleaned_text if cleaned_text is not None else text
-    normalization = transcript_normalization
-
-    if is_transcript_like_origin(origin) and working_text.strip():
-        if normalization is None:
-            from app.generation.transcript_imperfection import normalize_transcript_text
-
-            normalization = normalize_transcript_text(working_text)
-            working_text = normalization.cleaned_text or working_text
-
-        from app.generation.transcript_imperfection import apply_transcript_imperfection
-
-        apply_transcript_imperfection(memory, normalization=normalization)
-
-        from app.generation.transcript_relevance import apply_transcript_relevance
-
-        apply_transcript_relevance(
-            memory,
-            extracted_text=working_text,
-            course_promise=course_promise,
-        )
-
-        for label in prompt_labels_for_origin(origin):
-            notes = list(memory.get("relevance_notes") or [])
-            if label not in notes:
-                notes.append(label)
-            memory["relevance_notes"] = notes[:12]
-            memory["transcript_origin_prompt_label"] = label
-
-        blocked = list(memory.get("blocked_content_warnings") or [])
-        for item in prompt_labels_for_origin(origin):
-            if item not in blocked:
-                blocked.append(item)
-        memory["blocked_content_warnings"] = blocked[:14]
-
-    return working_text, normalization
+    # Preserve pre-normalized transcript result if caller already cleaned.
+    if transcript_normalization is not None and normalization is None:
+        return working, transcript_normalization
+    return working, normalization
 
 
 def should_apply_transcript_topic_relevance(memory: dict[str, Any] | None) -> bool:
