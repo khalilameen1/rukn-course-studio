@@ -74,7 +74,7 @@ DEFAULT_MAX_TOTAL_CHARS = 6000
 # for traceability - so an old run's snapshot can be compared against
 # whatever version is active today. Not read by anything at runtime other
 # than the snapshot builder.
-PROMPT_COMPILER_VERSION = "2.20"
+PROMPT_COMPILER_VERSION = "2.21"
 
 # Stage -> the admin-knowledge keys actually relevant to it. Missing/
 # inactive keys are simply omitted (never an error) - see
@@ -624,8 +624,20 @@ def _factual_excerpt_text(source: SourceForCompiler, query_text: str) -> str:
     )
 
     if source.memory:
+        from app.generation.source_usefulness import (
+            LOW_SIGNAL_BRIEF_MAX_CHARS,
+            format_low_signal_snippet,
+            should_use_brief_candidates,
+        )
+
+        if should_use_brief_candidates(source.memory):
+            return format_low_signal_snippet(
+                source.memory, max_chars=min(MEMORY_SNIPPET_MAX_CHARS, LOW_SIGNAL_BRIEF_MAX_CHARS)
+            )
+
         original = int(source.memory.get("original_chars") or 0)
         text = source.text or ""
+        # Low-signal / brief mode never gets full short-body passthrough.
         if original and original <= SHORT_SOURCE_MAX_CHARS and text:
             # Orchestrator already put the full short body into `text`.
             return text[:SHORT_SOURCE_MAX_CHARS]
@@ -1020,13 +1032,15 @@ _PRIORITY_RANK = {"low": 0, "medium": 1, "high": 2}
 
 def _trim_order(excerpts: list[SourceExcerpt]) -> list[int]:
     """Indices into `excerpts`, ordered from "trim first" to "trim last":
-    lowest priority first, `user_notes` protected until everything else
-    has already been trimmed to nothing."""
+    lowest priority / low-signal first, `user_notes` protected until everything
+    else has already been trimmed to nothing."""
 
-    def sort_key(index: int) -> tuple[int, int]:
+    def sort_key(index: int) -> tuple[int, int, int]:
         excerpt = excerpts[index]
         protected = 1 if excerpt.category == SourceCategory.USER_NOTES.value else 0
-        return (protected, _PRIORITY_RANK.get(excerpt.priority, 1))
+        # Trim low-signal / brief candidate dumps first (cost hygiene).
+        low_signal = 0 if "[LOW_SIGNAL" in (excerpt.text or "") else 1
+        return (protected, low_signal, _PRIORITY_RANK.get(excerpt.priority, 1))
 
     return sorted(range(len(excerpts)), key=sort_key)
 
@@ -1098,5 +1112,24 @@ def compile_source_context(
     degrade gracefully, don't fail.
     """
     excerpts = [_build_excerpt(source, query_text) for source in sources]
-    trimmed = _apply_budget(excerpts, max_total_chars)
+    # Hard-cap low-signal excerpts before shared budget (credit hygiene).
+    from app.generation.source_usefulness import LOW_SIGNAL_BRIEF_MAX_CHARS
+
+    capped: list[SourceExcerpt] = []
+    for excerpt in excerpts:
+        text = excerpt.text or ""
+        if "[LOW_SIGNAL" in text and len(text) > LOW_SIGNAL_BRIEF_MAX_CHARS + 200:
+            text = text[: LOW_SIGNAL_BRIEF_MAX_CHARS + 200]
+            excerpt = SourceExcerpt(
+                source_id=excerpt.source_id,
+                category=excerpt.category,
+                priority=excerpt.priority,
+                text=text,
+                allowed_use=excerpt.allowed_use,
+                disallowed_use=excerpt.disallowed_use,
+                style_contamination_warning=excerpt.style_contamination_warning,
+                authority_type=excerpt.authority_type,
+            )
+        capped.append(excerpt)
+    trimmed = _apply_budget(capped, max_total_chars)
     return _order_by_authority(trimmed)

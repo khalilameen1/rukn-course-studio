@@ -271,4 +271,4 @@ def test_final_docx_has_no_source_origin_or_internal_transcript_labels():
     assert "asr" in forbidden
     assert "source_origin" not in plain.lower()
     assert "transcript_corrections" not in plain.lower()
-    assert PROMPT_COMPILER_VERSION == "2.20"
+    assert PROMPT_COMPILER_VERSION == "2.21"

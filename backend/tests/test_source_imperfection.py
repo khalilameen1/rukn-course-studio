@@ -77,7 +77,7 @@ GOOD_SCRIPT = """\
 def test_gate_in_required_keys():
     assert "rukn_source_imperfection_gate" in REQUIRED_KEYS
     assert "raw material" in SOURCE_IMPERFECTION_GATE.lower()
-    assert PROMPT_COMPILER_VERSION == "2.20"
+    assert PROMPT_COMPILER_VERSION == "2.21"
 
 
 def test_book_pdf_treated_as_raw_material_not_format_authority():

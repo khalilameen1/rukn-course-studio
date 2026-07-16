@@ -152,6 +152,9 @@ TELEPROMPTER_FORBIDDEN_SUBSTRINGS: tuple[str, ...] = (
     "mistrust",
     "normalized_text_hash",
     "raw_source_hash",
+    "low_signal",
+    "source_usefulness",
+    "include_mode",
 )
 
 # Matches exactly the numbering docx_export.py's render functions produce

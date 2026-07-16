@@ -1150,6 +1150,17 @@ When using any source memory, treat it as **distilled raw material** only.
 The model receives: extracted useful points; relevance notes; outdated warnings;
 market adaptation notes; blocked content warnings — not the full source
 repeatedly, not the source as equal authority, not the source format.
+
+## 9. Source usefulness / credit hygiene
+Mistrust does not mean rejection. It means cost-aware distillation.
+- Assess usefulness, risk, freshness, extraction quality, and unique useful material.
+- High-risk / low-quality sources: extract small candidate signals only; do not
+  send full source to lesson prompts; do not re-analyze unchanged sources.
+- If useful despite flaws: keep concepts, objections, warnings, terminology,
+  examples to rebuild, gaps, durable principles.
+- If low-value (`low_signal`): brief candidate notes only; exclude from expensive
+  full-context dumps; do not spend deep generation context on it.
+- Cache by raw_source_hash; inject compact distilled memory only.
 """
 
 TRANSCRIPT_TOPIC_RELEVANCE_GATE = """# ROKN Transcript Topic Relevance Gate

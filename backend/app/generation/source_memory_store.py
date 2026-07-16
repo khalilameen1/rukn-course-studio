@@ -572,6 +572,10 @@ def build_source_memory_payload(
 
             scrub_transcript_delivery_artifacts(memory)
 
+    from app.generation.source_usefulness import apply_source_usefulness
+
+    apply_source_usefulness(memory)
+
     return memory
 
 
@@ -606,9 +610,19 @@ def format_memory_snippet(
         format_transcript_colloquial_snippet,
         is_transcript_colloquial_only,
     )
+    from app.generation.source_usefulness import (
+        format_low_signal_snippet,
+        should_use_brief_candidates,
+    )
 
     if is_transcript_colloquial_only(memory):
         return format_transcript_colloquial_snippet(memory, max_chars=max_chars)
+
+    if should_use_brief_candidates(memory):
+        from app.generation.source_usefulness import LOW_SIGNAL_BRIEF_MAX_CHARS
+
+        brief_cap = min(max_chars, LOW_SIGNAL_BRIEF_MAX_CHARS)
+        return format_low_signal_snippet(memory, max_chars=brief_cap)
 
     if is_mixed_quality_draft_category(str(memory.get("source_type") or memory.get("category") or "")):
 
