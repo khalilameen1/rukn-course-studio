@@ -241,15 +241,17 @@ def apply_source_distillation(
     memory["gaps_to_cover"] = list(memory.get("gaps_to_cover") or [])[:6]
     memory["mistakes_to_avoid"] = _unique_lines(avoid + objections, limit=8)
     memory["discarded_signals"] = _unique_lines(discarded, limit=10)
+    preserved_relevance = list(memory.get("relevance_notes") or [])
     memory["relevance_notes"] = _unique_lines(
-        [
+        preserved_relevance
+        + [
             "Extract only what serves the current course promise",
             "Shallow but useful points are candidates — verify and rebuild" if is_shallow else "",
             "Academic depth may inform accuracy — final script stays spoken/practical"
             if is_academic
             else "",
         ],
-        limit=4,
+        limit=12,
     )
     memory["outdated_warnings"] = _unique_lines(outdated_warnings, limit=6)
     memory["market_adaptation_notes"] = _unique_lines(market_notes, limit=4)

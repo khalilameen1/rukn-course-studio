@@ -50,6 +50,8 @@ def test_unchanged_pdf_hash_skips_reextract():
         priority="high",
     )
     assert memory["source_hash"] == compute_source_hash(LONG_PDF)
+    assert memory["raw_source_hash"] == compute_source_hash(LONG_PDF)
+    assert memory["normalized_text_hash"] == compute_source_hash(LONG_PDF)
     assert memory_matches_hash(memory, LONG_PDF)
     assert not memory_matches_hash(memory, LONG_PDF + " changed")
     assert memory["extracted_facts"]

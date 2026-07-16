@@ -65,6 +65,22 @@ class SourceCategory(str, Enum):
     TRANSCRIPT = "transcript"
 
 
+class SourceOrigin(str, Enum):
+    """How the source was produced — separate from file format and user intent.
+
+    A .txt/.docx/.pdf may be a transcript or a written document; extension is
+    not authority. Stored on Source Memory and optionally declared at upload.
+    """
+
+    WRITTEN_DOCUMENT = "written_document"
+    AI_GENERATED_TRANSCRIPT = "ai_generated_transcript"
+    HUMAN_TRANSCRIPT = "human_transcript"
+    COURSE_TRANSCRIPT = "course_transcript"
+    OLD_COURSE_TRANSCRIPT = "old_course_transcript"
+    MEETING_OR_WEBINAR_TRANSCRIPT = "meeting_or_webinar_transcript"
+    UNKNOWN = "unknown"
+
+
 class Priority(str, Enum):
     HIGH = "high"
     MEDIUM = "medium"

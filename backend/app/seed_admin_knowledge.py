@@ -1204,6 +1204,41 @@ or example authority.
 ## 8. Final output hygiene
 Final Teleprompter DOCX must never contain internal transcript labels, source
 notes, or distillation markers.
+
+## 9. Transcript imperfection — do not trust wording literally
+Many transcripts were generated automatically by speech-to-text systems. Treat
+them as useful but imperfect noisy raw material. Common errors include: wrong or
+missing words; duplicated words or fragments; merged or split sentences; wrong
+punctuation; Arabic written instead of English technical terms; English written
+instead of Arabic; incorrect product names; OCR mistakes; homophones; spelling
+errors; speaker-ID mistakes; timestamps mixed into text; repeated or omitted
+fragments.
+
+Therefore:
+- Do NOT trust transcript wording literally.
+- Extract meaning, not wording.
+- Correct obvious transcription mistakes.
+- Restore technical terminology when obvious.
+- Do not inherit transcript grammar, formatting, or transcription errors.
+- If a transcript conflicts with official documentation, verified educational
+  sources, or grounded facts, the transcript loses.
+- The transcript is evidence of what someone probably said, not proof the
+  content is correct.
+
+## 10. Source origin — separate from file format and user intent
+For every course source, distinguish: file_format (txt/md/docx/pdf/pasted),
+source_intent (user category), source_origin (how produced), topic_relevance,
+and factual authority. Never infer reliability from file extension.
+
+source_origin values: written_document, ai_generated_transcript,
+human_transcript, course_transcript, old_course_transcript,
+meeting_or_webinar_transcript, unknown.
+
+Transcript-like origins must receive transcript-noise handling before
+extraction. Course transcripts are raw material only — rebuild in ROKN format.
+Old course transcripts may be outdated — official docs override. Off-topic
+transcripts: colloquial calibration only. Final DOCX must never mention
+source_origin, ASR errors, or internal cleaning metadata.
 """
 
 INTERPRETATION_GUARDRAILS = """# ROKN Final Interpretation Guardrails

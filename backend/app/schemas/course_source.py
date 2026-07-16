@@ -3,7 +3,7 @@ from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, computed_field
 
-from app.models.enums import Priority, SourceCategory
+from app.models.enums import Priority, SourceCategory, SourceOrigin
 from app.services.source_status import SOURCE_STATUS_MESSAGES
 
 
@@ -13,6 +13,7 @@ class CourseSourceNotesCreate(BaseModel):
     text: str
     title: Optional[str] = None
     source_category: SourceCategory = SourceCategory.USER_NOTES
+    source_origin: SourceOrigin | None = None
     priority: Priority = Priority.MEDIUM
     include_in_generation: bool = True
 

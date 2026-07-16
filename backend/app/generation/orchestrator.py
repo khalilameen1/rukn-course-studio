@@ -1398,7 +1398,16 @@ def _load_usable_sources_with_memory(
         current_hash = compute_source_hash(text)
         category = source.source_category.value
         mixed = is_mixed_quality_draft_category(category)
-        is_transcript = category == "transcript"
+        from app.generation.source_origin import infer_source_origin, is_transcript_like_origin
+
+        inferred_origin = infer_source_origin(
+            text,
+            category=category,
+            original_filename=source.original_filename,
+            mime_type=source.mime_type,
+            title=source.title,
+        )
+        is_transcript = category == "transcript" or is_transcript_like_origin(inferred_origin)
         needs_promise = mixed or is_transcript
 
         promise_ok = True
@@ -1420,12 +1429,19 @@ def _load_usable_sources_with_memory(
             continue
 
         memory_kwargs = dict(
-            title=source.original_filename or f"source-{source.id}",
+            title=source.title or source.original_filename or f"source-{source.id}",
             category=category,
             extracted_text=text,
             priority=source.priority.value,
             include_in_generation=getattr(source, "include_in_generation", True),
             course_promise=promise_dict if needs_promise else None,
+            original_filename=source.original_filename,
+            mime_type=source.mime_type,
+            source_origin=(
+                (analysis.source_memory_json or {}).get("declared_source_origin")
+                if analysis and analysis.source_memory_json
+                else None
+            ),
         )
 
         if analysis and analysis.source_memory_json:

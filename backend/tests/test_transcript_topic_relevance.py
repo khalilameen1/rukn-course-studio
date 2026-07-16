@@ -88,7 +88,7 @@ def test_prompt_compiler_includes_transcript_gate():
     body = " ".join(packed.values()).lower()
     assert "same_topic" in body
     assert TRANSCRIPT_TOPIC_RELEVANCE_GATE not in body
-    assert PROMPT_COMPILER_VERSION == "2.17"
+    assert PROMPT_COMPILER_VERSION == "2.19"
 
 
 def test_same_topic_transcript_provides_distilled_raw_material():

@@ -152,11 +152,13 @@ def compute_source_hash(extracted_text: str) -> str:
 
 def memory_matches_hash(memory: dict[str, Any] | None, extracted_text: str) -> bool:
 
+    """True when the raw uploaded/pasted source text is unchanged."""
+
     if not memory:
 
         return False
 
-    stored = (memory.get("source_hash") or "").strip()
+    stored = (memory.get("raw_source_hash") or memory.get("source_hash") or "").strip()
 
     if not stored:
 
@@ -284,13 +286,48 @@ def build_source_memory_payload(
 
     course_promise: dict[str, Any] | None = None,
 
+    original_filename: str | None = None,
+
+    mime_type: str | None = None,
+
+    source_origin: str | None = None,
+
 ) -> dict[str, Any]:
 
     """One-time persistent memory dict stored on SourceAnalysis.source_memory_json."""
 
-    text = extracted_text or ""
+    raw_text = extracted_text or ""
 
-    source_hash = compute_source_hash(text)
+    from app.generation.source_origin import (
+        apply_source_origin,
+        infer_source_origin,
+        is_transcript_derived_memory,
+        is_transcript_like_origin,
+    )
+    from app.generation.transcript_imperfection import normalize_transcript_text
+
+    pre_origin = None
+    if raw_text.strip():
+        pre_origin = infer_source_origin(
+            raw_text,
+            category=category,
+            original_filename=original_filename,
+            mime_type=mime_type,
+            declared_origin=source_origin,
+            title=title,
+        )
+
+    text = raw_text
+    transcript_normalization = None
+    if raw_text.strip() and (
+        category == "transcript" or is_transcript_like_origin(pre_origin or "")
+    ):
+        transcript_normalization = normalize_transcript_text(raw_text)
+        text = transcript_normalization.cleaned_text or raw_text
+
+    raw_source_hash = compute_source_hash(raw_text)
+    normalized_text_hash = compute_source_hash(text)
+    source_hash = raw_source_hash
 
     tokens_used = estimate_tokens(text)
 
@@ -344,6 +381,10 @@ def build_source_memory_payload(
 
         "source_hash": source_hash,
 
+        "raw_source_hash": raw_source_hash,
+
+        "normalized_text_hash": normalized_text_hash,
+
         "source_type": category,
 
         "source_priority": priority,
@@ -374,7 +415,7 @@ def build_source_memory_payload(
 
         "chunk_count": len(chunks or []),
 
-        "original_chars": len(text),
+        "original_chars": len(raw_text),
 
         "processed_once": True,
 
@@ -410,24 +451,23 @@ def build_source_memory_payload(
 
 
 
-    if category == "transcript":
-        from app.generation.transcript_relevance import apply_transcript_relevance
-
-        apply_transcript_relevance(
-            memory,
-            extracted_text=text,
-            course_promise=course_promise,
-        )
-
-    from app.generation.mixed_draft_memory import (
-
-        build_mixed_draft_memory,
-
-        is_mixed_quality_draft_category,
-
+    text, transcript_normalization = apply_source_origin(
+        memory,
+        text=raw_text,
+        category=category,
+        original_filename=original_filename,
+        mime_type=mime_type,
+        declared_origin=source_origin,
+        title=title,
+        course_promise=course_promise,
+        cleaned_text=text,
+        transcript_normalization=transcript_normalization,
     )
 
-
+    from app.generation.mixed_draft_memory import (
+        build_mixed_draft_memory,
+        is_mixed_quality_draft_category,
+    )
 
     if is_mixed_quality_draft_category(category):
 
@@ -509,7 +549,7 @@ def build_source_memory_payload(
 
     if not memory.get("transcript_colloquial_only"):
         apply_source_distillation(memory, extracted_text=text, target_market=target_market)
-        if category == "transcript":
+        if is_transcript_derived_memory(memory):
             from app.generation.transcript_relevance import scrub_transcript_delivery_artifacts
 
             scrub_transcript_delivery_artifacts(memory)

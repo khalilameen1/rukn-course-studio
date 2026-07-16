@@ -8,7 +8,7 @@ from sqlmodel import Session
 from app.config import settings
 from app.crud import course_sources, source_analyses
 from app.db import get_session
-from app.models.enums import Priority, SourceCategory
+from app.models.enums import Priority, SourceCategory, SourceOrigin
 from app.routers.deps import get_course_or_404
 from app.schemas.course_source import (
     CourseSourceNotesCreate,
@@ -48,6 +48,10 @@ def _create_source_analysis(
     title: str = "",
     priority: str = "medium",
     include_in_generation: bool = True,
+    *,
+    original_filename: str | None = None,
+    mime_type: str | None = None,
+    source_origin: str | None = None,
 ) -> None:
     """Simple, no-embeddings analysis + persistent Source Memory (once)."""
     from app.generation.source_memory_store import build_source_memory_payload
@@ -64,6 +68,9 @@ def _create_source_analysis(
         avoid_points=analysis.avoid_points,
         priority=priority,
         include_in_generation=include_in_generation,
+        original_filename=original_filename,
+        mime_type=mime_type,
+        source_origin=source_origin,
     )
     source_analyses.create(
         session,
@@ -89,6 +96,7 @@ async def upload_source(
     source_title: str | None = Form(None),
     include_in_generation: bool = Form(True),
     password: str | None = Form(None),
+    source_origin: SourceOrigin | None = Form(None),
     session: Session = Depends(get_session),
 ):
     """Save the uploaded file, then extract its text (see app/services/extraction.py).
@@ -151,6 +159,9 @@ async def upload_source(
             title=display_title or f"source-{source.id}",
             priority=priority.value,
             include_in_generation=include_in_generation,
+            original_filename=safe_name,
+            mime_type=file.content_type,
+            source_origin=source_origin.value if source_origin else None,
         )
 
     return source
@@ -192,6 +203,7 @@ def add_source_notes(
         title=display_title,
         priority=payload.priority.value,
         include_in_generation=payload.include_in_generation,
+        source_origin=payload.source_origin.value if payload.source_origin else None,
     )
 
     return source

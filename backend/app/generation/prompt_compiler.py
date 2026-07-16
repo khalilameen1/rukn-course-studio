@@ -74,7 +74,7 @@ DEFAULT_MAX_TOTAL_CHARS = 6000
 # for traceability - so an old run's snapshot can be compared against
 # whatever version is active today. Not read by anything at runtime other
 # than the snapshot builder.
-PROMPT_COMPILER_VERSION = "2.17"
+PROMPT_COMPILER_VERSION = "2.19"
 
 # Stage -> the admin-knowledge keys actually relevant to it. Missing/
 # inactive keys are simply omitted (never an error) - see
@@ -876,8 +876,21 @@ def _build_flow_profile_text(source: SourceForCompiler) -> str:
 
 def _build_excerpt(source: SourceForCompiler, query_text: str) -> SourceExcerpt:
     from app.generation.source_isolation import wrap_untrusted
+    from app.generation.source_origin import (
+        is_transcript_derived_memory,
+        prompt_labels_for_origin,
+    )
+    from app.generation.transcript_relevance import (
+        is_transcript_colloquial_only,
+        prompt_label_for_relevance,
+    )
 
-    if source.category == SourceCategory.FLOW_REFERENCE.value:
+    mem = source.memory or {}
+    origin = str(mem.get("source_origin") or "")
+    transcript_derived = is_transcript_derived_memory(mem)
+    colloquial_only = is_transcript_colloquial_only(mem)
+
+    if source.category == SourceCategory.FLOW_REFERENCE.value and not transcript_derived:
         # Natural colloquial calibration — still untrusted; never structure/facts.
         text = wrap_untrusted(
             _build_flow_profile_text(source),
@@ -899,24 +912,24 @@ def _build_excerpt(source: SourceForCompiler, query_text: str) -> SourceExcerpt:
             _RAW_MATERIAL_MARKER + _factual_excerpt_text(source, query_text),
             label=f"raw_material:{source.source_id}",
         )
-    elif source.category == SourceCategory.TRANSCRIPT.value:
-        from app.generation.transcript_relevance import (
-            is_transcript_colloquial_only,
-            prompt_label_for_relevance,
-        )
-
-        if is_transcript_colloquial_only(source.memory):
+    elif source.category == SourceCategory.TRANSCRIPT.value or transcript_derived:
+        if colloquial_only:
             body = source.text or _build_flow_profile_text(source)
             text = wrap_untrusted(
                 body,
                 label=f"transcript_off_topic_colloquial:{source.source_id}",
             )
         else:
-            rel = (source.memory or {}).get("topic_relevance") or "unclear"
-            prefix = prompt_label_for_relevance(rel) + "\n\n"
+            rel = mem.get("topic_relevance") or "unclear"
+            prefix_parts = list(prompt_labels_for_origin(origin))
+            prefix_parts.append(
+                mem.get("transcript_prompt_label") or prompt_label_for_relevance(rel)
+            )
+            prefix = "\n\n".join(p for p in prefix_parts if p) + "\n\n"
+            label_cat = source.category if source.category != SourceCategory.TRANSCRIPT.value else "transcript"
             text = wrap_untrusted(
                 prefix + _factual_excerpt_text(source, query_text),
-                label=f"transcript_course_raw:{source.source_id}",
+                label=f"{label_cat}_course_raw:{source.source_id}",
             )
     else:
         text = wrap_untrusted(
@@ -944,10 +957,7 @@ def _build_excerpt(source: SourceForCompiler, query_text: str) -> SourceExcerpt:
         authority_type=auth_type.value,
     )
 
-    if (
-        source.category == SourceCategory.TRANSCRIPT.value
-        and is_transcript_colloquial_only(source.memory)
-    ):
+    if colloquial_only and transcript_derived:
         from app.generation.knowledge_priority_ladder import AuthorityType
         from app.generation.transcript_relevance import OFF_TOPIC_TRANSCRIPT_LABEL
 
@@ -956,12 +966,11 @@ def _build_excerpt(source: SourceForCompiler, query_text: str) -> SourceExcerpt:
         excerpt.allowed_use = list(ALLOWED_USE_BY_CATEGORY.get(fr, []))
         excerpt.disallowed_use = list(DISALLOWED_USE_BY_CATEGORY.get(fr, []))
         excerpt.style_contamination_warning = OFF_TOPIC_TRANSCRIPT_LABEL
-    elif source.category == SourceCategory.TRANSCRIPT.value and source.memory:
-        from app.generation.transcript_relevance import prompt_label_for_relevance
-
-        rel = source.memory.get("topic_relevance") or "unclear"
-        label = source.memory.get("transcript_prompt_label") or prompt_label_for_relevance(rel)
-        excerpt.style_contamination_warning = f"{combined_warning} {label}".strip()
+    elif transcript_derived and source.memory:
+        rel = mem.get("topic_relevance") or "unclear"
+        label = mem.get("transcript_prompt_label") or prompt_label_for_relevance(rel)
+        origin_labels = " ".join(prompt_labels_for_origin(origin))
+        excerpt.style_contamination_warning = f"{combined_warning} {origin_labels} {label}".strip()
 
     return excerpt
 

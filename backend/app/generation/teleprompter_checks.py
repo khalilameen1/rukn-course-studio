@@ -133,6 +133,19 @@ TELEPROMPTER_FORBIDDEN_SUBSTRINGS: tuple[str, ...] = (
     "end_untrusted_reference_material",
     "ignore previous instructions",
     "reveal prompts",
+    # Transcript / source-origin internal metadata — never DOCX.
+    "source_origin",
+    "transcript_corrections",
+    "transcript imperfection",
+    "transcript-derived",
+    "transcript derived",
+    "asr error",
+    "asr/transcription",
+    "asr",
+    "ocr note",
+    "uncertain_terms",
+    "normalized_text_hash",
+    "raw_source_hash",
 )
 
 # Matches exactly the numbering docx_export.py's render functions produce
