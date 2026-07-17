@@ -1,18 +1,19 @@
-"""Course map two-pass + duration seriousness tests."""
+"""Course map two-pass + hard-max / compression tests (no Premium minute floor)."""
 
 from app.ai.fake_provider import FakeProvider
 from app.ai.provider import BuildCourseMapInput, CourseBrief
+from app.generation.contracts.course_thesis import build_course_thesis_from_brief
 from app.generation.course_map_quality import (
     PREMIUM_MIN_TOTAL_MINUTES,
     PROGRESS_MAP_FIRST_DRAFT,
     PROGRESS_MAP_REBUILD,
     PROGRESS_MAP_STUDENT,
-    PROGRESS_START_LESSONS,
     analyze_map_duration,
     local_map_review_feedback,
     parse_estimated_minutes,
     total_estimated_minutes,
 )
+from app.generation.map_compression import enforce_map_hard_limits
 from app.generation.orchestrator import _build_and_review_course_map, run_generation
 from app.models.enums import (
     ExplanationLevel,
@@ -21,13 +22,12 @@ from app.models.enums import (
 )
 from app.crud import courses
 from app.prompts.prompt_registry import PipelineStage, load_prompt
-from app.schemas.generation import CourseMap, FinalCourse, FinalModule, FinalReel, ModulePlan, ReelPlan
+from app.schemas.generation import CourseMap, CourseThesis, ModulePlan, ReelPlan
 from app.schemas.generation_job import GenerationJobRead
 from app.services.docx_export import extract_plain_text, render_final_course_docx
 from app.generation.teleprompter_checks import find_forbidden_substrings
 from sqlmodel import Session, SQLModel, create_engine
 import pytest
-
 
 @pytest.fixture()
 def session(tmp_path):
@@ -54,13 +54,12 @@ def test_map_prompt_defines_two_pass_phases():
     text = load_prompt(PipelineStage.BUILD_COURSE_MAP).lower()
     assert "first_draft" in text
     assert "final_master" in text
-    assert "120" in text or "seriousness" in text
-    assert "padding" in text or "filler" in text
+    assert "padding" in text or "filler" in text or "compress" in text
 
 
-def test_parse_and_premium_floor_flags_shallow_short_map():
-    assert parse_estimated_minutes("90 seconds") == 1.5
-    assert parse_estimated_minutes("3 minutes") == 3.0
+def test_premium_minute_floor_removed():
+    """Quality must not inflate maps via a Premium minute floor."""
+    assert PREMIUM_MIN_TOTAL_MINUTES == 0.0
     shallow = CourseMap(
         course_title="C",
         main_thread="t",
@@ -75,6 +74,10 @@ def test_parse_and_premium_floor_flags_shallow_short_map():
                         title="L",
                         purpose="p",
                         estimated_length="90 seconds",
+                        distinct_teaching_outcome="one skill",
+                        new_skill_or_decision="decide X",
+                        why_standalone="narrow",
+                        student_can_do_after="do X",
                     )
                 ],
             )
@@ -83,12 +86,48 @@ def test_parse_and_premium_floor_flags_shallow_short_map():
     report = analyze_map_duration(
         shallow, quality_mode=GenerationQualityMode.PREMIUM, relax_floor=False
     )
-    assert report.too_short_for_premium is True
-    assert report.total_minutes < PREMIUM_MIN_TOTAL_MINUTES
-    fb = local_map_review_feedback(
-        shallow, quality_mode=GenerationQualityMode.PREMIUM, relax_floor=False
+    assert report.too_short_for_premium is False
+    assert parse_estimated_minutes("90 seconds") == 1.5
+
+
+def test_hard_max_lessons_flags_oversize_map():
+    thesis = CourseThesis(
+        final_student_outcome="o",
+        audience_and_starting_level="a",
+        practical_deliverable="d",
+        in_scope=["x"],
+        out_of_scope=["y"],
+        hard_max_lessons=60,
+        hard_max_minutes=240,
+        final_project="p",
     )
-    assert any("120" in x or "under" in x.lower() for x in fb)
+    stems = [f"capability{chr(97 + i % 26)}{i}topic" for i in range(61)]
+    reels = [
+        ReelPlan(
+            reel_id=f"m1-r{i}",
+            title=f"{stems[i-1]} workshop",
+            purpose=f"Teach {stems[i-1]} only",
+            distinct_teaching_outcome=f"Execute {stems[i-1]} solo",
+            new_skill_or_decision=f"decide-{stems[i-1]}",
+            why_standalone=f"{stems[i-1]} is independent",
+            student_can_do_after=f"do {stems[i-1]}",
+            estimated_length="3 minutes",
+            must_cover=[f"{stems[i-1]}-a"],
+        )
+        for i in range(1, 62)
+    ]
+    oversized = CourseMap(
+        course_title="C",
+        main_thread="t",
+        thesis=thesis,
+        modules=[ModulePlan(module_id="m1", title="M", purpose="p", reels=reels)],
+    )
+    report = analyze_map_duration(
+        oversized, quality_mode=GenerationQualityMode.PREMIUM, relax_floor=False, thesis=thesis
+    )
+    assert report.over_hard_max_lessons is True
+    _, creport = enforce_map_hard_limits(oversized, thesis=thesis)
+    assert not creport.ok
 
 
 def test_over_five_minutes_allowed_when_present():
@@ -114,7 +153,6 @@ def test_over_five_minutes_allowed_when_present():
             )
         ],
     )
-    # 15 × 8 = 120
     report = analyze_map_duration(
         longish, quality_mode=GenerationQualityMode.PREMIUM, relax_floor=False
     )
@@ -134,13 +172,13 @@ def test_two_pass_map_before_lessons_and_not_first_draft_alone():
             return super().build_course_map(input)
 
         def write_single_reel(self, input):  # noqa: ANN001
-            # Lessons must start only after final map exists.
             assert "final_master" in self.map_phases
             self.write_count += 1
             return super().write_single_reel(input)
 
     progress: list[str] = []
     provider = Tracking()
+    thesis = build_course_thesis_from_brief(_brief())
     final_map, meta = _build_and_review_course_map(
         provider=provider,
         brief=_brief(),
@@ -149,17 +187,20 @@ def test_two_pass_map_before_lessons_and_not_first_draft_alone():
         course_creator_persona={},
         quality_mode=GenerationQualityMode.PREMIUM,
         on_progress=progress.append,
+        thesis=thesis,
     )
     assert provider.map_phases[0] == "first_draft"
     assert "final_master" in provider.map_phases
     assert meta["map_builds"] >= 2
-    assert total_estimated_minutes(final_map) >= PREMIUM_MIN_TOTAL_MINUTES
+    assert meta.get("map_phases", "").endswith("compress")
+    assert final_map.thesis is not None
+    assert total_estimated_minutes(final_map) > 0
     assert PROGRESS_MAP_FIRST_DRAFT in progress
     assert PROGRESS_MAP_STUDENT in progress
     assert PROGRESS_MAP_REBUILD in progress
 
 
-def test_preview_relaxes_premium_floor():
+def test_preview_does_not_use_premium_floor():
     draftish = CourseMap(
         course_title="C",
         main_thread="t",
@@ -187,6 +228,8 @@ def test_preview_relaxes_premium_floor():
 
 
 def test_final_docx_hides_map_reviews(session):
+    from app.schemas.generation import FinalCourse, FinalModule, FinalReel
+
     course = courses.create(
         session,
         title="Course",
@@ -197,7 +240,6 @@ def test_final_docx_hides_map_reviews(session):
     )
     job = run_generation(session, course.id, provider=FakeProvider())
     assert job.status.value == "completed"
-    assert job.last_progress_message in ("Done", PROGRESS_START_LESSONS) or True
     log = [e for e in (job.log_json or []) if e.get("step") == "build_map"][0]
     assert log.get("map_builds", 0) >= 2
     read = GenerationJobRead.model_validate(job).model_dump()
@@ -214,7 +256,7 @@ def test_final_docx_hides_map_reviews(session):
                     FinalReel(
                         reel_id="m1-r1",
                         title="Lesson",
-                        script_text="جرّب الاستهداف الضيّق قبل التوسيع.",
+                        script_text="جرب الاستهداف الضيق قبل التوسيع",
                     )
                 ],
             )

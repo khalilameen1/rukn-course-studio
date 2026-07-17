@@ -1,24 +1,8 @@
 """Deterministic fake AIProvider - no real API calls.
 
-Every method is a pure function of its input: same input in, exact same
-output out, every time (no randomness, no clock, no network). This exists
-so the generation orchestrator and its tests can be built against a
-working, fast, free `AIProvider` before any real model is wired in - see
-docs/BUILD_PLAN.md Phase 4+.
-
-`review_*` methods do the one bit of real "logic" a fake can meaningfully
-do: flag reels whose `script_text` is empty as needing a rewrite. This lets
-pipeline tests exercise both the pass path and the revision path without
-needing an actual model to judge quality.
-
-`self.last_usage` (AI Usage Center, §5) is set after every method call to
-a small deterministic *synthetic* token estimate derived from input/output
-text length - never real usage, since no real API call ever happens here.
-`estimated_cost_usd` computed from this is always `0.0` (see
-app/generation/orchestrator.py `_record_usage_event` - it recognizes
-`provider == "fake"` and never applies real pricing to it), so this is
-purely for UI/testing symmetry with `AnthropicProvider.last_usage`, never
-mistakable for real spend.
+Infrastructure / pipeline stand-in only — NOT a production quality oracle.
+Tests using FakeProvider must not be labeled as quality assurance of Arabic
+spoken craft; use golden Arabic fixtures for that.
 """
 
 from pydantic import BaseModel
@@ -34,6 +18,9 @@ from app.ai.provider import (
     ReviewTwoModulesInput,
     WriteSingleReelInput,
 )
+from app.generation.contracts.spoken_final_master import beats_to_plain_script
+from app.generation.duration_policy import word_range_for
+from app.models.enums import LessonDeliveryMode
 from app.schemas.generation import (
     CourseMap,
     FinalCourse,
@@ -41,6 +28,7 @@ from app.schemas.generation import (
     FinalReel,
     GeneratedReel,
     ModulePlan,
+    ModuleProject,
     ReelPlan,
     ReviewAction,
     ReviewActionType,
@@ -56,6 +44,9 @@ def _empty_script_action(reel: GeneratedReel) -> ReviewAction:
         target_id=reel.reel_id,
         reason_code="empty_script",
         instruction=f"Reel '{reel.title}' has no script text - regenerate it.",
+        violation_type="empty_script",
+        severity="fatal",
+        required_repair=f"Reel '{reel.title}' has no script text - regenerate it.",
     )
 
 
@@ -70,9 +61,6 @@ def _result_for(scope: ReviewScope, empty_reels: list[GeneratedReel]) -> ReviewR
 
 
 def _synthetic_usage(input_model: BaseModel, output_model: BaseModel) -> dict:
-    """Deterministic, clearly-synthetic token estimate - roughly 4
-    characters per token, the same rough heuristic often used to
-    ballpark-estimate token counts without a real tokenizer."""
     input_chars = len(input_model.model_dump_json())
     output_chars = len(output_model.model_dump_json())
     return {
@@ -84,6 +72,37 @@ def _synthetic_usage(input_model: BaseModel, output_model: BaseModel) -> dict:
     }
 
 
+_FAKE_SKILLS = (
+    ("Contrast hierarchy", "decide visual weight", "contrast-weight"),
+    ("Thumb-zone CTA", "place tap targets", "thumb-cta"),
+    ("Before-after clarity", "compare messy vs clear", "before-after"),
+    ("Export checklist", "export without quality loss", "export-check"),
+    ("Color role mapping", "assign color jobs", "color-roles"),
+    ("Crop for story", "crop for mobile story", "story-crop"),
+    ("Type scale ladder", "set readable type scale", "type-scale"),
+    ("Safe-margin frame", "protect edge content", "safe-margin"),
+    ("Offer stack order", "order offer hierarchy", "offer-stack"),
+    ("Caption skim path", "write skimmable caption", "caption-skim"),
+    ("Light direction fix", "fix flat lighting", "light-fix"),
+    ("Audio ducking mix", "duck music under voice", "audio-duck"),
+    ("Retention beat map", "place retention beats", "retention-map"),
+    ("Brand mark quiet", "place logo without noise", "brand-quiet"),
+    ("Proof shot select", "pick strongest proof shot", "proof-shot"),
+)
+
+
+def _delivery_for_index(r_idx: int) -> LessonDeliveryMode:
+    modes = [
+        LessonDeliveryMode.CAMERA_EXPLAINER,
+        LessonDeliveryMode.SCREEN_DEMO,
+        LessonDeliveryMode.BEFORE_AFTER,
+        LessonDeliveryMode.ERROR_FIX,
+        LessonDeliveryMode.PROJECT_BUILD,
+        LessonDeliveryMode.MICRO_CONCEPT,
+    ]
+    return modes[(r_idx - 1) % len(modes)]
+
+
 class FakeProvider(AIProvider):
     """Deterministic stand-in for a real AI provider. Calls no external API."""
 
@@ -91,55 +110,97 @@ class FakeProvider(AIProvider):
     DEFAULT_REELS_PER_MODULE = 3
 
     def __init__(self) -> None:
-        # Same shape/purpose as `AnthropicProvider.last_usage` - see this
-        # module's docstring for why costs derived from it are always 0.0.
         self.last_usage: dict | None = None
 
     def build_course_map(self, input: BuildCourseMapInput) -> CourseMap:
-        # Two-pass: first_draft can be lighter; final_master deepens
-        # estimated_length so Premium ~120 min floor is met without exploding
-        # reel write-count in e2e tests (still 2×3 lessons).
+        # Content-sized estimates — never inflate to a Premium minute floor.
         phase = (input.map_phase or "first_draft").strip().lower()
-        feedback_blob = " ".join(input.previous_map_feedback or []).lower()
-        deepen = phase == "final_master" or any(
-            k in feedback_blob
-            for k in ("120", "shallow", "depth", "bridge", "under", "merge", "premium")
-        )
-        estimated = "20 minutes" if deepen else "90 seconds"
+        deepen = phase == "final_master"
 
         modules: list[ModulePlan] = []
+        skill_i = 0
         for m_idx in range(1, self.DEFAULT_MODULE_COUNT + 1):
             module_id = f"m{m_idx}"
-            reels = [
-                ReelPlan(
-                    reel_id=f"{module_id}-r{r_idx}",
-                    title=f"Fake lesson topic {r_idx} for module {m_idx}",
-                    purpose=f"Fake purpose for module {m_idx} reel {r_idx}.",
-                    must_cover=[f"fake point {m_idx}.{r_idx}.1", f"fake point {m_idx}.{r_idx}.2"],
-                    must_avoid=["repeating an earlier reel's example"],
-                    source_hints=[f"source:{s.source_id}" for s in input.sources],
-                    estimated_length=estimated,
+            reels: list[ReelPlan] = []
+            for r_idx in range(1, self.DEFAULT_REELS_PER_MODULE + 1):
+                mode = _delivery_for_index(r_idx)
+                rng = word_range_for(mode)
+                needs_visual = mode in {
+                    LessonDeliveryMode.SCREEN_DEMO,
+                    LessonDeliveryMode.PROJECT_BUILD,
+                    LessonDeliveryMode.BEFORE_AFTER,
+                }
+                skill_title, skill_decision, skill_slug = _FAKE_SKILLS[
+                    skill_i % len(_FAKE_SKILLS)
+                ]
+                skill_i += 1
+                reels.append(
+                    ReelPlan(
+                        reel_id=f"{module_id}-r{r_idx}",
+                        title=f"{skill_title} (M{m_idx}L{r_idx})",
+                        purpose=(
+                            f"Teach {skill_decision} for module {m_idx} "
+                            f"using {skill_slug} — unrelated to other lessons."
+                        ),
+                        must_cover=[
+                            f"{skill_slug}-point-a",
+                            f"{skill_slug}-point-b",
+                        ],
+                        must_avoid=["repeating an earlier reel's example"],
+                        source_hints=[f"source:{s.source_id}" for s in input.sources],
+                        estimated_length=f"{(rng.target_min + rng.target_max) / 2 / 135:.1f} minutes",
+                        distinct_teaching_outcome=(
+                            f"Student can {skill_decision} ({skill_slug}) without help"
+                        ),
+                        new_skill_or_decision=skill_decision,
+                        why_standalone=(
+                            f"{skill_slug} is a separate decision from neighboring lessons"
+                        ),
+                        student_can_do_after=f"يطبق {skill_slug}",
+                        delivery_mode=mode,
+                        target_spoken_words_min=rng.target_min,
+                        target_spoken_words_max=rng.target_max,
+                        needs_screen_or_visual=needs_visual,
+                        internal_visual_plan=(
+                            f"Show screen steps for {skill_slug}"
+                            if needs_visual
+                            else ""
+                        ),
+                        required_assets=[f"{skill_slug}.png"] if needs_visual else [],
+                        project_contribution=f"Feeds module {m_idx} project via {skill_slug}",
+                        needs_natural_bridge=r_idx < self.DEFAULT_REELS_PER_MODULE,
+                    )
                 )
-                for r_idx in range(1, self.DEFAULT_REELS_PER_MODULE + 1)
-            ]
+            is_last = m_idx == self.DEFAULT_MODULE_COUNT
+            project = ModuleProject(
+                name=f"مشروع موديول {m_idx}",
+                brief=(
+                    f"نفّذ تمرين تطبيقي يجمع مهارات الموديول {m_idx} في تسليم واحد"
+                    if not is_last
+                    else f"طبّق مهارات الموديول {m_idx} في تسليم قصير قابل للمراجعة"
+                ),
+                inputs_or_files=["ملف تمرين"],
+                deliverable_shape="لقطة شاشة + ملف نهائي",
+                pass_criteria=["ينفّذ الخطوات", "يوضح القرار"],
+                skills_tested=[f"skill-{m_idx}"],
+            )
             modules.append(
                 ModulePlan(
                     module_id=module_id,
                     title=f"Fake topic block {m_idx} for {input.brief.title}",
                     purpose=(
-                        f"Fake purpose for module {m_idx}, building toward: {input.brief.outcome}"
-                        if not deepen
+                        f"Module {m_idx} role: "
+                        f"{'foundation' if m_idx == 1 else 'application'} — "
+                        f"toward {input.brief.outcome}"
+                        if deepen
                         else (
-                            f"Module {m_idx} role: "
-                            f"{'foundation' if m_idx == 1 else 'application'} — "
-                            f"toward {input.brief.outcome}"
+                            f"Fake purpose for module {m_idx}, building toward: "
+                            f"{input.brief.outcome}"
                         )
                     ),
-                    bridge_project=(
-                        f"Fake bridge project connecting module {m_idx} to module {m_idx + 1}"
-                        if m_idx < self.DEFAULT_MODULE_COUNT
-                        else None
-                    ),
+                    bridge_project=None,
+                    module_project=project,
+                    continuous_case=f"Continuous case for {input.brief.title} module {m_idx}",
                     reels=reels,
                 )
             )
@@ -148,85 +209,105 @@ class FakeProvider(AIProvider):
             course_title=input.brief.title,
             main_thread=f"Fake main thread connecting all modules toward: {input.brief.outcome}",
             modules=modules,
+            graduation_project=ModuleProject(
+                name="مشروع التخرج",
+                brief=input.brief.outcome or "Final practical deliverable",
+                deliverable_shape="مشروع نهائي كامل",
+                pass_criteria=["يغطي مهارات الكورس"],
+                skills_tested=["capstone"],
+            ),
         )
         self.last_usage = _synthetic_usage(input, result)
         return result
 
     def write_single_reel(self, input: WriteSingleReelInput) -> GeneratedReel:
+        rid = input.reel.reel_id or "r0"
+        cover0 = (input.reel.must_cover or ["point"])[0]
         used_ideas = list(input.reel.must_cover)
-        # Vary example family by reel_id so anti-template checks see diversity.
         used_examples = [
-            f"Fake local example ({input.reel.reel_id[-1:]}) for '{input.reel.title}'"
+            (
+                f"Unique case {rid}/{cover0}: "
+                f"{input.reel.new_skill_or_decision or input.reel.title}"
+            )
         ]
 
-        curve = input.lesson_curve or {}
-        length = curve.get("natural_length", "medium")
-        hook = curve.get("hook_strength", "medium")
-        ending = curve.get("ending_motion", "natural_transition")
-        energy = curve.get("teaching_energy", "practical")
+        mode = input.reel.delivery_mode or LessonDeliveryMode.CAMERA_EXPLAINER
         phase = (input.write_phase or "first_draft").strip().lower()
+        ledger_blob = " ".join(
+            str(v)
+            for v in (input.rules_context or {}).values()
+            if isinstance(v, str) and "Phrase ledger" in v
+        )
+        # Unique opener per reel_id — never share opening template across lessons.
+        opener = (
+            f"في {rid} القرار الأساسي هو {cover0} جوّه موضوع {input.reel.title}"
+        )
+        if "Overused templates" in ledger_blob:
+            opener = (
+                f"قياس نجاح {cover0} في {rid} لازم يبان من أول تطبيق على {input.reel.title}"
+            )
 
-        # Opening follows hook_strength — quiet lessons stay quiet (no bait).
-        if hook == "quiet":
-            opener = f"النقطة الأساسية في {input.reel.title} هي دي:"
-        elif hook == "strong":
-            opener = f"لو عملت {input.reel.title} بالطريقة الشائعة هتخسر نتيجة واضحة."
-        else:
-            opener = f"يلا نثبت فرق عملي في {input.reel.title} من أول خطوة."
-
-        body = [f"النقطة دي مهمة: {point}." for point in input.reel.must_cover]
-        # Length follows lesson_curve — short/medium/long/extended, no fixed quota.
-        if length == "short":
-            body = body[:1] or body
-        elif length == "long":
-            body = body + [
-                f"خلّي بالك من التفصيل ده عشان الفكرة متتبسّطش زيادة ({energy}).",
-                "المثال الواقعي هنا أوضح من أي كلام عام.",
+        skill = (input.reel.new_skill_or_decision or cover0).strip()
+        body = [
+            f"نفّذ {point} كخطوة مستقلة مرتبطة بـ {rid} ومهارة {skill} فقط"
+            for point in input.reel.must_cover
+        ]
+        if mode == LessonDeliveryMode.MICRO_CONCEPT:
+            body = body[:1] + [
+                f"الفكرة الضيقة هنا هي {skill} ومش هتتوسع لبره {rid}",
             ]
-        elif length == "extended":
+        elif mode in {LessonDeliveryMode.SCREEN_DEMO, LessonDeliveryMode.PROJECT_BUILD}:
             body = body + [
-                f"هنا الفكرة تستاهل طول أكتر لأن سوء الفهم شائع ({energy}).",
-                "قارن القرار الغلط بالقرار الصح قبل ما تكمّل.",
-                "اختبر الفهم بموقف محلي بسيط من الشغل اليومي.",
+                f"افتح شاشة {rid} ونفّذ {cover0} قدامك لمهارة {skill}",
+                f"راجع ناتج {rid} وتأكد إن {cover0} اتحقق داخل {skill}",
+            ]
+        elif mode == LessonDeliveryMode.BEFORE_AFTER:
+            body = body + [
+                f"قارن قبل/بعد لـ {cover0} في حالة {rid} عشان تبين فرق {skill}",
             ]
 
-        if ending == "no_loop_needed" or ending == "clean_close":
-            closer = "كده النقطة اكتملت، ومفيش لازمة نلفّ عليها."
-        elif ending == "soft_next_need":
-            closer = "باقي جزء عملي مبني على القرار ده."
-        elif ending == "unresolved_practical_need":
-            closer = "جرّب الخطوة دي على شغلك قبل ما تعدّي للفكرة الجاية."
+        if input.reel.needs_natural_bridge:
+            closer = (
+                f"بعد ما تثبت {skill} في {rid} هيبان احتياج لقرار لاحق مبني على {cover0}"
+            )
         else:
-            closer = "كده كفاية للجزء ده، وجاهزين نكمل اللي جاي بعده."
+            closer = f"درس {rid} اتقفل على {skill} — تقدر تعيد {cover0} لوحدك"
 
-        # Final master is a real rewrite path: apply review cues without
-        # exposing drafts/reviews. First draft stays freer.
         if phase == "final_master":
             if any("forbidden" in (f or "").lower() for f in input.previous_review_feedback):
-                opener = f"خلّينا نثبت فرق عملي في {input.reel.title} من غير حشو."
+                opener = f"ثبت {cover0} في {rid} من غير حشو جاهز حول {input.reel.title}"
             elif input.previous_review_feedback:
-                # Absorb feedback silently — never narrate that a review happened.
                 body = list(body) + [
-                    "وضّحنا الخطوة العملية وسدّينا أي قفزة مش واضحة للطالب.",
+                    f"وضحنا تطبيق {cover0} داخل {rid} لمهارة {skill} من غير قفز",
                 ]
-            closer = {
-                "no_loop_needed": "كده النقطة اكتملت، ومفيش لازمة نلفّ عليها.",
-                "clean_close": "كده النقطة اكتملت، ومفيش لازمة نلفّ عليها.",
-                "soft_next_need": "باقي جزء عملي مبني على القرار ده.",
-                "unresolved_practical_need": "جرّب الخطوة دي على شغلك قبل ما تعدّي للفكرة الجاية.",
-            }.get(ending, "كده الجزء ده جاهز للتطبيق.")
 
-        # Spoken placeholder only — never emit curve labels into script_text.
-        script_lines = [opener, *body, closer]
+        beats = [opener, *body, closer]
+        rng = word_range_for(mode)
+        fillers = [
+            f"جرّب {cover0} على حالة جديدة تخص {rid} و{skill}",
+            f"علامة نجاح {rid} تظهر لما {skill} يبقى قابل للقياس عبر {cover0}",
+            f"لو {cover0} مش واضح أعِد خطوة {rid} بهدوء مع تركيز على {skill}",
+            f"اربط {skill} بنتيجة شغلك اليومي في {input.reel.title} عبر {rid}",
+            f"ممنوع تخلط {rid}/{skill} بدرس تاني وهو بيتشرح",
+            f"اختبر {skill} مرة تانية على مثال مختلف تمامًا عن باقي الكورس",
+        ]
+        for line in fillers:
+            if len(" ".join(beats).split()) >= max(rng.soft_min, 80):
+                break
+            beats.insert(-1, line)
 
+        script = beats_to_plain_script(beats)
         result = GeneratedReel(
             reel_id=input.reel.reel_id,
             module_id=input.module.module_id,
             title=input.reel.title,
-            script_text="\n".join(script_lines),
+            script_text=script,
+            spoken_beats=beats,
             used_ideas=used_ideas,
             used_examples=used_examples,
             self_check_status=ReviewStatus.PASS,
+            delivery_mode=mode,
+            quality_status="pass",
         )
         self.last_usage = _synthetic_usage(input, result)
         return result
@@ -275,17 +356,22 @@ class FakeProvider(AIProvider):
                 sections.append(f"## {reel.title}")
                 sections.append(reel.script_text)
                 final_reels.append(
-                    FinalReel(reel_id=reel.reel_id, title=reel.title, script_text=reel.script_text)
+                    FinalReel(
+                        reel_id=reel.reel_id,
+                        title=reel.title,
+                        script_text=reel.script_text,
+                        spoken_beats=list(reel.spoken_beats or []),
+                        delivery_mode=reel.delivery_mode,
+                        quality_status=reel.quality_status,
+                    )
                 )
-
-            if module.bridge_project:
-                sections.append(f"[Bridge project] {module.bridge_project}")
 
             final_modules.append(
                 FinalModule(
                     module_id=module.module_id,
                     title=module.title,
                     bridge_project=module.bridge_project,
+                    module_project=module.module_project,
                     reels=final_reels,
                 )
             )
@@ -294,6 +380,8 @@ class FakeProvider(AIProvider):
             title=input.course_map.course_title,
             modules=final_modules,
             full_text="\n\n".join(sections),
+            graduation_project=input.course_map.graduation_project,
+            thesis=input.course_map.thesis,
         )
         self.last_usage = _synthetic_usage(input, result)
         return result

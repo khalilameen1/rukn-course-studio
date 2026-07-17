@@ -183,3 +183,44 @@ class TargetMarket(str, Enum):
     ARAB_MARKET = "arab_market"
     GLOBAL = "global"
     CUSTOM = "custom"
+
+
+class LessonDeliveryMode(str, Enum):
+    """How a lesson is delivered on camera / screen (internal blueprint).
+
+    Content type drives structure and length — not a mechanical reel index.
+    """
+
+    CAMERA_EXPLAINER = "camera_explainer"
+    MICRO_CONCEPT = "micro_concept"
+    SCREEN_DEMO = "screen_demo"
+    DESIGN_CRITIQUE = "design_critique"
+    CRITIQUE = "critique"
+    BEFORE_AFTER = "before_after"
+    ERROR_FIX = "error_fix"
+    CASE_STUDY = "case_study"
+    PROJECT_BUILD = "project_build"
+
+
+class AddressForm(str, Enum):
+    """Stable second-person address form for the whole course."""
+
+    MASCULINE = "masculine"
+    FEMININE = "feminine"
+    NEUTRAL = "neutral"
+
+
+class CourseMixType(str, Enum):
+    """Theory vs practice mix declared on Course Thesis."""
+
+    PRACTICAL = "practical"
+    THEORETICAL = "theoretical"
+    MIXED = "mixed"
+
+
+class GenerationJobKind(str, Enum):
+    """What a GenerationJob is producing."""
+
+    FULL_COURSE = "full_course"
+    MAP_PREVIEW = "map_preview"
+    WRITER_TEST_3_REELS = "writer_test_3_reels"

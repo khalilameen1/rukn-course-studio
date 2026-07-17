@@ -61,7 +61,9 @@ RESEARCH_LEAK_SUBSTRINGS: tuple[str, ...] = (
 )
 
 # Cap autonomous Wikipedia/docs fetches per run (cost + latency).
-MAX_WEB_SEARCHES_PER_RUN = 5
+# Soft default only — gap-fill may exceed when modules still have uncovered
+# factual gaps; research_memory prevents repeating the same query.
+MAX_WEB_SEARCHES_PER_RUN = 24
 UPLOAD_THICK_CHARS = 2000
 _FETCH_WORKERS = 3
 
@@ -213,10 +215,18 @@ def strip_research_leaks_from_script(script_text: str) -> str:
             ).strip()
             if not line:
                 continue
+        if not line.strip():
+            lines.append("")
+            continue
         line = re.sub(r"\s{2,}", " ", line).strip(" ,،")
         if line:
             lines.append(line)
-    return "\n".join(lines).strip()
+    # Preserve intentional blank pause lines; trim only file edges.
+    while lines and not lines[0]:
+        lines.pop(0)
+    while lines and not lines[-1]:
+        lines.pop()
+    return "\n".join(lines)
 
 
 def build_upload_source_memory(

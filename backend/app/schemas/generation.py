@@ -12,7 +12,9 @@ app/schemas/generation_job.py), never this internal structure.
 
 from enum import Enum
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+from app.models.enums import AddressForm, CourseMixType, LessonDeliveryMode
 
 
 class ReviewScope(str, Enum):
@@ -39,11 +41,62 @@ class ReviewActionType(str, Enum):
     ADD_MISSING_CONTEXT = "add_missing_context"
 
 
+class CourseThesis(BaseModel):
+    """Internal course thesis — required before Course Map generation.
+
+    Hard limits cannot be exceeded by the AI alone; human_override_hard_limits
+    must be an explicit human choice (with UI warning).
+    """
+
+    final_student_outcome: str
+    audience_and_starting_level: str
+    practical_deliverable: str
+    in_scope: list[str] = Field(default_factory=list)
+    out_of_scope: list[str] = Field(default_factory=list)
+    course_type: str = "practical_skill"
+    mix_type: CourseMixType = CourseMixType.PRACTICAL
+    target_theory_ratio: float = 0.25
+    target_practice_ratio: float = 0.60
+    target_minutes_min: int = 150
+    target_minutes_max: int = 210
+    hard_max_minutes: int = 240
+    target_lessons_min: int = 35
+    target_lessons_max: int = 55
+    hard_max_lessons: int = 60
+    required_tools: list[str] = Field(default_factory=list)
+    final_project: str = ""
+    address_form: AddressForm = AddressForm.MASCULINE
+    human_override_hard_limits: bool = False
+
+
+class ModuleProject(BaseModel):
+    """Practical project after a module — not a numbered lesson."""
+
+    name: str
+    brief: str
+    inputs_or_files: list[str] = Field(default_factory=list)
+    deliverable_shape: str = ""
+    pass_criteria: list[str] = Field(default_factory=list)
+    skills_tested: list[str] = Field(default_factory=list)
+
+    @classmethod
+    def from_bridge_text(cls, text: str | None, *, module_title: str = "") -> "ModuleProject | None":
+        raw = (text or "").strip()
+        if not raw:
+            return None
+        return cls(
+            name=f"مشروع: {module_title}".strip(": ") if module_title else "مشروع الموديول",
+            brief=raw,
+            deliverable_shape="تسليم عملي قصير",
+            pass_criteria=["ينفّذ المطلوب بوضوح", "يستخدم مهارات الموديول"],
+            skills_tested=[],
+        )
+
+
 class ReelPlan(BaseModel):
     """One reel's plan, produced while building the CourseMap (Stage 1).
 
-    No script text yet - that only exists once Stage 2 generates a
-    `GeneratedReel` from this plan.
+    Includes Lesson Blueprint fields (internal). No script text yet.
     """
 
     reel_id: str
@@ -52,18 +105,32 @@ class ReelPlan(BaseModel):
     must_cover: list[str] = Field(default_factory=list)
     must_avoid: list[str] = Field(default_factory=list)
     source_hints: list[str] = Field(default_factory=list)
-    # Free-form for now (e.g. "45-60 seconds", "short") - not yet locked to
-    # a strict unit; tighten once the real pipeline needs one.
-    estimated_length: str
+    # Free-form legacy estimate; also derived from delivery_mode ranges.
+    estimated_length: str = ""
+
+    # --- Lesson Blueprint (internal) ------------------------------------
+    distinct_teaching_outcome: str = ""
+    new_skill_or_decision: str = ""
+    why_standalone: str = ""
+    student_can_do_after: str = ""
+    delivery_mode: LessonDeliveryMode | None = None
+    target_spoken_words_min: int | None = None
+    target_spoken_words_max: int | None = None
+    needs_screen_or_visual: bool = False
+    internal_visual_plan: str = ""
+    required_assets: list[str] = Field(default_factory=list)
+    source_references: list[str] = Field(default_factory=list)
+    prerequisite_lesson_ids: list[str] = Field(default_factory=list)
+    project_contribution: str = ""
+    already_taught_forbid_repeat: list[str] = Field(default_factory=list)
+    # True → may open a natural need for the next lesson; False → clean close.
+    needs_natural_bridge: bool = False
 
 
 class ModulePlan(BaseModel):
-    """One module's plan: its reels plus an optional bridge project.
+    """One module's plan: its reels plus an optional module project.
 
-    `bridge_project` connects this module to the next one (see the
-    `rukn_practical_course_rules` admin knowledge rule) and is null for modules
-    that don't end in one.
-
+    `bridge_project` is the legacy free-form string. Prefer `module_project`.
     `reels` may be empty in unit tests that inject a reel separately; the
     Anthropic map path rejects maps with zero lessons before save.
     """
@@ -72,7 +139,21 @@ class ModulePlan(BaseModel):
     title: str
     purpose: str
     bridge_project: str | None = None
+    module_project: ModuleProject | None = None
     reels: list[ReelPlan] = Field(default_factory=list)
+    # Running practical case used across lessons in this module (internal).
+    continuous_case: str = ""
+
+    @model_validator(mode="after")
+    def _sync_project(self) -> "ModulePlan":
+        # Legacy bridge_project string → structured module_project.
+        # Do not force bridge_project from module_project (last modules may
+        # have a project without a bridge-to-next string).
+        if self.module_project is None and self.bridge_project:
+            self.module_project = ModuleProject.from_bridge_text(
+                self.bridge_project, module_title=self.title
+            )
+        return self
 
 
 class CourseMap(BaseModel):
@@ -86,23 +167,28 @@ class CourseMap(BaseModel):
     course_title: str
     main_thread: str
     modules: list[ModulePlan] = Field(min_length=1)
+    thesis: CourseThesis | None = None
+    graduation_project: ModuleProject | None = None
 
 
 class GeneratedReel(BaseModel):
     """Stage 2 output for one reel, after generation and its Stage 3 self-check.
 
-    `used_ideas` / `used_examples` are tracked explicitly so later stages
-    (five-reel window, module, course-wide review) can detect repetition
-    without re-reading every prior reel's full `script_text`.
+    Primary spoken source is `spoken_beats`. `script_text` is the plain
+    derived teleprompter body (no metadata labels).
     """
 
     reel_id: str
     module_id: str
     title: str
     script_text: str
+    spoken_beats: list[str] = Field(default_factory=list)
     used_ideas: list[str] = Field(default_factory=list)
     used_examples: list[str] = Field(default_factory=list)
     self_check_status: ReviewStatus
+    delivery_mode: LessonDeliveryMode | None = None
+    quality_status: str = "pass"  # pass | needs_review | fail (internal)
+    quality_report: dict = Field(default_factory=dict)  # internal only
 
 
 class ReviewAction(BaseModel):
@@ -119,6 +205,13 @@ class ReviewAction(BaseModel):
     target_id: str
     reason_code: str
     instruction: str
+    # Structured editorial fields (optional; older callers omit them).
+    violation_type: str = ""
+    severity: str = ""  # fatal | serious | minor | note
+    evidence: str = ""
+    required_repair: str = ""
+    requires_rewrite: bool = True
+    affects_map_or_other_lessons: bool = False
 
 
 class ReviewResult(BaseModel):
@@ -138,17 +231,23 @@ class FinalReel(BaseModel):
     reel_id: str
     title: str
     script_text: str
+    spoken_beats: list[str] = Field(default_factory=list)
+    delivery_mode: LessonDeliveryMode | None = None
+    quality_status: str = "pass"
 
 
 class FinalModule(BaseModel):
     """One module's final structure: title, its final reels (in order), and
-    an optional bridge project - everything DOCX export needs, already
+    an optional module project - everything DOCX export needs, already
     grouped and ordered."""
 
     module_id: str
     title: str
     bridge_project: str | None = None
+    module_project: ModuleProject | None = None
     reels: list[FinalReel] = Field(default_factory=list)
+    # Intentionally no bridge→module_project sync here: legacy bridge_project
+    # stays internal. Only structured module_project is exported to DOCX.
 
 
 class FinalCourse(BaseModel):
@@ -157,11 +256,12 @@ class FinalCourse(BaseModel):
     `modules` carries the final, approved reel scripts grouped by module
     (reflecting any Stage 7 rebuild) - this is the structured data DOCX
     export renders from. `full_text` is a flattened, human-skimmable
-    rendering of the same content (module/reel headers as "#"/"##" lines,
-    bridge project as a "[Bridge project] ..." line) for quick internal
-    review/logging - it is not what the exporter parses.
+    rendering of the same content (module/reel headers as "#"/"##" lines)
+    for quick internal review/logging - it is not what the exporter parses.
     """
 
     title: str
     modules: list[FinalModule] = Field(default_factory=list)
     full_text: str
+    graduation_project: ModuleProject | None = None
+    thesis: CourseThesis | None = None

@@ -39,9 +39,10 @@ def test_build_course_map_is_deterministic():
     assert first.course_title == "Intro to Excel Formulas"
     assert len(first.modules) == FakeProvider.DEFAULT_MODULE_COUNT
     assert all(len(m.reels) == FakeProvider.DEFAULT_REELS_PER_MODULE for m in first.modules)
-    # Last module has no bridge project; earlier ones do.
+    # Structured module projects on every module; legacy bridge stays unused.
     assert first.modules[-1].bridge_project is None
-    assert all(m.bridge_project for m in first.modules[:-1])
+    assert all(m.module_project is not None for m in first.modules)
+    assert first.graduation_project is not None
 
 
 def test_write_single_reel_is_deterministic_and_uses_the_plan():
@@ -178,6 +179,7 @@ def test_rebuild_final_course_assembles_all_reel_text():
 
     for reel in all_reels:
         assert reel.script_text in final_course.full_text
-    for module in course_map.modules:
-        if module.bridge_project:
-            assert module.bridge_project in final_course.full_text
+    # Module projects are structured on FinalModule; spoken full_text is scripts only.
+    for module, final_module in zip(course_map.modules, final_course.modules):
+        if module.module_project is not None:
+            assert final_module.module_project is not None

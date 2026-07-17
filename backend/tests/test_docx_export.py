@@ -10,6 +10,7 @@ from app.schemas.generation import (
     FinalReel,
     GeneratedReel,
     ModulePlan,
+    ModuleProject,
     ReelPlan,
     ReviewStatus,
 )
@@ -41,7 +42,14 @@ def _sample_final_course() -> FinalCourse:
             FinalModule(
                 module_id="m1",
                 title="Getting Started",
-                bridge_project="Build a starter budget sheet",
+                bridge_project="INTERNAL BRIDGE — never in DOCX",
+                module_project=ModuleProject(
+                    name="مشروع موديول 1",
+                    brief="Build a starter budget sheet",
+                    deliverable_shape="ملف ميزانية",
+                    pass_criteria=["يبني الجدول"],
+                    skills_tested=["excel-basics"],
+                ),
                 reels=[
                     FinalReel(reel_id="m1-r1", title="Opening Excel", script_text="Line one.\nLine two."),
                     FinalReel(reel_id="m1-r2", title="Basic Formulas", script_text="Type an equals sign."),
@@ -51,12 +59,26 @@ def _sample_final_course() -> FinalCourse:
                 module_id="m2",
                 title="Budgets",
                 bridge_project=None,
+                module_project=ModuleProject(
+                    name="مشروع موديول 2",
+                    brief="Apply SUM on a real budget file",
+                    deliverable_shape="ملف نهائي",
+                    pass_criteria=["يستخدم SUM"],
+                    skills_tested=["sum"],
+                ),
                 reels=[
                     FinalReel(reel_id="m2-r1", title="Totals", script_text="Use SUM to add a column."),
                 ],
             ),
         ],
         full_text="irrelevant - the exporter renders from `modules`, not this",
+        graduation_project=ModuleProject(
+            name="مشروع التخرج",
+            brief="Complete workbook",
+            deliverable_shape="ملف كامل",
+            pass_criteria=["يغطي المهارات"],
+            skills_tested=["capstone"],
+        ),
     )
 
 
@@ -85,7 +107,11 @@ def _sample_partial_course_map() -> CourseMap:
                 module_id="m1",
                 title="Getting Started",
                 purpose="p",
-                bridge_project="Build a starter budget sheet",
+                bridge_project=None,
+                module_project=ModuleProject(
+                    name="مشروع موديول 1",
+                    brief="Build a starter budget sheet",
+                ),
                 reels=[
                     ReelPlan(reel_id="m1-r1", title="Opening Excel", purpose="p", estimated_length="30s"),
                     ReelPlan(reel_id="m1-r2", title="Basic Formulas", purpose="p", estimated_length="30s"),
@@ -126,34 +152,39 @@ def test_render_numbers_modules_and_lessons_in_order():
     document = render_final_course_docx(_sample_final_course())
 
     headings = [text for style, text in _headings(document) if style != "Title"]
-    assert headings == [
-        "Module 1 — Getting Started",
-        "Lesson 1 — Opening Excel",
-        "Lesson 2 — Basic Formulas",
-        "Module 2 — Budgets",
-        "Lesson 1 — Totals",
-    ]
+    # Module projects render as H2 between modules (not Lesson N).
+    assert headings[0] == "Module 1 — Getting Started"
+    assert "Lesson 1 — Opening Excel" in headings
+    assert "Lesson 2 — Basic Formulas" in headings
+    assert "Module 2 — Budgets" in headings
+    assert "Lesson 1 — Totals" in headings
+    assert any("مشروع" in h or "Build a starter" in h for h in headings)
 
 
 def test_render_includes_script_text_under_each_lesson():
     document = render_final_course_docx(_sample_final_course())
 
     body_texts = [p.text for p in document.paragraphs if not p.style.name.startswith("Heading")]
-    assert "Line one." in body_texts
-    assert "Line two." in body_texts
-    assert "Type an equals sign." in body_texts
-    assert "Use SUM to add a column." in body_texts
+    # Punctuation stripped from spoken body.
+    assert "Line one" in body_texts
+    assert "Line two" in body_texts
+    assert "Type an equals sign" in body_texts
+    assert "Use SUM to add a column" in body_texts
 
 
-def test_render_excludes_bridge_project_from_v1_docx():
-    """V1 Teleprompter DOCX: no Project heading / bridge text (map-only)."""
+def test_render_includes_module_projects_not_as_lessons():
+    """Module projects appear between modules; never as Lesson N."""
     document = render_final_course_docx(_sample_final_course())
 
-    project_headings = [text for style, text in _headings(document) if text == "Project"]
-    assert project_headings == []
+    headings = [text for style, text in _headings(document) if style != "Title"]
+    lesson_headings = [h for h in headings if h.startswith("Lesson ")]
+    assert lesson_headings == [
+        "Lesson 1 — Opening Excel",
+        "Lesson 2 — Basic Formulas",
+        "Lesson 1 — Totals",
+    ]
     body = _all_text(document)
-    assert "Build a starter budget sheet" not in body
-    assert "bridge project" not in body.lower()
+    assert "Build a starter budget sheet" in body
 
 
 def test_render_excludes_internal_pipeline_language():

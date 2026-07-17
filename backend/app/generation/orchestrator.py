@@ -109,9 +109,30 @@ from app.generation.course_map_quality import (
     is_mini_or_preview_request,
     local_map_review_feedback,
 )
+from app.generation.contracts.course_thesis import (
+    build_course_thesis_from_brief,
+    validate_course_thesis,
+)
+from app.generation.contracts.lesson_blueprint import ensure_reel_blueprint_defaults
+from app.generation.contracts.spoken_final_master import (
+    ensure_spoken_beats,
+    strip_punctuation_from_spoken_body,
+)
 from app.generation.course_quality_gates import (
     format_handoff_status,
     run_course_quality_gates,
+)
+from app.generation.export_blockers import assert_export_allowed, evaluate_export_blockers
+from app.generation.integrated_editorial_review import (
+    MAX_CREATOR_REWRITES,
+    run_integrated_editorial_review,
+    unresolved_fatal_or_serious,
+)
+from app.generation.map_compression import enforce_map_hard_limits
+from app.generation.phrase_ledger import PhraseLedger
+from app.generation.voice_profile import (
+    VoiceProfile,
+    build_voice_profile_from_calibration_texts,
 )
 from app.generation.market_evergreen import (
     compile_market_guidance,
@@ -181,6 +202,7 @@ from app.generation.teaching_curves import (
 from app.models.course import Course
 from app.models.course_source import CourseSource
 from app.models.enums import (
+    AddressForm,
     ExplanationLevel,
     GenerationQualityMode,
     JobStatus,
@@ -193,11 +215,13 @@ from app.models.source_analysis import SourceAnalysis
 from app.prompts.prompt_registry import PipelineStage
 from app.schemas.generation import (
     CourseMap,
+    CourseThesis,
     FinalCourse,
     FinalModule,
     FinalReel,
     GeneratedReel,
     ModulePlan,
+    ModuleProject,
     ReelPlan,
     ReviewAction,
     ReviewActionType,
@@ -232,10 +256,9 @@ from app.validators.creator_persona_checker import check_creator_persona_script
 # usable extracted_text and must never be fed into generation.
 USABLE_SOURCE_STATUSES = {"ready", "poor_extraction"}
 
-# Per-reel agency: one first draft + one review bundle + one final rewrite.
-# A second final rewrite is allowed only if a serious (non-fatal) issue remains.
+# Per-reel agency: First Draft → Integrated Review → up to 2 Creator rewrites.
 # No unbounded rewrite loops (docs/ARCHITECTURE.md §6.9).
-MAX_FINAL_REBUILD_ATTEMPTS = 2
+MAX_FINAL_REBUILD_ATTEMPTS = MAX_CREATOR_REWRITES
 WRITES_PER_REEL_BASE = 2  # first_draft + at least one final_master
 WRITES_PER_REEL = WRITES_PER_REEL_BASE  # back-compat for tests
 
@@ -247,6 +270,11 @@ _FATAL_REASON_CODES = frozenset(
         "factual_error",
         "critic_fatal",
         "empty_script",
+        "empty_teaching",
+        "review_leak",
+        "msa_article_tone",
+        "literal_translation",
+        "ai_intro_template",
     }
 )
 _FATAL_PREFIXES = ("fatal", "factual")
@@ -861,6 +889,21 @@ def run_generation(
         modules_done = 0
         previous_module_curve: ModuleCurve | None = None
         total_modules = len(course_map.modules)
+        phrase_ledger = PhraseLedger()
+        # Spoken style calibration from FLOW_REFERENCE only (never as facts).
+        flow_texts = [
+            (u.course_source.extracted_text or "")
+            for u in usable_sources
+            if getattr(u.course_source, "category", None)
+            in {SourceCategory.FLOW_REFERENCE, SourceCategory.FLOW_REFERENCE.value}
+            or str(getattr(u.course_source, "category", "")) == "flow_reference"
+        ]
+        voice_profile = build_voice_profile_from_calibration_texts(flow_texts)
+        address_form = (
+            course_map.thesis.address_form
+            if course_map.thesis
+            else AddressForm.MASCULINE
+        )
 
         for module_index, module in enumerate(course_map.modules):
             module_reels: list[GeneratedReel] = []
@@ -986,6 +1029,9 @@ def run_generation(
                     total_reels=total_reels,
                     quality_mode=quality_mode,
                     target_market=brief.target_market,
+                    phrase_ledger=phrase_ledger,
+                    voice_profile=voice_profile,
+                    address_form=address_form,
                 )
                 # Final script only — strip accidental research / meta leaks before persist.
                 cleaned = strip_research_leaks_from_script(generated.script_text)
@@ -1267,6 +1313,25 @@ def run_generation(
             internal_risk_count=gate_report.risk_count,
             last_progress_message=PROGRESS_REBUILD_MASTER,
         )
+
+        # --- Hard export blockers (needs_review / map / projects) --------
+        export_report = evaluate_export_blockers(
+            final_course=final_course,
+            course_map=course_map,
+            thesis=course_map.thesis,
+            generated_reels=all_reels,
+            phrase_ledger=phrase_ledger,
+            address_form=address_form,
+        )
+        logs.append(
+            {
+                "step": "export_blockers",
+                "ok": export_report.ok,
+                "blocker_count": len(export_report.blockers),
+            }
+        )
+        if not export_report.ok:
+            assert_export_allowed(export_report)
 
         # --- Step 14: save the final internal course JSON ---------------
         json_path = _save_internal_course_json(course_id, job.id, final_course)
@@ -2196,15 +2261,18 @@ def _build_and_review_course_map(
     job: GenerationJob | None = None,
     preset: str | None = None,
     official_tool_store: object | None = None,
+    thesis: CourseThesis | None = None,
 ) -> tuple[CourseMap, dict]:
-    """Two-pass Final Course Map before any lesson scripts.
+    """Two-pass Final Course Map + compression before any lesson scripts.
 
-    1. Creator first map draft
-    2. Student → Specialist → Mentor feedback (compact local bundle)
-    3. Creator Final Course Map rebuild
-    4. Optional one more rebuild if Premium floor still fails (not mini/preview)
+    1. Require valid Course Thesis
+    2. Creator first map draft
+    3. Student → Specialist → Mentor feedback (compact local bundle)
+    4. Creator Final Course Map rebuild
+    5. Map Compression Pass — fail clearly if still over hard max
 
     Never asks the user to approve. Review notes never enter DOCX fields.
+    No Premium minute floor inflation.
     """
     progress: Callable[[str], None] = on_progress or (lambda _m: None)
     relax = is_mini_or_preview_request(
@@ -2212,6 +2280,15 @@ def _build_and_review_course_map(
         special_notes=brief.special_notes,
         title=brief.title,
     )
+    if thesis is None:
+        thesis = build_course_thesis_from_brief(
+            brief,
+            course_type="practical_skill",
+            address_form=AddressForm.MASCULINE,
+        )
+    thesis_check = validate_course_thesis(thesis)
+    thesis_check.raise_if_invalid()
+
     map_builds = 0
 
     def _build(phase: str, feedback: list[str]) -> CourseMap:
@@ -2244,36 +2321,67 @@ def _build_and_review_course_map(
         relax_floor=relax,
         target_market=brief.target_market,
         official_tool_store=official_tool_store,
+        thesis=thesis,
     )
 
     progress(PROGRESS_MAP_REBUILD)
     final_map = _build("final_master", feedback)
-
-    # Premium seriousness: if still under floor, one more rebuild (max 2 finals).
-    report = analyze_map_duration(
-        final_map, quality_mode=quality_mode, relax_floor=relax
+    # Attach thesis + ensure blueprints / projects.
+    modules = []
+    for module in final_map.modules:
+        reels = [ensure_reel_blueprint_defaults(r) for r in module.reels]
+        mod = module.model_copy(update={"reels": reels})
+        if mod.module_project is None and not (mod.bridge_project or "").strip():
+            mod = mod.model_copy(
+                update={
+                    "module_project": ModuleProject(
+                        name=f"مشروع: {mod.title}",
+                        brief=f"طبّق مهارات موديول {mod.title} في تسليم قصير",
+                        deliverable_shape="ملف أو لقطة شاشة",
+                        pass_criteria=["يستخدم مهارات الموديول"],
+                    )
+                }
+            )
+        modules.append(mod)
+    final_map = final_map.model_copy(
+        update={
+            "modules": modules,
+            "thesis": thesis,
+            "graduation_project": final_map.graduation_project
+            or ModuleProject(
+                name="مشروع التخرج",
+                brief=thesis.final_project or thesis.practical_deliverable,
+                deliverable_shape="مشروع نهائي",
+                pass_criteria=["يغطي نتيجة الكورس"],
+            ),
+        }
     )
-    extra_rebuild = False
-    if report.too_short_for_premium:
-        extra_rebuild = True
-        progress(PROGRESS_MAP_REBUILD)
-        deeper = list(feedback) + report.shallow_signals
-        deeper.append(
-            "Rebuild Final Course Map to meet Premium ~120+ minute seriousness "
-            "with real concepts, bridges, examples, and application — no padding."
+
+    compressed, creport = enforce_map_hard_limits(final_map, thesis=thesis)
+    if not creport.ok:
+        raise UnusableOutputError(
+            "; ".join(creport.errors)
+            or "Course map exceeds hard limits after compression"
         )
-        final_map = _build("final_master", deeper)
-        report = analyze_map_duration(
-            final_map, quality_mode=quality_mode, relax_floor=relax
+    final_map = compressed
+
+    report = analyze_map_duration(
+        final_map, quality_mode=quality_mode, relax_floor=relax, thesis=thesis
+    )
+    if report.over_hard_max_lessons or report.over_hard_max_minutes:
+        raise UnusableOutputError(
+            "; ".join(report.shallow_signals)
+            or "Course map still exceeds hard limits"
         )
 
+    # Keep build_map log entries short (<300 JSON chars) for operator logs.
     meta = {
         "map_builds": map_builds,
-        "map_phases": "first_draft→final_master",
-        "estimated_total_minutes": round(report.total_minutes, 1),
-        "relax_duration_floor": relax,
-        "extra_depth_rebuild": extra_rebuild,
-        "under_two_minute_lessons": report.under_two_minute_lessons,
+        "map_phases": "draft→master→compress",
+        "est_min": round(report.total_minutes, 1),
+        "merged": len(creport.merged_pairs),
+        "lessons": report.lesson_count,
+        "hard_max": thesis.hard_max_lessons,
     }
     return final_map, meta
 
@@ -2301,26 +2409,23 @@ def _write_and_review_reel(
     total_reels: int = 1,
     quality_mode: GenerationQualityMode = GenerationQualityMode.PREMIUM,
     target_market: TargetMarket = TargetMarket.EGYPT,
+    phrase_ledger: PhraseLedger | None = None,
+    voice_profile: VoiceProfile | None = None,
+    address_form: AddressForm = AddressForm.MASCULINE,
 ) -> tuple[GeneratedReel, int, bool, bool]:
-    """Locked multi-agent lesson loop (Creator does not self-criticize).
+    """Lesson path: First Draft → checks → Integrated Editorial → Rewrite(s) → Final Master.
 
-    1. Creator Agent `first_draft`
-    2. Student + Specialist Critic + Master Mentor review completed draft
-       (Premium: AI `draft_bundle`; Preview: local signals)
-    3. Creator Agent `final_master` — absorb feedback, rewrite naturally
-    Optional 2nd Final Master rebuild only for remaining serious issues.
-    Fatal leftovers → needs_review (internal). Only Final Master is saved.
-
-    Returns `(master, write_count, caught_locally, needs_review)`.
+    Creator is the only writer. Max 2 rewrites after first draft. Fatal leftovers
+    → needs_review (not exported). Only Final Master is saved as product text.
     """
     progress: Callable[[str], None] = on_progress or (lambda _msg: None)
     premium = quality_mode == GenerationQualityMode.PREMIUM
     source_texts = [s.text for s in sources if (s.text or "").strip()]
+    reel_plan = ensure_reel_blueprint_defaults(reel_plan)
 
     write_rules = select_packed_rules_for_stage(rules_context, PipelineStage.WRITE_SINGLE_REEL)
     review_rules = select_packed_rules_for_stage(rules_context, PipelineStage.REVIEW_SINGLE_REEL)
     review_rules_full = select_rules_for_stage(rules_context, PipelineStage.REVIEW_SINGLE_REEL)
-    # Runtime market/evergreen guidance (not Admin Knowledge row; not DOCX).
     write_rules = {
         **write_rules,
         "rukn_target_market_runtime": compile_market_guidance(target_market),
@@ -2328,6 +2433,10 @@ def _write_and_review_reel(
         "rukn_educational_transform_runtime": compile_educational_transform_guidance(),
         "rukn_knowledge_priority_runtime": compile_knowledge_priority_guidance(),
     }
+    if phrase_ledger is not None:
+        write_rules["rukn_phrase_ledger_runtime"] = phrase_ledger.compact_summary_for_writer()
+    if voice_profile is not None:
+        write_rules["rukn_voice_profile_runtime"] = voice_profile.compact_for_prompt()
     review_rules = {
         **review_rules,
         "rukn_target_market_runtime": compile_market_guidance(target_market),
@@ -2335,7 +2444,6 @@ def _write_and_review_reel(
         "rukn_educational_transform_runtime": compile_educational_transform_guidance(),
         "rukn_knowledge_priority_runtime": compile_knowledge_priority_guidance(),
     }
-    # Local validators need real Admin keys (e.g. rukn_forbidden_phrases), not pack blobs.
     review_rules_local = {
         **review_rules_full,
         "rukn_target_market_runtime": compile_market_guidance(target_market),
@@ -2378,37 +2486,25 @@ def _write_and_review_reel(
             target_market=target_market,
         )
         generated = provider.write_single_reel(write_input)
+        generated = ensure_spoken_beats(generated)
         if session is not None and job is not None and preset is not None:
             _record_usage_event(session, job, provider, PipelineStage.WRITE_SINGLE_REEL, preset)
         return generated
 
-    # --- 1. First draft (creator uninterrupted) ---------------------------
+    # --- 1. First draft ---------------------------------------------------
     progress(f"{PROGRESS_CREATOR_DRAFT} for lesson {lesson_n}/{total_reels}")
     draft = _write(phase="first_draft", feedback=[])
     write_count = 1
     caught_locally = False
 
-    # --- 2. Review bundle on the completed draft --------------------------
+    # --- 2. Deterministic + Integrated Editorial Review -------------------
     progress(PROGRESS_STUDENT_CLARITY)
     progress(PROGRESS_SPECIALIST_CRITIC)
     progress(PROGRESS_MASTER_MENTOR)
 
-    feedback: list[str] = []
-    local_result = _local_review_single_reel(
-        draft,
-        all_reels_so_far,
-        review_rules_local,
-        lesson_persona=lesson_persona_model,
-        target_market=target_market,
-        source_texts=source_texts,
-    )
-    if local_result is not None:
-        caught_locally = True
-        feedback.extend(action.instruction for action in local_result.actions)
-
+    provider_review: ReviewResult | None = None
     if premium:
-        # Full Student + Critic + Mentor AI review bundle (one call).
-        review = provider.review_single_reel(
+        provider_review = provider.review_single_reel(
             ReviewSingleReelInput(
                 reel_plan=reel_plan,
                 generated_reel=draft,
@@ -2420,25 +2516,41 @@ def _write_and_review_reel(
         )
         if session is not None and job is not None and preset is not None:
             _record_usage_event(session, job, provider, PipelineStage.REVIEW_SINGLE_REEL, preset)
-        if review.status != ReviewStatus.PASS:
-            feedback.extend(action.instruction for action in review.actions)
+
+    editorial = run_integrated_editorial_review(
+        reel_plan=reel_plan,
+        draft=draft,
+        prior_scripts=[r.script_text for r in all_reels_so_far],
+        address_form=address_form,
+        quality_mode=quality_mode,
+        provider_review=provider_review,
+    )
+    local_result = _local_review_single_reel(
+        draft,
+        all_reels_so_far,
+        review_rules_local,
+        lesson_persona=lesson_persona_model,
+        target_market=target_market,
+        source_texts=source_texts,
+    )
+    feedback: list[str] = [n.required_repair for n in editorial.notes if n.requires_rewrite]
+    if local_result is not None:
+        caught_locally = True
+        feedback.extend(action.instruction for action in local_result.actions)
 
     if not feedback:
         feedback = [
-            "Absorb valid Student, Specialist Critic, and Master Mentor signals; "
-            "rewrite as Final Master Version in natural Creator voice — do not "
-            "paste or quote review comments into the spoken script."
+            "Rewrite as Final Master in natural Creator spoken Egyptian — "
+            "do not paste review comments into the spoken script."
         ]
 
-    # --- 3. Final Master rewrite(s) — max MAX_FINAL_REBUILD_ATTEMPTS -------
-    # Never ship the first draft as the product: always attempt Final Master.
+    # --- 3. Creator rewrite(s) — max 2 ------------------------------------
     master = draft
     needs_review = False
     rebuilds = 0
     wrote_final_master = False
     retry_guard = IdenticalRetryGuard()
     while rebuilds < MAX_FINAL_REBUILD_ATTEMPTS:
-        # Never retry the exact same failed prompt input.
         if not retry_guard.allow(
             phase="final_master", feedback=feedback, script_text=draft.script_text
         ):
@@ -2450,6 +2562,14 @@ def _write_and_review_reel(
         write_count += 1
         rebuilds += 1
 
+        editorial = run_integrated_editorial_review(
+            reel_plan=reel_plan,
+            draft=master,
+            prior_scripts=[r.script_text for r in all_reels_so_far],
+            address_form=address_form,
+            quality_mode=quality_mode,
+            provider_review=None,
+        )
         sanity = _local_review_single_reel(
             master,
             all_reels_so_far,
@@ -2458,46 +2578,77 @@ def _write_and_review_reel(
             target_market=target_market,
             source_texts=source_texts,
         )
-        if sanity is None:
+        if sanity is not None:
+            caught_locally = True
+
+        if not unresolved_fatal_or_serious(editorial) and sanity is None:
             needs_review = False
             break
 
-        caught_locally = True
-        fatal_actions = [a for a in sanity.actions if _action_is_fatal(a.reason_code)]
-        serious_actions = [a for a in sanity.actions if _action_is_serious(a.reason_code)]
+        fatal_from_local = []
+        serious_from_local = []
+        if sanity is not None:
+            fatal_from_local = [a for a in sanity.actions if _action_is_fatal(a.reason_code)]
+            serious_from_local = [a for a in sanity.actions if _action_is_serious(a.reason_code)]
 
-        if fatal_actions:
+        if any(n.severity == "fatal" for n in editorial.notes) or fatal_from_local:
             needs_review = True
-            break
-
-        if not serious_actions:
-            needs_review = False
             break
 
         if rebuilds >= MAX_FINAL_REBUILD_ATTEMPTS:
             needs_review = True
             break
 
-        # Second rebuild only for remaining serious issues (Premium preferred).
-        if not premium:
+        if not premium and (unresolved_fatal_or_serious(editorial) or serious_from_local):
             needs_review = True
             break
 
-        # Change feedback for targeted repair — identical input is blocked above.
-        feedback = [a.instruction for a in serious_actions]
-        draft = master  # fingerprint next attempt against latest script
+        feedback = [
+            n.required_repair for n in editorial.notes if n.severity in ("fatal", "serious")
+        ] + [a.instruction for a in serious_from_local]
+        draft = master
 
     if not wrote_final_master:
-        # Guard was blocked before any Final Master write — force one pass so
-        # the product is never the unreviewed first draft.
         progress(f"{PROGRESS_REBUILD_MASTER} for lesson {lesson_n}/{total_reels}")
         master = _write(phase="final_master", feedback=feedback)
         wrote_final_master = True
         write_count += 1
         needs_review = True
 
+    # Final deterministic checks are authoritative for pass/fail.
+    final_editorial = run_integrated_editorial_review(
+        reel_plan=reel_plan,
+        draft=master,
+        prior_scripts=[r.script_text for r in all_reels_so_far],
+        address_form=address_form,
+        quality_mode=quality_mode,
+    )
+    final_sanity = _local_review_single_reel(
+        master,
+        all_reels_so_far,
+        review_rules_local,
+        lesson_persona=lesson_persona_model,
+        target_market=target_market,
+        source_texts=source_texts,
+    )
+    if unresolved_fatal_or_serious(final_editorial) or final_sanity is not None:
+        needs_review = True
+    else:
+        needs_review = False
+
+    quality_status = "needs_review" if needs_review else "pass"
     if needs_review:
-        master = master.model_copy(update={"self_check_status": ReviewStatus.NEEDS_REVISION})
+        master = master.model_copy(
+            update={
+                "self_check_status": ReviewStatus.NEEDS_REVISION,
+                "quality_status": quality_status,
+                "quality_report": final_editorial.model_dump(),
+            }
+        )
+    else:
+        master = master.model_copy(
+            update={"quality_status": "pass", "quality_report": final_editorial.model_dump()}
+        )
 
     cleaned = strip_research_leaks_from_script(master.script_text)
     from app.generation.source_isolation import strip_untrusted_fences_for_docx
@@ -2512,14 +2663,18 @@ def _write_and_review_reel(
     cleaned, _claim_conflict = remove_unsupported_weak_claim(cleaned, source_quality="weak")
     cleaned = strip_conflict_notes_from_script(cleaned)
     cleaned = strip_meta_instruction_lines(cleaned)
-    if cleaned != master.script_text:
-        master = master.model_copy(update={"script_text": cleaned})
+    cleaned = strip_punctuation_from_spoken_body(cleaned)
+    master = master.model_copy(update={"script_text": cleaned})
+    master = ensure_spoken_beats(master)
 
     if not (master.script_text or "").strip():
         raise RuntimeError(
             f"Lesson '{reel_plan.title}' ({reel_plan.reel_id}) produced an empty "
             "Final Master script — refusing to save unusable content."
         )
+
+    if phrase_ledger is not None and not needs_review:
+        phrase_ledger.record_reel(master)
 
     return master, write_count, caught_locally, needs_review
 
@@ -2543,17 +2698,22 @@ def _assemble_final_course(course_map: CourseMap, all_reels: list[GeneratedReel]
             sections.append(f"## {reel.title}")
             sections.append(reel.script_text)
             final_reels.append(
-                FinalReel(reel_id=reel.reel_id, title=reel.title, script_text=reel.script_text)
+                FinalReel(
+                    reel_id=reel.reel_id,
+                    title=reel.title,
+                    script_text=reel.script_text,
+                    spoken_beats=list(reel.spoken_beats or []),
+                    delivery_mode=reel.delivery_mode,
+                    quality_status=reel.quality_status,
+                )
             )
-
-        if module.bridge_project:
-            sections.append(f"[Bridge project] {module.bridge_project}")
 
         final_modules.append(
             FinalModule(
                 module_id=module.module_id,
                 title=module.title,
                 bridge_project=module.bridge_project,
+                module_project=module.module_project,
                 reels=final_reels,
             )
         )
@@ -2562,6 +2722,8 @@ def _assemble_final_course(course_map: CourseMap, all_reels: list[GeneratedReel]
         title=course_map.course_title,
         modules=final_modules,
         full_text="\n\n".join(sections),
+        graduation_project=course_map.graduation_project,
+        thesis=course_map.thesis,
     )
 
 

@@ -1,25 +1,10 @@
 """DOCX export for a finished, reviewed course (docs/ARCHITECTURE.md Stage 8).
 
 Renders a `FinalCourse` (see app/schemas/generation.py) into a real .docx
-following the teleprompter contract (see the `rukn_teleprompter_docx_contract`
-admin knowledge item, app/seed_admin_knowledge.py): the DOCX is a
-teleprompter-ready lecturer script, not a book/handout/report. V1 contains
-ONLY the course title, numbered "Module N — title" / "Lesson N — title"
-headings, and the spoken script under each lesson — nothing else.
-
-Bridge projects, production notes, asset briefs, reviews, scores, sources,
-citations, and planning labels must never appear in the export. Bridge
-projects may still exist on the internal course map for teaching structure;
-they are not rendered into the DOCX.
-
-If an admin has an active `docx_template` knowledge item (see
-app/models/admin_knowledge.py), that should eventually drive
-branding/formatting here instead of the defaults below. Not implemented
-yet - out of scope for now ("create clean default formatting").
-
-No DB access here (mirrors app/services/extraction.py): version numbering
-and CourseVersion creation are the caller's (app/generation/orchestrator.py)
-responsibility, this module only renders and saves a file.
+following the teleprompter contract: course title, module headings, lesson
+headings, spoken beats (no punctuation in body), module projects between
+modules, and graduation project. Never production notes, sources, reviews,
+Hook/Loop labels, or critic metadata.
 """
 
 from pathlib import Path
@@ -32,11 +17,20 @@ from docx.shared import Pt
 from docx.text.paragraph import Paragraph
 
 from app.config import settings
-from app.schemas.generation import CourseMap, FinalCourse, FinalModule, FinalReel, GeneratedReel
+from app.generation.contracts.spoken_final_master import (
+    beats_to_plain_script,
+    strip_punctuation_from_spoken_body,
+    text_to_spoken_beats,
+)
+from app.schemas.generation import (
+    CourseMap,
+    FinalCourse,
+    FinalModule,
+    FinalReel,
+    GeneratedReel,
+    ModuleProject,
+)
 
-# A widely-available, Arabic-friendly font (script content is primarily
-# Egyptian Arabic - see rukn_writing_style). Large size + generous line
-# spacing so the script is comfortably readable at arm's length on camera.
 TELEPROMPTER_FONT = "Arial"
 BODY_FONT_SIZE = Pt(14)
 BODY_LINE_SPACING = 1.5
@@ -49,13 +43,6 @@ _HEADING_STYLE_SIZES = {
 
 
 def _set_style_font(style, size: Pt) -> None:
-    """Set both the ascii and complex-script ("cs") font on a style.
-
-    python-docx's `style.font.name` only sets the ascii/hAnsi font slot.
-    Word renders Arabic text using the separate "cs" slot, which silently
-    stays at Word's default font unless set explicitly here too - so
-    without this, `TELEPROMPTER_FONT` would only apply to Latin text.
-    """
     style.font.name = TELEPROMPTER_FONT
     style.font.size = size
     r_pr = style.element.get_or_add_rPr()
@@ -67,10 +54,7 @@ def _set_style_font(style, size: Pt) -> None:
 
 
 def _set_rtl(paragraph: Paragraph) -> Paragraph:
-    """Right-to-left paragraph direction + right alignment - this script is
-    read on camera, almost always in Arabic. Returns the paragraph so this
-    can wrap a `document.add_...` call inline."""
-    p_pr = paragraph._p.get_or_add_pPr()  # noqa: SLF001 - python-docx has no public API for bidi
+    p_pr = paragraph._p.get_or_add_pPr()  # noqa: SLF001
     if p_pr.find(qn("w:bidi")) is None:
         p_pr.append(p_pr.makeelement(qn("w:bidi"), {}))
     paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT
@@ -78,9 +62,6 @@ def _set_rtl(paragraph: Paragraph) -> Paragraph:
 
 
 def _apply_teleprompter_formatting(document: DocxDocument) -> None:
-    """Large, Arabic-friendly font and comfortable spacing throughout - no
-    decorative design, just readable-on-camera defaults (see the
-    "Formatting" section of the teleprompter contract)."""
     styles = document.styles
     _set_style_font(styles["Normal"], BODY_FONT_SIZE)
     styles["Normal"].paragraph_format.line_spacing = BODY_LINE_SPACING
@@ -89,15 +70,27 @@ def _apply_teleprompter_formatting(document: DocxDocument) -> None:
         _set_style_font(styles[style_name], size)
 
 
-def _add_script_lines(document: DocxDocument, script_text: str) -> None:
-    """Write spoken transcript lines; preserve blank lines as pause spacing.
+def _spoken_body_lines(reel: FinalReel) -> list[str]:
+    """Spoken lines for DOCX. Keeps intentional blank pause paragraphs."""
+    beats = list(reel.spoken_beats or [])
+    if beats:
+        plain = beats_to_plain_script(beats)
+    else:
+        plain = reel.script_text or ""
+    cleaned = strip_punctuation_from_spoken_body(plain)
+    from app.generation.web_research import strip_research_leaks_from_script
 
-    Last-chance strip of URLs/citation cues so export never ships research leaks
-    even if an earlier pipeline stage missed them.
-    """
+    cleaned = strip_research_leaks_from_script(cleaned)
+    # Preserve blank lines (teleprompter pauses); drop only trailing empties later.
+    return [ln.strip() if ln.strip() else "" for ln in cleaned.splitlines()]
+
+
+def _add_script_lines(document: DocxDocument, script_text: str) -> None:
+    """Legacy helper — prefer reel-aware path; strips punctuation."""
     from app.generation.web_research import strip_research_leaks_from_script
 
     cleaned = strip_research_leaks_from_script(script_text or "")
+    cleaned = strip_punctuation_from_spoken_body(cleaned)
     for line in cleaned.splitlines():
         if line.strip():
             _set_rtl(document.add_paragraph(line.strip()))
@@ -105,9 +98,36 @@ def _add_script_lines(document: DocxDocument, script_text: str) -> None:
             _set_rtl(document.add_paragraph(""))
 
 
+def _add_reel_script(document: DocxDocument, reel: FinalReel) -> None:
+    lines = _spoken_body_lines(reel)
+    # Trim leading/trailing blank pause lines only.
+    while lines and not lines[0]:
+        lines.pop(0)
+    while lines and not lines[-1]:
+        lines.pop()
+    if not lines:
+        return
+    for line in lines:
+        _set_rtl(document.add_paragraph(line))
+
+
+def _add_module_project(document: DocxDocument, project: ModuleProject) -> None:
+    """Render a module/graduation project — not a numbered lesson."""
+    _set_rtl(document.add_heading(project.name or "مشروع الموديول", level=2))
+    if project.brief:
+        _set_rtl(document.add_paragraph(project.brief))
+    if project.inputs_or_files:
+        _set_rtl(document.add_paragraph("المدخلات: " + "، ".join(project.inputs_or_files)))
+    if project.deliverable_shape:
+        _set_rtl(document.add_paragraph("شكل التسليم: " + project.deliverable_shape))
+    if project.pass_criteria:
+        _set_rtl(document.add_paragraph("شروط الاجتياز: " + "؛ ".join(project.pass_criteria)))
+    if project.skills_tested:
+        _set_rtl(document.add_paragraph("المهارات: " + "؛ ".join(project.skills_tested)))
+
+
 def render_final_course_docx(final_course: FinalCourse) -> DocxDocument:
-    """Build the in-memory python-docx Document. Split out from saving so
-    the rendering logic is testable without touching the filesystem."""
+    """Build the in-memory python-docx Document."""
     document = Document()
     _apply_teleprompter_formatting(document)
 
@@ -121,33 +141,31 @@ def render_final_course_docx(final_course: FinalCourse) -> DocxDocument:
 
         for lesson_index, reel in enumerate(module.reels, start=1):
             _set_rtl(document.add_heading(f"Lesson {lesson_index} — {reel.title}", level=2))
-            _add_script_lines(document, reel.script_text or "")
-        # V1: never render bridge_project / Project blocks into the DOCX.
+            _add_reel_script(document, reel)
+
+        # Only structured module_project is exported. Legacy bridge_project stays internal.
+        if module.module_project is not None:
+            _add_module_project(document, module.module_project)
+
+    if final_course.graduation_project is not None:
+        document.add_page_break()
+        _set_rtl(document.add_heading("مشروع التخرج", level=1))
+        _add_module_project(document, final_course.graduation_project)
 
     return document
 
 
 def extract_plain_text(document: DocxDocument) -> str:
-    """Flatten every paragraph's text into one newline-joined string, in
-    document order.
-
-    Read-only: used solely by app/generation/output_scoring.py to run
-    observational checks against exactly what the DOCX actually contains -
-    never written back into the document, never changes export behavior.
-    """
     return "\n".join(p.text for p in document.paragraphs)
 
 
 def next_version_number(existing_version_numbers: list[int]) -> int:
-    """Pure helper: the caller supplies whatever version numbers already
-    exist for the course (from CourseVersion rows) and gets the next one."""
     return max(existing_version_numbers, default=0) + 1
 
 
 def export_final_course_to_docx(
     final_course: FinalCourse, course_id: int, version_number: int
 ) -> Path:
-    """Render and save to storage/outputs/{course_id}/course_v{n}.docx."""
     document = render_final_course_docx(final_course)
 
     course_dir = settings.storage_outputs_dir / str(course_id)
@@ -157,22 +175,10 @@ def export_final_course_to_docx(
     return output_path
 
 
-# --- Partial export (used only when a run stops early - see -----------------
-# app/generation/orchestrator.py's error handling) -------------------------
-#
-# Deliberately separate functions from `render_final_course_docx` /
-# `export_final_course_to_docx` above: the completed-DOCX contract and its
-# tests must stay byte-for-byte unaffected by this. Everything below
-# reuses the same internal formatting helpers so a partial draft looks
-# like the same teleprompter document, just visibly marked as partial.
 PARTIAL_DRAFT_NOTE = "Partial draft — generation stopped before completion."
 
 
 def _assemble_partial_course(course_map: CourseMap, reels: list[GeneratedReel]) -> FinalCourse:
-    """Adapted from app/generation/orchestrator.py `_assemble_final_course`:
-    groups completed reels under their module in map order, but - unlike
-    that function - skips any module with zero completed reels instead of
-    erroring, since a partial run may have stopped mid-module."""
     sections: list[str] = []
     final_modules: list[FinalModule] = []
 
@@ -187,17 +193,22 @@ def _assemble_partial_course(course_map: CourseMap, reels: list[GeneratedReel]) 
             sections.append(f"## {reel.title}")
             sections.append(reel.script_text)
             final_reels.append(
-                FinalReel(reel_id=reel.reel_id, title=reel.title, script_text=reel.script_text)
+                FinalReel(
+                    reel_id=reel.reel_id,
+                    title=reel.title,
+                    script_text=reel.script_text,
+                    spoken_beats=list(reel.spoken_beats or []),
+                    delivery_mode=reel.delivery_mode,
+                    quality_status=reel.quality_status,
+                )
             )
-
-        if module.bridge_project:
-            sections.append(f"[Bridge project] {module.bridge_project}")
 
         final_modules.append(
             FinalModule(
                 module_id=module.module_id,
                 title=module.title,
                 bridge_project=module.bridge_project,
+                module_project=module.module_project,
                 reels=final_reels,
             )
         )
@@ -206,16 +217,14 @@ def _assemble_partial_course(course_map: CourseMap, reels: list[GeneratedReel]) 
         title=course_map.course_title,
         modules=final_modules,
         full_text="\n\n".join(sections),
+        graduation_project=course_map.graduation_project,
+        thesis=course_map.thesis,
     )
 
 
 def build_partial_course_from_job(
     course_map_json: dict | str | None, completed_reels_json: list | str | None
 ) -> FinalCourse:
-    """Reconstruct a `FinalCourse`-shaped structure from a `GenerationJob`'s
-    persisted `course_map_json` / `completed_reels_json` (see
-    app/models/generation_job.py) - the only usable state a failed/partial
-    run leaves behind."""
     from app.services.json_coerce import coerce_json_dict, coerce_json_list
 
     course_map = CourseMap.model_validate(coerce_json_dict(course_map_json) or {})
@@ -228,10 +237,6 @@ def build_partial_course_from_job(
 
 
 def render_partial_course_docx(final_course: FinalCourse) -> DocxDocument:
-    """Same module/lesson structure and Arabic-friendly formatting as
-    `render_final_course_docx`, plus exactly one extra paragraph before the
-    course title marking it as a partial draft - nothing else extra (no
-    logs, no review notes, no error text)."""
     document = Document()
     _apply_teleprompter_formatting(document)
 
@@ -246,18 +251,16 @@ def render_partial_course_docx(final_course: FinalCourse) -> DocxDocument:
 
         for lesson_index, reel in enumerate(module.reels, start=1):
             _set_rtl(document.add_heading(f"Lesson {lesson_index} — {reel.title}", level=2))
-            _add_script_lines(document, reel.script_text or "")
-        # V1: never render bridge_project / Project blocks into the DOCX.
+            _add_reel_script(document, reel)
+
+        # Only structured module_project is exported. Legacy bridge_project stays internal.
+        if module.module_project is not None:
+            _add_module_project(document, module.module_project)
 
     return document
 
 
 def export_partial_course_to_docx(final_course: FinalCourse, course_id: int, job_id: int) -> Path:
-    """Save to storage/outputs/{course_id}/partial_job_{job_id}.docx - a
-    naming pattern clearly distinct from a real `course_v{n}.docx` version
-    so it can never be confused with a completed version or picked up by
-    `next_version_number`/version listings (both only ever look at
-    `CourseVersion` rows, never at files on disk)."""
     document = render_partial_course_docx(final_course)
 
     course_dir = settings.storage_outputs_dir / str(course_id)

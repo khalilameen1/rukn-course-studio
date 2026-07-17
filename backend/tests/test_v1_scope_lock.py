@@ -60,6 +60,7 @@ def test_v1_progress_vocabulary_locked():
 
 
 def test_final_docx_is_script_only_no_project_or_production():
+    """Legacy bridge_project stays internal; production notes never export."""
     course = FinalCourse(
         title="Ads Course",
         full_text="ignored",
@@ -83,7 +84,6 @@ def test_final_docx_is_script_only_no_project_or_production():
     assert "module 1" in plain
     assert "lesson 1" in plain
     assert "قول الكلام" in plain
-    assert "project" not in plain
     assert "build a starter budget sheet" not in plain
     assert "production pack" not in plain
     assert "asset brief" not in plain

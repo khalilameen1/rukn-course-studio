@@ -1,7 +1,7 @@
-"""Compact stage-specific Admin Knowledge packs — no full table dump.
+"""Token-aware priority packing for Admin Knowledge — no blind mid-rule cuts.
 
-Builds short instruction packs from selected rukn_* keys so prompts receive
-only what the stage needs (cost hygiene).
+Mandatory core rules are included whole. Relevant retrieved rules follow by
+lesson/stage. Optional context may be summarized or dropped under budget.
 """
 
 from __future__ import annotations
@@ -17,12 +17,34 @@ from app.data.admin_knowledge.pack_sections import (
 )
 from app.prompts.prompt_registry import PipelineStage
 
-# Soft cap per packed article / total pack.
-_PER_KEY_CHARS = 900
-_PACK_MAX_CHARS = 4200
-_INTERPRETATION_STAGE_MAX_CHARS = 900
-_EDUCATIONAL_CREATOR_STAGE_MAX_CHARS = 900
-_ANTI_PATTERNS_STAGE_MAX_CHARS = 900
+# Soft total budget (chars ≈ tokens*4). Mandatory core is reserved outside cuts.
+_PACK_MAX_CHARS = 8000
+_OPTIONAL_SUMMARY_CHARS = 400
+_INTERPRETATION_STAGE_MAX_CHARS = 1800
+_EDUCATIONAL_CREATOR_STAGE_MAX_CHARS = 1800
+_ANTI_PATTERNS_STAGE_MAX_CHARS = 1800
+
+# Legacy names kept for imports/tests — no longer used as hard per-key scissors.
+_PER_KEY_CHARS = 10_000
+
+# Must arrive complete on every Creator write / rewrite.
+MANDATORY_CORE_KEYS: tuple[str, ...] = (
+    "rukn_core_rules",
+    "rukn_writing_style",
+    "rukn_high_signal_reel_doctrine",
+    "rukn_educational_creator_standard",
+    "rukn_teleprompter_docx_contract",
+)
+
+RELEVANT_RETRIEVED_KEYS: tuple[str, ...] = (
+    "rukn_practical_course_rules",
+    "rukn_quality_rubric",
+    "rukn_forbidden_phrases",
+    "rukn_anti_patterns_quality_checks",
+    "rukn_interpretation_guardrails",
+    "rukn_source_distillation_gate",
+    "rukn_transcript_topic_relevance_gate",
+)
 
 # Pack names → pipeline stages that use them.
 MAP_PLANNING_STAGES = {PipelineStage.BUILD_COURSE_MAP}
@@ -64,18 +86,16 @@ _SECTION_HEADER_RE = re.compile(
 )
 
 
-def _split_numbered_sections(text: str) -> dict[int, str]:
-    """Parse `## N. Title` / `## N. Title {#anchor}` blocks.
+def estimate_tokens(text: str) -> int:
+    """Rough token estimate without a tokenizer dependency (~4 chars/token)."""
+    return max(1, (len(text or "") + 3) // 4)
 
-    Returns sections keyed by number. Optional anchors are also indexed under
-    a parallel attribute for future named maps (`_section_anchors` on the
-    returned dict is not used — see `_split_sections_with_anchors`).
-    """
+
+def _split_numbered_sections(text: str) -> dict[int, str]:
     return _split_sections_with_anchors(text)[0]
 
 
 def _split_sections_with_anchors(text: str) -> tuple[dict[int, str], dict[str, str]]:
-    """Return `(by_number, by_anchor)` for numbered Admin Knowledge articles."""
     headers = list(_SECTION_HEADER_RE.finditer(text or ""))
     by_number: dict[int, str] = {}
     by_anchor: dict[str, str] = {}
@@ -100,6 +120,7 @@ def _stage_numbered_article_slice(
     lead: str,
     max_chars: int,
 ) -> str:
+    """Include whole numbered sections only — never cut mid-section."""
     wanted = sections_by_stage.get(stage)
     if not wanted or not (full_text or "").strip():
         return ""
@@ -111,6 +132,7 @@ def _stage_numbered_article_slice(
             continue
         candidate = "\n\n".join(parts + [block])
         if len(candidate) > max_chars:
+            # Drop this whole section rather than truncating mid-rule.
             break
         parts.append(block)
     return "\n\n".join(parts).strip()
@@ -122,7 +144,6 @@ def stage_interpretation_guardrails(
     *,
     max_chars: int = _INTERPRETATION_STAGE_MAX_CHARS,
 ) -> str:
-    """Compact stage-relevant subset — never resend all 25 points every call."""
     wanted = _INTERPRETATION_SECTIONS_BY_STAGE.get(stage)
     if not wanted or not (full_text or "").strip():
         return ""
@@ -142,29 +163,21 @@ def stage_educational_creator_standard(
     *,
     max_chars: int = _EDUCATIONAL_CREATOR_STAGE_MAX_CHARS,
 ) -> str:
-    """Compact stage-relevant creator voice standard — not the full article."""
     wanted = _EDUCATIONAL_CREATOR_SECTIONS_BY_STAGE.get(stage)
     if not wanted or not (full_text or "").strip():
         return ""
-    sections = _split_numbered_sections(full_text)
-    parts = [
-        "# Educational creator standard (stage-relevant only)",
-        (
+    # Mandatory core path: include whole wanted sections without per-section scissors.
+    return _stage_numbered_article_slice(
+        full_text,
+        stage,
+        _EDUCATIONAL_CREATOR_SECTIONS_BY_STAGE,
+        header="# Educational creator standard (stage-relevant only)",
+        lead=(
             "Practitioner-educator voice — not generic AI teacher or course seller. "
             "Teleprompter DOCX only."
         ),
-    ]
-    per_section_cap = 150 if stage == PipelineStage.WRITE_SINGLE_REEL else 220
-    for num in wanted:
-        block = sections.get(num)
-        if not block:
-            continue
-        block = _compact_article(block, max_chars=per_section_cap)
-        candidate = "\n\n".join(parts + [block])
-        if len(candidate) > max_chars:
-            break
-        parts.append(block)
-    return "\n\n".join(parts).strip()
+        max_chars=max_chars,
+    )
 
 
 def stage_source_distillation_gate(
@@ -173,7 +186,6 @@ def stage_source_distillation_gate(
     *,
     max_chars: int = _EDUCATIONAL_CREATOR_STAGE_MAX_CHARS,
 ) -> str:
-    """Distillation rules slice — sources are raw material, not authority."""
     return _stage_numbered_article_slice(
         full_text,
         stage,
@@ -190,7 +202,6 @@ def stage_transcript_topic_relevance_gate(
     *,
     max_chars: int = _EDUCATIONAL_CREATOR_STAGE_MAX_CHARS,
 ) -> str:
-    """Transcript relevance slice — same-topic raw material vs off-topic colloquial only."""
     return _stage_numbered_article_slice(
         full_text,
         stage,
@@ -210,53 +221,61 @@ def stage_anti_patterns_quality_checks(
     *,
     max_chars: int = _ANTI_PATTERNS_STAGE_MAX_CHARS,
 ) -> str:
-    """Rejection/checklist slice — never a writing template or good-example bank."""
     wanted = _ANTI_PATTERNS_SECTIONS_BY_STAGE.get(stage)
     if not wanted or not (full_text or "").strip():
         return ""
-    sections = _split_numbered_sections(full_text)
-    parts = [
-        "# Anti-patterns and quality checks (rejection layer only)",
-        "Diagnostic checks and rejected patterns — do not copy as a style template.",
-    ]
-    per_section_cap = 200
-    for num in wanted:
-        block = sections.get(num)
-        if not block:
-            continue
-        block = _compact_article(block, max_chars=per_section_cap)
-        candidate = "\n\n".join(parts + [block])
-        if len(candidate) > max_chars:
-            break
-        parts.append(block)
-    return "\n\n".join(parts).strip()
+    return _stage_numbered_article_slice(
+        full_text,
+        stage,
+        _ANTI_PATTERNS_SECTIONS_BY_STAGE,
+        header="# Anti-patterns and quality checks (rejection layer only)",
+        lead="Diagnostic checks and rejected patterns — do not copy as a style template.",
+        max_chars=max_chars,
+    )
 
 
-def _compact_article(text: str, *, max_chars: int = _PER_KEY_CHARS) -> str:
-    """Keep headings + lead bullets; drop long examples."""
+def _summarize_optional(text: str, *, max_chars: int = _OPTIONAL_SUMMARY_CHARS) -> str:
+    """Summarize optional context by keeping headings/bullets only — whole lines."""
     if not text:
         return ""
-    lines = []
+    lines: list[str] = []
     for raw in text.splitlines():
-        line = raw.rstrip()
-        stripped = line.strip()
+        stripped = raw.strip()
         if not stripped:
             continue
-        # Prefer headings, bullets, numbered rules, short imperatives.
         if (
             stripped.startswith("#")
             or stripped.startswith("-")
             or stripped.startswith("*")
             or re.match(r"^\d+[.)]", stripped)
-            or len(stripped) <= 160
         ):
             lines.append(stripped)
-        elif len(stripped) <= 220:
-            lines.append(stripped[:200] + ("…" if len(stripped) > 200 else ""))
-    packed = "\n".join(lines).strip() or text[:max_chars]
-    if len(packed) > max_chars:
-        return packed[: max_chars - 1].rstrip() + "…"
+        if sum(len(x) + 1 for x in lines) >= max_chars:
+            break
+    packed = "\n".join(lines).strip()
+    if not packed:
+        # Last resort: first complete paragraph only (never mid-sentence cut of a rule).
+        para = (text or "").strip().split("\n\n")[0]
+        return para if len(para) <= max_chars else ""
     return packed
+
+
+def _prepare_chunk(key: str, content: str, stage: PipelineStage) -> str:
+    if key == "rukn_interpretation_guardrails":
+        return stage_interpretation_guardrails(content, stage)
+    if key == "rukn_educational_creator_standard":
+        # Mandatory: prefer full stage slice; if empty, keep full content.
+        sliced = stage_educational_creator_standard(content, stage)
+        return sliced or content
+    if key == "rukn_anti_patterns_quality_checks":
+        return stage_anti_patterns_quality_checks(content, stage)
+    if key == "rukn_source_distillation_gate":
+        return stage_source_distillation_gate(content, stage)
+    if key == "rukn_transcript_topic_relevance_gate":
+        return stage_transcript_topic_relevance_gate(content, stage)
+    if key in MANDATORY_CORE_KEYS:
+        return content  # never scissors mandatory core
+    return content
 
 
 def build_stage_rules_pack(
@@ -265,66 +284,76 @@ def build_stage_rules_pack(
     *,
     max_chars: int = _PACK_MAX_CHARS,
 ) -> dict[str, str]:
-    """Collapse selected Admin Knowledge into one compact pack key.
+    """Priority pack: Mandatory → Relevant → Optional. No mid-rule truncation.
 
-    Returns a dict with a single pack key (plus any tiny runtime keys already
-    outside Admin Knowledge that callers may merge later). Original full
-    articles are NOT forwarded.
-
-    `rukn_interpretation_guardrails`, `rukn_educational_creator_standard`, and
-    `rukn_anti_patterns_quality_checks` are replaced with stage-relevant slices
-    before packing.
+    Mandatory core always included whole even if it exceeds soft budget
+    (budget then applies only to optional layers).
     """
     pack_name = PACK_KEY_BY_STAGE.get(stage, "lesson_writing_rules_pack")
-    # Reserve space for authority hint + runtime keys appended below.
-    reserve = 0
-    for key, content in selected_rules.items():
-        if key.endswith("_runtime") and content:
-            reserve += min(len(content), 1200) + 2
-        elif key == "rukn_authority_pack_hint" and content:
-            reserve += min(len(content), 800) + 2
-    article_budget = max(max_chars - reserve, 800)
 
-    parts: list[str] = []
-    total = 0
+    mandatory_parts: list[str] = []
+    relevant_parts: list[str] = []
+    optional_parts: list[str] = []
+    runtime_out: dict[str, str] = {}
+
     for key, content in selected_rules.items():
-        if key.startswith("rukn_") and key.endswith("_runtime"):
-            # Runtime guidance stays as its own short key.
+        if not content:
             continue
-        if key == "rukn_authority_pack_hint":
+        if key.endswith("_runtime") or key == "rukn_authority_pack_hint":
+            runtime_out[key] = content
             continue
-        if key == "rukn_interpretation_guardrails":
-            chunk = stage_interpretation_guardrails(content, stage)
-        elif key == "rukn_educational_creator_standard":
-            chunk = stage_educational_creator_standard(content, stage)
-        elif key == "rukn_anti_patterns_quality_checks":
-            chunk = stage_anti_patterns_quality_checks(content, stage)
-        elif key == "rukn_source_distillation_gate":
-            chunk = stage_source_distillation_gate(content, stage)
-        elif key == "rukn_transcript_topic_relevance_gate":
-            chunk = stage_transcript_topic_relevance_gate(content, stage)
-        else:
-            chunk = _compact_article(content)
+        chunk = _prepare_chunk(key, content, stage)
         if not chunk:
             continue
         block = f"### {key}\n{chunk}"
-        if total + len(block) > article_budget:
-            remain = article_budget - total - 20
-            if remain > 80:
-                parts.append(block[:remain] + "…")
-            break
+        if key in MANDATORY_CORE_KEYS:
+            mandatory_parts.append(block)
+        elif key in RELEVANT_RETRIEVED_KEYS:
+            relevant_parts.append(block)
+        else:
+            optional_parts.append(block)
+
+    parts: list[str] = list(mandatory_parts)
+    total = sum(len(p) + 2 for p in parts)
+
+    for block in relevant_parts:
+        if total + len(block) > max_chars:
+            # Prefer dropping whole relevant blocks over cutting them.
+            continue
+        parts.append(block)
+        total += len(block) + 2
+
+    for block in optional_parts:
+        if total + len(block) > max_chars:
+            summary = _summarize_optional(block, max_chars=min(_OPTIONAL_SUMMARY_CHARS, max_chars - total))
+            if summary and total + len(summary) <= max_chars:
+                parts.append(summary)
+                total += len(summary) + 2
+            continue
         parts.append(block)
         total += len(block) + 2
 
     pack_body = "\n\n".join(parts).strip()
     out: dict[str, str] = {pack_name: pack_body} if pack_body else {}
 
-    # Pass through compact runtime keys and authority-pack hints unchanged.
-    for key, content in selected_rules.items():
-        if key.endswith("_runtime") and content:
-            out[key] = content[:1200]
-        elif key == "rukn_authority_pack_hint" and content:
-            out[key] = content[:800]
+    # Runtime keys / authority hints — keep whole when small; never mid-cut rules.
+    for key, content in runtime_out.items():
+        if not content:
+            continue
+        if len(content) <= 2000:
+            out[key] = content
+        else:
+            # Whole paragraphs only.
+            paras = content.split("\n\n")
+            kept: list[str] = []
+            size = 0
+            for para in paras:
+                if size + len(para) > 2000:
+                    break
+                kept.append(para)
+                size += len(para) + 2
+            if kept:
+                out[key] = "\n\n".join(kept)
     return out
 
 
@@ -340,9 +369,30 @@ def select_and_pack_rules(
 
 
 def pack_is_compact(pack: dict[str, str], full_selected: dict[str, str]) -> bool:
-    """True when packed total chars << full selected articles."""
+    """True when packed total chars <= full selected (never larger dump)."""
     pack_chars = sum(len(v) for v in pack.values())
     full_chars = sum(len(v) for v in full_selected.values())
     if full_chars <= 0:
         return True
-    return pack_chars < full_chars and pack_chars <= _PACK_MAX_CHARS
+    # Compact relative to raw dump; mandatory-core-preserving packs may exceed
+    # the old 4200 soft cap — that is intentional.
+    return pack_chars <= full_chars
+
+
+def mandatory_core_intact(pack: dict[str, str], selected: dict[str, str]) -> bool:
+    """Every mandatory key present in selected appears uncut inside the pack body."""
+    body = "\n".join(pack.values())
+    for key in MANDATORY_CORE_KEYS:
+        content = selected.get(key)
+        if not content:
+            continue
+        # Key header must be present; content must not end with truncation ellipsis marker
+        # introduced by the old scissors.
+        if f"### {key}" not in body and key not in body:
+            return False
+        # Full mandatory content should be substring of pack (allow stage slice for creator standard).
+        if key == "rukn_educational_creator_standard":
+            continue
+        if content.strip() and content.strip() not in body:
+            return False
+    return True

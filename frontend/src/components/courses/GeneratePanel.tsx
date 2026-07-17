@@ -2,8 +2,9 @@
 
 import { useEffect, useRef, useState } from "react";
 import { api, formatApiErrorForDisplay } from "@/lib/api";
-import type { GenerationJob, GenerationQualityMode } from "@/lib/types";
+import type { GenerationJob, GenerationQualityMode, MapPreviewStats } from "@/lib/types";
 import StatusBadge from "@/components/ui/StatusBadge";
+import WriterTestPanel from "@/components/courses/WriterTestPanel";
 import {
   JOB_STATUS_LABEL,
   JOB_STATUS_TONE,
@@ -509,6 +510,9 @@ export default function GeneratePanel({
   const [qualityMode, setQualityMode] = useState<GenerationQualityMode>("premium");
   const [mission, setMission] = useState<MissionBrief | null>(null);
   const [showTighten, setShowTighten] = useState(false);
+  const [mapPreview, setMapPreview] = useState<MapPreviewStats | null>(null);
+  const [previewingMap, setPreviewingMap] = useState(false);
+  const [mapConfirmed, setMapConfirmed] = useState(false);
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pollDelayRef = useRef(POLL_BASE_MS);
 
@@ -653,11 +657,43 @@ export default function GeneratePanel({
     }
   }
 
+  async function handleMapPreview() {
+    setPreviewingMap(true);
+    setError(null);
+    setMapConfirmed(false);
+    try {
+      const stats = await api.mapPreview(courseId, {
+        generation_quality_mode: qualityMode,
+      });
+      setMapPreview(stats);
+    } catch (err) {
+      setError(formatApiErrorForDisplay(err));
+    } finally {
+      setPreviewingMap(false);
+    }
+  }
+
   async function handleGenerate() {
     setStarting(true);
     setError(null);
     setShowTighten(false);
     try {
+      if (!mapPreview) {
+        setError("عاين الخريطة والتكلفة أولًا قبل بدء التوليد الكامل.");
+        return;
+      }
+      if (!mapPreview.can_start_full_generation) {
+        setError(
+          (mapPreview.warnings ?? []).join(" ") ||
+            "الخريطة فيها مشاكل جودة — لا يمكن بدء التوليد الكامل.",
+        );
+        return;
+      }
+      if (!mapConfirmed) {
+        setError("أكد معاينة الخريطة قبل بدء التوليد الكامل.");
+        return;
+      }
+
       const readiness = await api.getCourseReadiness(courseId);
       if (readiness.mission_brief) setMission(readiness.mission_brief);
       if (!readiness.can_start) {
@@ -779,11 +815,75 @@ export default function GeneratePanel({
         </p>
       </div>
 
+      <div className="rounded-md border border-border px-3 py-3 space-y-2 text-sm">
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            className="btn-secondary w-fit"
+            disabled={previewingMap || starting || isRunning}
+            onClick={handleMapPreview}
+          >
+            {previewingMap ? "Building map preview…" : "Preview map & cost"}
+          </button>
+          {mapPreview ? (
+            <label className="flex items-center gap-2 text-xs">
+              <input
+                type="checkbox"
+                checked={mapConfirmed}
+                disabled={!mapPreview.can_start_full_generation}
+                onChange={(e) => setMapConfirmed(e.target.checked)}
+              />
+              Confirm map before full generation
+            </label>
+          ) : null}
+        </div>
+        {mapPreview ? (
+          <ul className="text-xs text-muted space-y-1">
+            <li>
+              {mapPreview.module_count} modules · {mapPreview.lesson_count} lessons · ~
+              {mapPreview.estimated_minutes} min · {mapPreview.project_count} projects
+            </li>
+            <li>
+              Theory/practice ~{Math.round(mapPreview.theory_ratio_estimate * 100)}%/
+              {Math.round(mapPreview.practice_ratio_estimate * 100)}% · ≈
+              {mapPreview.approx_tokens} tokens / ~${mapPreview.approx_cost_usd}
+            </li>
+            {Object.entries(mapPreview.delivery_mode_counts || {}).map(([k, v]) => (
+              <li key={k}>
+                {k}: {v}
+              </li>
+            ))}
+            {(mapPreview.warnings || []).map((w) => (
+              <li key={w} className="text-amber-800 dark:text-amber-300">
+                {w}
+              </li>
+            ))}
+            {!mapPreview.can_start_full_generation ? (
+              <li className="text-red-600">Full generation blocked until map issues are fixed.</li>
+            ) : null}
+          </ul>
+        ) : (
+          <p className="text-xs text-muted">
+            Generate Thesis + compressed Course Map first. Full lesson generation stays off until you
+            confirm.
+          </p>
+        )}
+      </div>
+
+      <WriterTestPanel courseId={courseId} />
+
       <div className="flex flex-wrap items-center gap-3">
         {showFullRegenerate ? (
           <button
             onClick={handleGenerate}
-            disabled={starting || isRunning || canceling || finalizingSaved}
+            disabled={
+              starting ||
+              isRunning ||
+              canceling ||
+              finalizingSaved ||
+              !mapPreview?.can_start_full_generation ||
+              !mapConfirmed
+            }
             className="btn-primary w-fit"
           >
             {starting || isRunning
@@ -792,7 +892,7 @@ export default function GeneratePanel({
                 ? "Start generation again"
                 : justCompleted
                   ? "Run again"
-                  : "Start generation"}
+                  : "Start full course generation"}
           </button>
         ) : (
           <button

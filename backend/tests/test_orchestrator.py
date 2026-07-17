@@ -392,21 +392,31 @@ def test_forbidden_phrase_feeds_review_bundle_then_one_final_rewrite(session):
         def write_single_reel(self, input):  # noqa: A002
             self.phases.append(input.write_phase)
             if input.write_phase == "final_master":
-                # Final rewrite removes the forbidden phrase.
+                # Final rewrite removes the forbidden phrase with real teaching length.
                 return GeneratedReel(
                     reel_id=input.reel.reel_id,
                     module_id=input.module.module_id,
                     title=input.reel.title,
-                    script_text="خلّينا نثبت فرق عملي من غير حشو في أول جملة.",
+                    script_text=(
+                        "المشكلة إن الناس بتبدأ من غير ما تحدد القرار\n"
+                        "ثبّت فرق عملي من أول تطبيق\n"
+                        "اختبر النتيجة على حالة حقيقية صغيرة\n"
+                        "لو القرار مش واضح أعد الخطوة بهدوء\n"
+                        "قفل الدرس لما تقدر تعيد نفس القرار لوحدك"
+                    ),
                     used_ideas=["idea"],
                     used_examples=["example"],
                     self_check_status=ReviewStatus.PASS,
+                    quality_status="pass",
                 )
             return GeneratedReel(
                 reel_id=input.reel.reel_id,
                 module_id=input.module.module_id,
                 title=input.reel.title,
-                script_text="في الريل ده هنشرح حاجة مهمة جدا اليوم عن الموضوع ده وهنكمل كلامنا",
+                script_text=(
+                    "في الريل ده هنشرح حاجة مهمة جدا اليوم عن الموضوع ده وهنكمل كلامنا "
+                    "ونزيد كلام من غير قيمة حقيقية للطالب"
+                ),
                 used_ideas=["idea"],
                 used_examples=["example"],
                 self_check_status=ReviewStatus.PASS,
