@@ -1,3 +1,4 @@
+import json
 from datetime import datetime
 from typing import Any, Optional
 
@@ -69,7 +70,34 @@ class GenerationJobRead(BaseModel):
     @field_validator("waste_warnings_json", mode="before")
     @classmethod
     def _coerce_waste_warnings(cls, value: object) -> object:
-        return [] if value is None else value
+        # Postgres TEXT legacy columns / drivers may hand back JSON as a string.
+        if value is None:
+            return []
+        if isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+            except json.JSONDecodeError:
+                return []
+            return parsed if isinstance(parsed, list) else []
+        return value
+
+    @field_validator(
+        "run_snapshot_json",
+        "output_score_json",
+        "usage_by_stage_json",
+        mode="before",
+    )
+    @classmethod
+    def _coerce_optional_json_objects(cls, value: object) -> object:
+        if value is None or value == "":
+            return None
+        if isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+            except json.JSONDecodeError:
+                return None
+            return parsed if isinstance(parsed, dict) else None
+        return value
 
     @field_validator("cancel_requested", mode="before")
     @classmethod

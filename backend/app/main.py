@@ -82,13 +82,15 @@ class CatchUnhandledErrorsMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         try:
             return await call_next(request)
-        except Exception:
+        except Exception as exc:
             correlation_id = uuid4().hex[:12]
+            error_type = type(exc).__name__
             logger.exception(
-                "Unhandled error on %s %s correlation_id=%s",
+                "Unhandled error on %s %s correlation_id=%s error_type=%s",
                 request.method,
                 request.url.path,
                 correlation_id,
+                error_type,
             )
             return JSONResponse(
                 status_code=500,
@@ -98,6 +100,8 @@ class CatchUnhandledErrorsMiddleware(BaseHTTPMiddleware):
                         f"{correlation_id}"
                     ),
                     "correlation_id": correlation_id,
+                    # Class name only — never exception text (may leak paths/SQL).
+                    "error_type": error_type,
                 },
                 headers={"X-Correlation-ID": correlation_id},
             )
