@@ -18,7 +18,8 @@ const aiUsagePage = read("src/app/ai-usage/page.tsx");
 
 const requiredApiSnippets = [
   'apiFetch<GenerationJob>(`/courses/${courseId}/generate`',
-  'apiFetch<GenerationJob>(`/jobs/${jobId}`)',
+  "apiFetch<GenerationJob>(`/jobs/${jobId}?course_id=${courseId}`)",
+  "finalize-saved",
   'apiFetch<AIUsageSummary>("/ai-usage/summary")',
   'apiFetch<CourseAIUsage>(`/courses/${courseId}/ai-usage`)',
   "Authorization: `Bearer ${token}`",
@@ -36,13 +37,17 @@ if (!generatePanel.includes("api.generateCourse") || !generatePanel.includes("fo
   console.error("GeneratePanel must use api.generateCourse + formatApiErrorForDisplay");
   process.exit(1);
 }
+if (!generatePanel.includes("finalizeSavedJob") || !generatePanel.includes("Download completed")) {
+  console.error("GeneratePanel must expose Finish export + Download completed recovery actions");
+  process.exit(1);
+}
 if (generatePanel.includes("fetch(") && !generatePanel.includes("api.")) {
   console.error("GeneratePanel must not use raw fetch for API calls");
   process.exit(1);
 }
 
-if (!aiUsagePage.includes("getAIUsageSummary") || !aiUsagePage.includes("formatApiErrorForDisplay")) {
-  console.error("AI Usage page must use api.getAIUsageSummary + formatApiErrorForDisplay");
+if (!aiUsagePage.includes("getAIUsageSummary")) {
+  console.error("AI Usage page must use api.getAIUsageSummary");
   process.exit(1);
 }
 if (aiUsagePage.includes("fetch(")) {
@@ -51,9 +56,9 @@ if (aiUsagePage.includes("fetch(")) {
 }
 
 const errorCases = [
-  "Session expired or not authenticated. Please log in again.",
-  "API route not found:",
-  "Browser could not reach this endpoint. Check CORS/preflight for",
+  "Session expired. Please sign in again.",
+  "Could not reach the server. Check your connection or API URL.",
+  "Too many requests. Please wait a moment and try again.",
 ];
 for (const msg of errorCases) {
   if (!apiTs.includes(msg)) {

@@ -620,6 +620,11 @@ export const api = {
     apiFetch<GenerationJob>(`/courses/${courseId}/generate/${jobId}/cancel`, {
       method: "POST",
     }),
+  /** Assemble Teleprompter from saved lessons — no AI tokens. */
+  finalizeSavedJob: (courseId: number, jobId: number) =>
+    apiFetch<GenerationJob>(`/courses/${courseId}/generate/${jobId}/finalize-saved`, {
+      method: "POST",
+    }),
   listVersions: (courseId: number) =>
     apiFetch<CourseVersion[]>(`/courses/${courseId}/versions`),
   downloadLatestDocx: (courseId: number, filename: string) =>

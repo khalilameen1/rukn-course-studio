@@ -22,7 +22,12 @@ from app.schemas.course import CourseRead
 from app.schemas.course_version import CourseVersionRead
 from app.schemas.generation_job import GenerateCourseRequest, GenerationJobRead
 from app.security.request_throttle import can_generate_start, record_generate_start
-from app.services.finalize_saved_job import try_recover_job_from_saved_lessons
+from app.services.finalize_saved_job import (
+    finalize_job_from_saved_lessons,
+    inspect_saved_lessons,
+    job_eligible_for_saved_finalize,
+    try_recover_job_from_saved_lessons,
+)
 from app.services.generation_maintenance import release_stale_active_jobs
 from app.services.upload_safety import assert_course_output_file
 
@@ -291,6 +296,71 @@ def cancel_generation(
         confirmed=True,
         success=True,
         details={"course_id": course_id, "job_id": job_id},
+    )
+    return updated
+
+
+@router.post("/generate/{job_id}/finalize-saved", response_model=GenerationJobRead)
+def finalize_saved_generation(
+    course_id: int, job_id: int, request: Request, session: Session = Depends(get_session)
+):
+    """Assemble Teleprompter DOCX from already-saved lessons — no AI calls.
+
+    Enterprise recovery for runs that saved every Final Master lesson but
+    stopped during final review/export (timeout, cancel, worker death).
+    """
+    from app.services.audit import record_audit
+
+    get_course_or_404(session, course_id)
+    job = generation_jobs.get(session, job_id)
+    if job is None or job.course_id != course_id:
+        raise HTTPException(status_code=404, detail="Generation job not found")
+
+    if job.status == JobStatus.COMPLETED and job.output_docx_path:
+        return job
+
+    if is_active_lock_status(job.status) and not job_eligible_for_saved_finalize(job):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "This run is still active and lessons are not fully saved yet. "
+                "Wait for it to finish or stop it first."
+            ),
+        )
+
+    inspection = inspect_saved_lessons(job)
+    if not inspection.ok:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Cannot finish from saved lessons — "
+                f"{inspection.reason.replace('_', ' ')} "
+                f"({inspection.unique_saved_count}/{inspection.planned_count} unique lessons)."
+            ),
+        )
+
+    updated = finalize_job_from_saved_lessons(session, job, force=True)
+    if updated is None or updated.status != JobStatus.COMPLETED:
+        raise HTTPException(
+            status_code=500,
+            detail="Could not write the Teleprompter DOCX from saved lessons.",
+        )
+
+    record_audit(
+        session,
+        action="generation_finalize_saved",
+        actor=_actor(request),
+        affected_table="generation_jobs",
+        affected_count=1,
+        dry_run=False,
+        confirmed=True,
+        success=True,
+        details={
+            "course_id": course_id,
+            "job_id": job_id,
+            "lessons": inspection.planned_count,
+            "ai_calls": 0,
+        },
     )
     return updated
 

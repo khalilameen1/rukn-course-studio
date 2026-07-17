@@ -154,6 +154,7 @@ RECOVERABLE_STATUSES: frozenset[JobStatus] = frozenset(
         JobStatus.PAUSED,
         JobStatus.PARTIAL,
         JobStatus.FAILED,
+        JobStatus.CANCELED,
     }
 )
 

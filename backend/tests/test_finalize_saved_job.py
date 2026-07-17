@@ -220,6 +220,51 @@ def test_format_stopped_after_label():
     assert format_stopped_after_label(None) is None
 
 
+def test_final_review_timeout_fail_soft_completes_from_saved(tmp_path, monkeypatch):
+    """Root-bug fix: provider timeout after all lessons must still export DOCX."""
+    from app.ai.fake_provider import FakeProvider
+    from app.generation.orchestrator import run_generation
+
+    engine = _make_session(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        "app.services.finalize_saved_job.settings.storage_dir", tmp_path / "storage"
+    )
+    monkeypatch.setattr(
+        "app.services.finalize_saved_job.settings.storage_outputs_dir",
+        tmp_path / "storage" / "outputs",
+    )
+    monkeypatch.setattr(
+        "app.services.docx_export.settings.storage_outputs_dir",
+        tmp_path / "storage" / "outputs",
+    )
+    monkeypatch.setattr(
+        "app.generation.orchestrator.settings.storage_outputs_dir",
+        tmp_path / "storage" / "outputs",
+    )
+
+    class TimeoutOnFinalReview(FakeProvider):
+        def final_review(self, input):  # noqa: A002
+            raise TimeoutError("Request timed out after 900s")
+
+    with Session(engine) as session:
+        course = courses.create(
+            session,
+            title="T",
+            audience="a",
+            outcome="o",
+            structure_mode=StructureMode.CONNECTED_NO_MODULES,
+            explanation_level=ExplanationLevel.FINAL_ONLY,
+        )
+        job = run_generation(session, course.id, provider=TimeoutOnFinalReview())
+        assert job.status == JobStatus.COMPLETED
+        assert job.output_docx_path
+        assert Path(job.output_docx_path).is_file()
+        steps = [e.get("step") for e in (job.log_json or [])]
+        assert "final_review" in steps
+        fr = next(e for e in job.log_json if e["step"] == "final_review")
+        assert fr.get("status") == "skipped_provider_error"
+
+
 def test_partial_timeout_job_recovers_on_try_recover(tmp_path, monkeypatch):
     engine = _make_session(tmp_path, monkeypatch)
     monkeypatch.setattr(
