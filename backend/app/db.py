@@ -419,6 +419,7 @@ def _widen_str_enum_columns() -> None:
         ("generation_jobs", "status", 32),
         ("generation_jobs", "generation_quality_mode", 32),
         ("generation_jobs", "web_research_mode", 64),
+        ("admin_knowledge_items", "item_type", 32),
     )
 
     if not _is_postgres():
@@ -473,6 +474,7 @@ def _normalize_str_enum_storage() -> None:
         ExplanationLevel,
         GenerationPreset,
         GenerationQualityMode,
+        ItemType,
         JobStatus,
         Priority,
         SourceCategory,
@@ -494,6 +496,7 @@ def _normalize_str_enum_storage() -> None:
         ("generation_jobs", "status", JobStatus),
         ("generation_jobs", "generation_quality_mode", GenerationQualityMode),
         ("generation_jobs", "web_research_mode", WebResearchMode),
+        ("admin_knowledge_items", "item_type", ItemType),
     ]
 
     try:

@@ -460,10 +460,18 @@ def run_autonomous_gap_fill(
     )
     if isinstance(cached_web_memory, WebSourceMemory):
         web_memory = cached_web_memory.model_copy(deep=True)
-    elif isinstance(cached_web_memory, dict) and cached_web_memory:
-        web_memory = WebSourceMemory.model_validate(cached_web_memory)
     else:
-        web_memory = WebSourceMemory()
+        from app.services.json_coerce import coerce_json_dict
+
+        cached_dict = (
+            cached_web_memory
+            if isinstance(cached_web_memory, dict)
+            else coerce_json_dict(cached_web_memory)
+        )
+        if cached_dict:
+            web_memory = WebSourceMemory.model_validate(cached_dict)
+        else:
+            web_memory = WebSourceMemory()
 
     research_store = ResearchMemoryStore()
     # Load persisted research entries from web memory blob.

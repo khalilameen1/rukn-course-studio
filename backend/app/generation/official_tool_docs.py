@@ -528,10 +528,14 @@ def run_official_tool_docs_pass(
     """Detect tools, reuse memory, fetch focused official-docs needs only."""
     if isinstance(cached, OfficialToolMemoryStore):
         store = cached.model_copy(deep=True)
-    elif isinstance(cached, dict) and cached:
-        store = OfficialToolMemoryStore.model_validate(cached)
     else:
-        store = OfficialToolMemoryStore()
+        from app.services.json_coerce import coerce_json_dict
+
+        cached_dict = cached if isinstance(cached, dict) else coerce_json_dict(cached)
+        if cached_dict:
+            store = OfficialToolMemoryStore.model_validate(cached_dict)
+        else:
+            store = OfficialToolMemoryStore()
 
     deps = detect_tool_dependencies(
         title=title,

@@ -203,14 +203,20 @@ def _assemble_partial_course(course_map: CourseMap, reels: list[GeneratedReel]) 
 
 
 def build_partial_course_from_job(
-    course_map_json: dict, completed_reels_json: list[dict]
+    course_map_json: dict | str | None, completed_reels_json: list | str | None
 ) -> FinalCourse:
     """Reconstruct a `FinalCourse`-shaped structure from a `GenerationJob`'s
     persisted `course_map_json` / `completed_reels_json` (see
     app/models/generation_job.py) - the only usable state a failed/partial
     run leaves behind."""
-    course_map = CourseMap.model_validate(course_map_json)
-    reels = [GeneratedReel.model_validate(r) for r in completed_reels_json]
+    from app.services.json_coerce import coerce_json_dict, coerce_json_list
+
+    course_map = CourseMap.model_validate(coerce_json_dict(course_map_json) or {})
+    reels = [
+        GeneratedReel.model_validate(r)
+        for r in coerce_json_list(completed_reels_json)
+        if isinstance(r, dict)
+    ]
     return _assemble_partial_course(course_map, reels)
 
 

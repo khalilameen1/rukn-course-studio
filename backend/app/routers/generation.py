@@ -241,8 +241,10 @@ def course_ai_usage(course_id: int, session: Session = Depends(get_session)):
     events = ai_usage_events.list(session, course_id=course_id)
     total = round(sum((e.estimated_cost_usd or 0.0) for e in events), 6)
     jobs = generation_jobs.list(session, course_id=course_id)
+    from app.services.json_coerce import coerce_json_dict, coerce_json_list
+
     latest = max(jobs, key=lambda j: j.id) if jobs else None
-    panel = getattr(latest, "usage_by_stage_json", None) or {}
+    panel = coerce_json_dict(getattr(latest, "usage_by_stage_json", None)) or {}
     return CourseAIUsage(
         course_id=course_id,
         estimated_cost_usd=total,
@@ -259,7 +261,10 @@ def course_ai_usage(course_id: int, session: Session = Depends(get_session)):
             else getattr(latest, "reused_source_memory_count", None)
         ),
         research_memory_reuses=panel.get("research_memory_reuses"),
-        warnings=list(panel.get("warnings") or getattr(latest, "waste_warnings_json", None) or []),
+        warnings=list(
+            panel.get("warnings")
+            or coerce_json_list(getattr(latest, "waste_warnings_json", None))
+        ),
     )
 
 

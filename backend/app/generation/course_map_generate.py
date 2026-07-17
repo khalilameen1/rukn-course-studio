@@ -21,6 +21,7 @@ from app.generation.orchestrator import (
     _load_active_rules,
     _load_usable_sources_with_memory,
     _map_source_excerpts,
+    _usable_memory,
     _web_facts_as_excerpts,
 )
 from app.generation.originality_rights import compile_originality_guidance
@@ -85,15 +86,15 @@ def generate_and_save_course_map(
     usable_sources, memory_telemetry = _load_usable_sources_with_memory(session, course_id)
     memory_items: list[SourceMemoryItem] = []
     for u in usable_sources:
-        mem = u.analysis.source_memory_json if u.analysis else None
-        summary = (mem or {}).get("summary") or (
+        mem = _usable_memory(u) or {}
+        summary = mem.get("summary") or (
             u.analysis.source_summary if u.analysis else ""
         )
         if not summary:
             continue
         memory_items.append(
             SourceMemoryItem(
-                title=(mem or {}).get("title")
+                title=mem.get("title")
                 or u.course_source.title
                 or u.course_source.original_filename
                 or f"source-{u.course_source.id}",

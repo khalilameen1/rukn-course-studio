@@ -1547,7 +1547,9 @@ def _to_source_for_compiler(
     usable: UsableSource, *, query_text: str = ""
 ) -> SourceForCompiler:
     memory = _usable_memory(usable)
-    chunks = usable.analysis.chunks_json if usable.analysis else None
+    chunks = (
+        coerce_json_list(usable.analysis.chunks_json) if usable.analysis else None
+    )
     summary = usable.analysis.source_summary if usable.analysis else None
     category = usable.course_source.source_category.value
     text = compiler_text_from_memory(

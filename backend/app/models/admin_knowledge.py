@@ -1,8 +1,10 @@
 from datetime import datetime, timezone
 from typing import Optional
 
+from sqlalchemy import Column
 from sqlmodel import Field, SQLModel
 
+from app.db_enums import sa_str_enum
 from app.models.enums import ItemType
 
 
@@ -24,7 +26,9 @@ class AdminKnowledgeItem(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     key: str = Field(index=True)
     title: str
-    item_type: ItemType
+    item_type: ItemType = Field(
+        sa_column=Column(sa_str_enum(ItemType), nullable=False)
+    )
     content_text: Optional[str] = None
     file_path: Optional[str] = None
     version: int = Field(default=1)
