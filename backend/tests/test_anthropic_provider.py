@@ -10,8 +10,10 @@ import pytest
 from app.ai.anthropic_provider import (
     AnthropicProvider,
     AnthropicProviderError,
+    _bump_max_tokens,
     _create_message_kwargs,
     _model_rejects_custom_sampling,
+    _normalize_tool_input,
 )
 from app.prompts.prompt_registry import PipelineStage, PROMPT_SPECS, load_prompt
 from app.ai.provider import (
@@ -66,9 +68,10 @@ class FakeUsage:
 
 
 class FakeResponse:
-    def __init__(self, content: list, usage=None):
+    def __init__(self, content: list, usage=None, stop_reason=None):
         self.content = content
         self.usage = usage
+        self.stop_reason = stop_reason
 
 
 class FakeMessagesAPI:
@@ -256,6 +259,93 @@ def test_call_structured_rejects_course_map_with_no_lessons():
         provider._call_structured("prompt", CourseMap, "course_map")
 
     assert len(provider._client.messages.calls) == 3
+
+
+def test_normalize_tool_input_maps_lessons_alias_and_defaults():
+    raw = {
+        "course_title": "Course",
+        "main_thread": "thread",
+        "modules": [
+            {
+                "module_id": "m1",
+                "title": "Module",
+                "purpose": "p",
+                "lessons": [
+                    {
+                        "reel_id": "r1",
+                        "title": "Lesson",
+                        "purpose": "teach",
+                        "must_cover": None,
+                    }
+                ],
+            }
+        ],
+    }
+    fixed = _normalize_tool_input(CourseMap, raw)
+    assert "lessons" not in fixed["modules"][0]
+    reel = fixed["modules"][0]["reels"][0]
+    assert reel["estimated_length"] == "3 minutes"
+    assert reel["must_cover"] == []
+    assert CourseMap.model_validate(fixed).modules[0].reels[0].reel_id == "r1"
+
+
+def test_call_structured_accepts_lessons_alias_for_course_map():
+    payload = {
+        "course_title": "Course",
+        "main_thread": "thread",
+        "modules": [
+            {
+                "module_id": "m1",
+                "title": "Module",
+                "purpose": "p",
+                "lessons": [
+                    {
+                        "reel_id": "r1",
+                        "title": "Lesson",
+                        "purpose": "teach",
+                        "estimated_length": "3 minutes",
+                    }
+                ],
+            }
+        ],
+    }
+    provider = _provider_with_responses(
+        [FakeResponse([FakeToolUseBlock("course_map", payload)])]
+    )
+    result = provider._call_structured("prompt", CourseMap, "course_map")
+    assert result.modules[0].reels[0].reel_id == "r1"
+
+
+def test_call_structured_bumps_max_tokens_after_truncation():
+    truncated = FakeResponse(
+        [FakeTextBlock("partial")],
+        stop_reason="max_tokens",
+    )
+    valid = FakeResponse([FakeToolUseBlock("review_result", VALID_REVIEW_RESULT)])
+    provider = _provider_with_responses([truncated, valid])
+
+    result = provider._call_structured(
+        "prompt", ReviewResult, "review_result", overrides={"max_tokens": 1024}
+    )
+
+    assert result.status == "pass"
+    assert provider._client.messages.calls[0]["max_tokens"] == 1024
+    assert provider._client.messages.calls[1]["max_tokens"] == _bump_max_tokens(1024)
+
+
+def test_truncation_public_hint_mentions_token_limit():
+    responses = [
+        FakeResponse([FakeTextBlock("cut off")], stop_reason="max_tokens")
+        for _ in range(3)
+    ]
+    provider = _provider_with_responses(responses)
+
+    with pytest.raises(AnthropicProviderError) as exc_info:
+        provider._call_structured(
+            "prompt", ReviewResult, "review_result", overrides={"max_tokens": 512}
+        )
+
+    assert "token limit" in (exc_info.value.public_hint or "").lower()
 
 
 def test_call_structured_treats_missing_tool_call_as_failure_and_retries():

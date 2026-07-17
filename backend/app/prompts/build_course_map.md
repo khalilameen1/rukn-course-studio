@@ -53,3 +53,9 @@ C. Master Creator-Academic Mentor: playlist spine, continue-watching pull, modul
 ## Output
 
 Call the `course_map` tool. Nothing else - no text outside the tool call. Return only the map skeleton for this phase (Final Course Map when `map_phase=final_master`).
+
+Hard shape rules for the tool payload:
+- `modules` must be non-empty
+- every module must include a non-empty `reels` array (at least one lesson)
+- every reel needs `reel_id`, `title`, `purpose`, and `estimated_length`
+- keep titles/purposes/`must_*` short so a full Premium map (~40–60 lessons) fits in one response

@@ -100,7 +100,8 @@ def test_safe_flush_retries_without_optional_columns():
 
 def test_map_stage_has_higher_max_tokens():
     ov = resolve_stage_overrides(PipelineStage.BUILD_COURSE_MAP)
-    assert ov.get("max_tokens", 0) >= 8192
+    # Sonnet 5 tokenizer + Premium ~40–60-lesson maps need far more than 8k.
+    assert ov.get("max_tokens", 0) >= 32768
     assert PipelineStage.BUILD_COURSE_MAP in MODEL_ROUTING_OVERRIDES
 
 

@@ -19,7 +19,27 @@ _SCHEMA_META_KEYS = frozenset({"description", "examples", "default"})
 def anthropic_tool_input_schema(schema: type) -> dict[str, Any]:
     """Build a dereferenced, Anthropic-friendly object schema."""
     raw = schema.model_json_schema()
-    return _prepare_for_anthropic(raw)
+    cleaned = _prepare_for_anthropic(raw)
+    # Pydantic keeps ModulePlan.reels open (empty lists in unit tests), but
+    # Anthropic must advertise minItems so title-only maps are rejected by
+    # the tool schema instead of surviving as empty lesson lists.
+    if getattr(schema, "__name__", None) == "CourseMap":
+        cleaned = _enforce_course_map_lesson_floor(cleaned)
+    return cleaned
+
+
+def _enforce_course_map_lesson_floor(schema: dict[str, Any]) -> dict[str, Any]:
+    """Ensure each module's ``reels`` array requires at least one lesson."""
+    try:
+        modules = schema["properties"]["modules"]
+        reels = modules["items"]["properties"]["reels"]
+        if isinstance(reels, dict):
+            reels = dict(reels)
+            reels["minItems"] = max(int(reels.get("minItems") or 0), 1)
+            modules["items"]["properties"]["reels"] = reels
+    except (KeyError, TypeError, ValueError):
+        return schema
+    return schema
 
 
 def _prepare_for_anthropic(raw: dict[str, Any]) -> dict[str, Any]:

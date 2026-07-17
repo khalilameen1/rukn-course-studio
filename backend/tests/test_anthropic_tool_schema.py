@@ -14,7 +14,9 @@ def test_course_map_tool_schema_keeps_title_fields():
     assert "modules" in schema.get("required", [])
     module_props = modules["items"]["properties"]
     assert "title" in module_props
-    reel_props = module_props["reels"]["items"]["properties"]
+    reels = module_props["reels"]
+    assert reels.get("minItems") == 1
+    reel_props = reels["items"]["properties"]
     assert "title" in reel_props
     assert "reel_id" in reel_props
 

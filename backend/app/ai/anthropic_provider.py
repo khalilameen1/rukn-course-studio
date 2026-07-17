@@ -150,6 +150,68 @@ def _public_api_hint(exc: BaseException) -> str:
     return "Anthropic API rejected the request."
 
 
+def _bump_max_tokens(current: int) -> int:
+    """Double output budget after truncation, capped for map-sized JSON."""
+    from app.generation.model_routing import MAP_MAX_TOKENS_CAP
+
+    bumped = max(current * 2, current + 8192)
+    return min(bumped, MAP_MAX_TOKENS_CAP)
+
+
+def _normalize_tool_input(schema: type[BaseModel], data: object) -> object:
+    """Fix common CourseMap alias / missing-field mistakes before Pydantic."""
+    if schema is not CourseMap or not isinstance(data, dict):
+        return data
+    out = dict(data)
+    modules = out.get("modules")
+    if not isinstance(modules, list):
+        return out
+    fixed_modules: list[object] = []
+    for mod in modules:
+        if not isinstance(mod, dict):
+            fixed_modules.append(mod)
+            continue
+        m = dict(mod)
+        if "reels" not in m and isinstance(m.get("lessons"), list):
+            m["reels"] = m.pop("lessons")
+        reels = m.get("reels")
+        if isinstance(reels, list):
+            fixed_reels: list[object] = []
+            for reel in reels:
+                if not isinstance(reel, dict):
+                    fixed_reels.append(reel)
+                    continue
+                r = dict(reel)
+                if not str(r.get("estimated_length") or "").strip():
+                    r["estimated_length"] = "3 minutes"
+                for list_field in ("must_cover", "must_avoid", "source_hints"):
+                    if r.get(list_field) is None:
+                        r[list_field] = []
+                fixed_reels.append(r)
+            m["reels"] = fixed_reels
+        fixed_modules.append(m)
+    out["modules"] = fixed_modules
+    return out
+
+
+def _public_schema_hint(schema_name: str, last_error: str) -> str:
+    low = (last_error or "").lower()
+    if "max_tokens" in low or "truncat" in low:
+        return (
+            f"{schema_name} was cut off mid-response (output token limit). "
+            "Retry generation; Preview uses a smaller map if Premium keeps failing."
+        )
+    if "no lessons" in low or "empty" in low:
+        return (
+            f"{schema_name} came back with no lessons after {MAX_ATTEMPTS} tries. "
+            "Retry; try Preview if Premium keeps failing."
+        )
+    return (
+        f"{schema_name} shape unusable after {MAX_ATTEMPTS} tries. "
+        "Confirm AI_MODEL_NAME=claude-sonnet-5 and retry; try Preview if Premium keeps failing."
+    )
+
+
 class AnthropicProvider(AIProvider):
     def __init__(
         self,
@@ -347,10 +409,11 @@ class AnthropicProvider(AIProvider):
         overrides = overrides or {}
         model_name = overrides.get("model", self._model_name)
         temperature = overrides.get("temperature", self._temperature)
-        max_tokens = overrides.get("max_tokens", self._max_tokens)
+        max_tokens = int(overrides.get("max_tokens", self._max_tokens))
 
         tool = _tool_for_schema(schema, tool_name)
         last_error: str = "unknown error"
+        saw_truncation = False
 
         for attempt in range(1, MAX_ATTEMPTS + 1):
             if isinstance(prompt, list):
@@ -364,6 +427,12 @@ class AnthropicProvider(AIProvider):
                                 f"\n## Retry\nYour previous response did not match "
                                 f"the required schema: {last_error}\n"
                                 "Return ONLY a valid tool call this time."
+                                + (
+                                    " Keep every module field short so the full "
+                                    "map fits in one response."
+                                    if schema is CourseMap
+                                    else ""
+                                )
                             ),
                         },
                     ]
@@ -443,18 +512,28 @@ class AnthropicProvider(AIProvider):
                     else "Anthropic API rejected the request.",
                 ) from last_api_exc
 
+            stop = getattr(response, "stop_reason", None)
+            attempt_max_tokens = max_tokens
+            if stop == "max_tokens":
+                saw_truncation = True
+                max_tokens = _bump_max_tokens(max_tokens)
+
             tool_use = next(
                 (block for block in response.content if block.type == "tool_use"), None
             )
             if tool_use is None:
-                stop = getattr(response, "stop_reason", None)
                 last_error = f"model did not return a tool call (stop_reason={stop})"
                 continue
 
+            raw_input = _normalize_tool_input(schema, tool_use.input)
             try:
-                result = schema.model_validate(tool_use.input)
+                result = schema.model_validate(raw_input)
             except ValidationError as exc:
                 last_error = str(exc)
+                if stop == "max_tokens":
+                    last_error = (
+                        f"{last_error} (truncated at max_tokens={attempt_max_tokens})"
+                    )
                 continue
 
             # AI models often return schema-valid but empty script_text.
@@ -490,11 +569,11 @@ class AnthropicProvider(AIProvider):
             }
             return result
 
+        hint_error = last_error
+        if saw_truncation and "max_tokens" not in hint_error.lower():
+            hint_error = f"{hint_error} (truncated)"
         raise AnthropicProviderError(
             f"{schema.__name__} output failed validation after {MAX_ATTEMPTS} attempt(s): "
             f"{last_error}",
-            public_hint=(
-                f"{schema.__name__} shape unusable after {MAX_ATTEMPTS} tries. "
-                "Confirm AI_MODEL_NAME=claude-sonnet-5 and retry; try Preview if Premium keeps failing."
-            ),
+            public_hint=_public_schema_hint(schema.__name__, hint_error),
         )

@@ -4,7 +4,7 @@ path, and that a configured override is actually honored by
 """
 
 from app.ai.anthropic_provider import AnthropicProvider
-from app.generation.model_routing import resolve_stage_overrides
+from app.generation.model_routing import MODEL_ROUTING_OVERRIDES, resolve_stage_overrides
 from app.prompts.prompt_registry import PipelineStage
 from app.schemas.generation import ReviewResult
 from tests.test_anthropic_provider import FakeResponse, FakeToolUseBlock, _provider_with_responses
@@ -12,9 +12,14 @@ from tests.test_anthropic_provider import FakeResponse, FakeToolUseBlock, _provi
 VALID_REVIEW_RESULT = {"scope": "reel", "status": "pass", "actions": []}
 
 
-def test_resolve_stage_overrides_is_empty_by_default_for_every_stage():
+def test_resolve_stage_overrides_empty_unless_listed():
     for stage in PipelineStage:
-        assert resolve_stage_overrides(stage) == {}
+        expected = dict(MODEL_ROUTING_OVERRIDES.get(stage, {}))
+        assert resolve_stage_overrides(stage) == expected
+
+
+def test_map_stage_uses_large_max_tokens_budget():
+    assert resolve_stage_overrides(PipelineStage.BUILD_COURSE_MAP)["max_tokens"] >= 32768
 
 
 def test_no_override_path_uses_the_providers_own_configured_model_and_temperature():
@@ -62,8 +67,12 @@ def test_an_override_for_one_stage_does_not_affect_other_stages(monkeypatch):
         {"model": "override-model"},
     )
 
-    assert resolve_stage_overrides(PipelineStage.FINAL_REVIEW) == {}
-    assert resolve_stage_overrides(PipelineStage.WRITE_SINGLE_REEL) == {}
+    # Stages that are not REVIEW_SINGLE_REEL keep their own configured overrides.
+    assert resolve_stage_overrides(PipelineStage.REVIEW_SINGLE_REEL) == {
+        "model": "override-model"
+    }
+    assert "model" not in resolve_stage_overrides(PipelineStage.FINAL_REVIEW)
+    assert "model" not in resolve_stage_overrides(PipelineStage.WRITE_SINGLE_REEL)
 
 
 def test_a_partial_override_falls_back_to_configured_values_for_missing_fields(monkeypatch):
