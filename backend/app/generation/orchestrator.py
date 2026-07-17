@@ -492,7 +492,7 @@ def run_generation(
             allow_fetch=False,
             prefer_fake=True,
             course_id=course.id,
-            cached=getattr(course, "official_tool_memory_json", None),
+            cached=coerce_json_dict(getattr(course, "official_tool_memory_json", None)),
         )
         try:
             if research_mode == WebResearchMode.AUTONOMOUS_GAP_FILL:
@@ -535,7 +535,7 @@ def run_generation(
                 map_text=course.manual_map_text or "",
                 source_snippets=source_snips,
                 source_texts_for_conflict=source_snips,
-                cached=getattr(course, "official_tool_memory_json", None),
+                cached=coerce_json_dict(getattr(course, "official_tool_memory_json", None)),
                 course_id=course.id,
                 prefer_fake=prefer_fake,
                 allow_fetch=research_mode != WebResearchMode.DISABLED,
@@ -613,7 +613,7 @@ def run_generation(
                 special_notes=course.special_notes,
                 course_domain=getattr(course, "course_domain", None),
                 map_text=course.manual_map_text or "",
-                cached=getattr(course, "official_tool_memory_json", None),
+                cached=coerce_json_dict(getattr(course, "official_tool_memory_json", None)),
                 course_id=course.id,
                 prefer_fake=True,
                 allow_fetch=False,

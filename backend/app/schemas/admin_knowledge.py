@@ -4,12 +4,13 @@ from typing import Optional
 from pydantic import BaseModel, ConfigDict
 
 from app.models.enums import ItemType
+from app.schemas.validators import ItemTypeLoose
 
 
 class AdminKnowledgeCreate(BaseModel):
     key: str
     title: str
-    item_type: ItemType
+    item_type: ItemTypeLoose
     content_text: Optional[str] = None
     file_path: Optional[str] = None
     version: int = 1
@@ -20,7 +21,7 @@ class AdminKnowledgeUpdate(BaseModel):
     """All fields optional: only fields the client sends are changed."""
 
     title: Optional[str] = None
-    item_type: Optional[ItemType] = None
+    item_type: Optional[ItemTypeLoose] = None
     content_text: Optional[str] = None
     file_path: Optional[str] = None
     version: Optional[int] = None
@@ -33,7 +34,7 @@ class AdminKnowledgeRead(BaseModel):
     id: int
     key: str
     title: str
-    item_type: ItemType
+    item_type: ItemTypeLoose
     content_text: Optional[str]
     file_path: Optional[str]
     version: int

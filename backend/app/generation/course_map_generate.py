@@ -134,7 +134,9 @@ def generate_and_save_course_map(
         course_domain=getattr(course, "course_domain", None),
         map_text=course.manual_map_text or "",
         source_snippets=source_snips,
-        cached=getattr(course, "official_tool_memory_json", None),
+        cached=coerce_json_dict(
+            getattr(course, "official_tool_memory_json", None)
+        ),
         course_id=course.id,
         prefer_fake=prefer_fake,
         allow_fetch=research_mode != WebResearchMode.DISABLED,

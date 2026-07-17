@@ -1,10 +1,16 @@
-import json
 from datetime import datetime
 from typing import Any, Optional
 
 from pydantic import BaseModel, ConfigDict, computed_field, field_validator
 
 from app.models.enums import GenerationQualityMode, JobStatus, WebResearchMode
+from app.schemas.validators import (
+    GenerationQualityModeLoose,
+    JobStatusLoose,
+    WebResearchModeLoose,
+)
+from app.services.enum_coerce import coerce_str_enum
+from app.services.json_coerce import coerce_json_dict, coerce_json_list
 
 
 class GenerateCourseRequest(BaseModel):
@@ -13,8 +19,8 @@ class GenerateCourseRequest(BaseModel):
     Never accepts raw temperature, agent knobs, or research confirmation UX.
     """
 
-    generation_quality_mode: GenerationQualityMode = GenerationQualityMode.PREMIUM
-    web_research_mode: WebResearchMode = WebResearchMode.AUTONOMOUS_GAP_FILL
+    generation_quality_mode: GenerationQualityModeLoose = GenerationQualityMode.PREMIUM
+    web_research_mode: WebResearchModeLoose = WebResearchMode.AUTONOMOUS_GAP_FILL
 
 
 class GenerationJobRead(BaseModel):
@@ -34,7 +40,7 @@ class GenerationJobRead(BaseModel):
 
     id: int
     course_id: int
-    status: JobStatus
+    status: JobStatusLoose
     cancel_requested: bool = False
     current_stage: Optional[str]
     progress_percent: int = 0
@@ -54,8 +60,8 @@ class GenerationJobRead(BaseModel):
     estimated_usage_summary: Optional[str] = None
     estimated_duration_summary: Optional[str] = None
     internal_risk_count: int = 0
-    generation_quality_mode: GenerationQualityMode = GenerationQualityMode.PREMIUM
-    web_research_mode: WebResearchMode = WebResearchMode.AUTONOMOUS_GAP_FILL
+    generation_quality_mode: GenerationQualityModeLoose = GenerationQualityMode.PREMIUM
+    web_research_mode: WebResearchModeLoose = WebResearchMode.AUTONOMOUS_GAP_FILL
     run_snapshot_json: Optional[dict[str, Any]] = None
     output_score_json: Optional[dict[str, Any]] = None
     budget_warning: Optional[str] = None
@@ -70,16 +76,7 @@ class GenerationJobRead(BaseModel):
     @field_validator("waste_warnings_json", mode="before")
     @classmethod
     def _coerce_waste_warnings(cls, value: object) -> object:
-        # Postgres TEXT legacy columns / drivers may hand back JSON as a string.
-        if value is None:
-            return []
-        if isinstance(value, str):
-            try:
-                parsed = json.loads(value)
-            except json.JSONDecodeError:
-                return []
-            return parsed if isinstance(parsed, list) else []
-        return value
+        return coerce_json_list(value)
 
     @field_validator(
         "run_snapshot_json",
@@ -89,15 +86,7 @@ class GenerationJobRead(BaseModel):
     )
     @classmethod
     def _coerce_optional_json_objects(cls, value: object) -> object:
-        if value is None or value == "":
-            return None
-        if isinstance(value, str):
-            try:
-                parsed = json.loads(value)
-            except json.JSONDecodeError:
-                return None
-            return parsed if isinstance(parsed, dict) else None
-        return value
+        return coerce_json_dict(value)
 
     @field_validator("cancel_requested", mode="before")
     @classmethod
@@ -124,17 +113,14 @@ class GenerationJobRead(BaseModel):
     @classmethod
     def _coerce_enum_name_or_value(cls, value: object) -> object:
         """Accept legacy NAME strings (`RUNNING`) as well as values (`running`)."""
-        if value is None or not isinstance(value, str):
+        if value is None or isinstance(
+            value, (JobStatus, GenerationQualityMode, WebResearchMode)
+        ):
             return value
         for enum_cls in (JobStatus, GenerationQualityMode, WebResearchMode):
-            try:
-                return enum_cls(value)
-            except ValueError:
-                pass
-            try:
-                return enum_cls[value]
-            except KeyError:
-                pass
+            coerced = coerce_str_enum(enum_cls, value)
+            if isinstance(coerced, enum_cls):
+                return coerced
         return value
 
     @computed_field  # type: ignore[prop-decorator]

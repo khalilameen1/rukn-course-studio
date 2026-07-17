@@ -57,7 +57,9 @@ def _signal_count(memory: dict[str, Any]) -> int:
 
 def assess_source_usefulness(memory: dict[str, Any] | None) -> dict[str, Any]:
     """Infer usefulness / risk / include mode from existing memory signals."""
-    mem = memory or {}
+    from app.services.json_coerce import coerce_json_dict
+
+    mem = coerce_json_dict(memory) or {}
     category = str(mem.get("source_type") or mem.get("category") or "")
     if category == "user_notes":
         return {

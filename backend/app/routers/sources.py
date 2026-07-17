@@ -16,6 +16,11 @@ from app.schemas.course_source import (
     CourseSourcePatch,
     CourseSourceRead,
 )
+from app.schemas.validators import (
+    PriorityLoose,
+    SourceCategoryLoose,
+    SourceOriginLoose,
+)
 from app.services.extraction import extract_text
 from app.services.source_analysis import CATEGORY_AVOID_POINTS, analyze_source_text
 from app.services.source_status import (
@@ -185,12 +190,13 @@ def _process_stored_source(
 async def upload_source(
     course_id: int,
     file: UploadFile = File(...),
-    source_category: SourceCategory = Form(SourceCategory.SCIENTIFIC_REFERENCE),
-    priority: Priority = Form(Priority.MEDIUM),
+    # Loose Annotated enums: accept value, NAME, or legacy aliases (AI/old clients).
+    source_category: SourceCategoryLoose = Form(SourceCategory.SCIENTIFIC_REFERENCE),
+    priority: PriorityLoose = Form(Priority.MEDIUM),
     source_title: str | None = Form(None),
     include_in_generation: bool = Form(True),
     password: str | None = Form(None),
-    source_origin: SourceOrigin | None = Form(None),
+    source_origin: SourceOriginLoose = Form(None),
     session: Session = Depends(get_session),
 ):
     """Save the uploaded file, then extract its text (see app/services/extraction.py).

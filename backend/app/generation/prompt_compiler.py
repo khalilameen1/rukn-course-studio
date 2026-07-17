@@ -910,7 +910,11 @@ def _build_excerpt(source: SourceForCompiler, query_text: str) -> SourceExcerpt:
         prompt_label_for_relevance,
     )
 
-    mem = source.memory or {}
+    from app.services.json_coerce import coerce_json_dict
+
+    # Never use `memory or {}` — a non-empty JSON string is truthy and then
+    # `.get` crashes (classic AI/ORM TEXT-JSON bug).
+    mem = coerce_json_dict(source.memory) or {}
     origin = str(mem.get("source_origin") or "")
     transcript_derived = is_transcript_derived_memory(mem)
     colloquial_only = is_transcript_colloquial_only(mem)
