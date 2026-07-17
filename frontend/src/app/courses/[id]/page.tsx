@@ -69,6 +69,7 @@ export default function CourseDetailPage() {
   const [editingBrief, setEditingBrief] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [sourceFlushNotice, setSourceFlushNotice] = useState<string | null>(null);
   // Mirrors GeneratePanel's own job state via onJobUpdate - the Output
   // panel below is the canonical place for download/partial-status UI, so
   // it needs to see the current run without duplicating the polling logic.
@@ -113,6 +114,19 @@ export default function CourseDetailPage() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     loadAll();
   }, [loadAll]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const sp = new URLSearchParams(window.location.search);
+    if (sp.get("sources_failed") !== "1") return;
+    const reason = sp.get("reason")?.trim();
+    setSourceFlushNotice(
+      reason
+        ? `Sources from the create form could not be saved (${reason}). Upload them again below, then start generation.`
+        : "Sources from the create form could not be saved. Upload them again below, then start generation.",
+    );
+    setTab("sources");
+  }, []);
 
   useEffect(() => {
     if (invalidId) return;
@@ -249,6 +263,20 @@ export default function CourseDetailPage() {
           tone={COURSE_DISPLAY_STATUS_TONE[displayStatus]}
         />
       </div>
+
+      {sourceFlushNotice ? (
+        <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm" role="alert">
+          <p className="font-medium text-foreground">Sources need attention</p>
+          <p className="mt-1 text-foreground">{sourceFlushNotice}</p>
+          <button
+            type="button"
+            className="btn-ghost mt-2 text-xs"
+            onClick={() => setSourceFlushNotice(null)}
+          >
+            Dismiss
+          </button>
+        </div>
+      ) : null}
 
       <div className="grid gap-4 lg:grid-cols-3">
         <SectionPanel label="Inputs" description="Brief, sources, rules, preset" framed>

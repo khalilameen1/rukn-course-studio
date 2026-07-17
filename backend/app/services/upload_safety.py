@@ -44,7 +44,7 @@ def assert_allowed_extension(filename: str | None) -> str:
     suffix = Path(filename or "").suffix.lower()
     if suffix not in ALLOWED_EXTENSIONS:
         raise HTTPException(
-            status_code=400,
+            status_code=415,
             detail=(
                 f"Unsupported file type '{suffix or 'unknown'}'. "
                 f"Allowed: {sorted(ALLOWED_EXTENSIONS)}"
@@ -92,7 +92,7 @@ def assert_declared_mime_ok(content_type: str | None) -> None:
     raw = (content_type or "").split(";")[0].strip().lower()
     if raw and raw not in ALLOWED_MIME_TYPES:
         raise HTTPException(
-            status_code=400,
+            status_code=415,
             detail=f"Unsupported Content-Type '{raw}'. Allowed uploads: PDF, DOCX, TXT, MD.",
         )
 

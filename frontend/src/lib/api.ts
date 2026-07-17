@@ -33,6 +33,7 @@ export class ApiError extends Error {
   method: string;
   path: string;
   tokenPresent: boolean;
+  correlationId?: string;
 
   constructor(
     message: string,
@@ -42,6 +43,7 @@ export class ApiError extends Error {
       method?: string;
       path?: string;
       tokenPresent?: boolean;
+      correlationId?: string;
     },
   ) {
     super(message);
@@ -50,6 +52,7 @@ export class ApiError extends Error {
     this.method = options?.method ?? "GET";
     this.path = options?.path ?? "";
     this.tokenPresent = options?.tokenPresent ?? false;
+    this.correlationId = options?.correlationId;
   }
 }
 
@@ -81,6 +84,48 @@ function normalizeApiDetail(detail: unknown): string {
  * Short, user-facing error copy for product surfaces (Generate, courses, AI usage).
  * Deployment diagnostics on /login keep richer detail via describeError().
  */
+/** Arabic, user-facing copy for source upload failures (keeps real cause). */
+export function formatUploadErrorForDisplay(err: unknown): string {
+  if (err instanceof ApiError) {
+    if (err.status === 400) {
+      return err.message?.trim()
+        ? `طلب غير صحيح: ${err.message}`
+        : "طلب غير صحيح. تأكد من اختيار ملف صالح.";
+    }
+    if (err.status === 401) {
+      return "انتهت الجلسة. سجّل الدخول ثم أعد رفع المصدر.";
+    }
+    if (err.status === 403) {
+      return "ليست لديك صلاحية لرفع مصادر لهذا الكورس.";
+    }
+    if (err.status === 413) {
+      return err.message?.trim()
+        ? `الملف أكبر من الحد المسموح: ${err.message}`
+        : "الملف أكبر من الحد المسموح للرفع.";
+    }
+    if (err.status === 415) {
+      return err.message?.trim()
+        ? `نوع الملف غير مدعوم: ${err.message}`
+        : "نوع الملف غير مدعوم. المسموح: PDF، DOCX، TXT، MD.";
+    }
+    if (err.status === 404) {
+      return "الكورس غير موجود. حدّث الصفحة أو أنشئ كورساً جديداً.";
+    }
+    if (err.isNetworkError) {
+      return "تعذر الوصول إلى الخادم. تحقق من الاتصال وعنوان الـ API.";
+    }
+    if (err.status != null && err.status >= 500) {
+      const ref = err.correlationId ? ` (مرجع: ${err.correlationId})` : "";
+      return err.message?.includes("disk") || err.message?.includes("Storage")
+        ? `${err.message}${ref}`
+        : `خطأ غير متوقع في الخادم أثناء الرفع${ref}. إن استمر، راجع سجلات السيرفر.`;
+    }
+    return err.message || "فشل رفع المصدر.";
+  }
+  if (err instanceof Error) return err.message;
+  return "فشل رفع المصدر.";
+}
+
 export function formatApiErrorForDisplay(err: unknown): string {
   if (err instanceof ApiError) {
     if (err.status === 401) {
@@ -108,6 +153,11 @@ export function formatApiErrorForDisplay(err: unknown): string {
       return err.message || "The AI provider is not configured or unavailable.";
     }
     if (err.status != null && err.status >= 500) {
+      if (err.correlationId) {
+        return `Something went wrong on the server (ref: ${err.correlationId}). Try again in a moment.`;
+      }
+      // Prefer the API detail when it already includes a reference id.
+      if (err.message && /reference id/i.test(err.message)) return err.message;
       return "Something went wrong on the server. Try again in a moment.";
     }
     return err.message || "Request failed";
@@ -165,9 +215,11 @@ async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
 
   if (!res.ok) {
     let detail = res.statusText;
+    let correlationId: string | undefined;
     try {
       const data = await res.json();
       if (data?.detail != null) detail = normalizeApiDetail(data.detail);
+      if (typeof data?.correlation_id === "string") correlationId = data.correlation_id;
     } catch {
       // response body wasn't JSON; keep statusText
     }
@@ -176,6 +228,7 @@ async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
       method,
       path,
       tokenPresent,
+      correlationId,
     });
   }
 
@@ -227,9 +280,11 @@ async function downloadFile(path: string, filename: string): Promise<void> {
 
   if (!res.ok) {
     let detail = res.statusText;
+    let correlationId: string | undefined;
     try {
       const data = await res.json();
       if (data?.detail != null) detail = normalizeApiDetail(data.detail);
+      if (typeof data?.correlation_id === "string") correlationId = data.correlation_id;
     } catch {
       // response body wasn't JSON; keep statusText
     }
@@ -238,6 +293,7 @@ async function downloadFile(path: string, filename: string): Promise<void> {
       method,
       path,
       tokenPresent,
+      correlationId,
     });
   }
 
@@ -371,6 +427,14 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify({ source_category: sourceCategory }),
     }),
+  reprocessSource: (courseId: number, sourceId: number, password?: string) => {
+    const form = new FormData();
+    if (password) form.append("password", password);
+    return apiFetch<CourseSource>(`/courses/${courseId}/sources/${sourceId}/reprocess`, {
+      method: "POST",
+      body: form,
+    });
+  },
 
   // Generation — paths must stay aligned with backend/app/routers/generation.py + jobs.py
   generateCourseMap: (courseId: number) =>

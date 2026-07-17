@@ -1,22 +1,25 @@
-"""User-facing status values for CourseSource.
+﻿"""User-facing status values for CourseSource.
 
-`CourseSource.status` is a plain string column (not a DB-level enum - see
+CourseSource.status is a plain string column (not a DB-level enum - see
 app/models/course_source.py), so these are defined as constants here rather
 than in app/models/enums.py. The message mapping is the single source of
 truth the API uses to explain a status to the user (see
-app/schemas/course_source.py `status_message`).
+app/schemas/course_source.py status_message).
 """
 
 UPLOADED = "uploaded"
+PROCESSING = "processing"
 READY = "ready"
 PASSWORD_REQUIRED = "password_required"
 EXTRACTION_BLOCKED = "extraction_blocked"
 SCANNED_NO_TEXT = "scanned_no_text"
 POOR_EXTRACTION = "poor_extraction"
 FAILED = "failed"
+PROCESSING_FAILED = "processing_failed"
 
 SOURCE_STATUS_MESSAGES: dict[str, str] = {
     UPLOADED: "Uploaded - not yet processed.",
+    PROCESSING: "Processing the uploaded file.",
     READY: "Text extracted successfully. Ready to use for generation.",
     PASSWORD_REQUIRED: (
         "This PDF is password-protected. Re-upload it with the correct "
@@ -36,4 +39,8 @@ SOURCE_STATUS_MESSAGES: dict[str, str] = {
         "Consider replacing this source with a cleaner file."
     ),
     FAILED: "Something went wrong while processing this file.",
+    PROCESSING_FAILED: (
+        "The file was uploaded, but text extraction or analysis failed. "
+        "You can retry processing without re-uploading."
+    ),
 }

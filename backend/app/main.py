@@ -1,5 +1,6 @@
 from contextlib import asynccontextmanager
 import logging
+from uuid import uuid4
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -74,17 +75,31 @@ class CatchUnhandledErrorsMiddleware(BaseHTTPMiddleware):
     Exception handler still yields 500 responses with no Access-Control-*
     headers, and the browser reports Network/CORS on generation / AI usage
     failures. Catching here (inside CORS) keeps those headers on the 500.
-    Never include exception text in the body (may leak paths/SQL).
+    Never include exception text in the body (may leak paths/SQL). Include a
+    short correlation id so logs can be matched without exposing internals.
     """
 
     async def dispatch(self, request: Request, call_next):
         try:
             return await call_next(request)
         except Exception:
-            logger.exception("Unhandled error on %s %s", request.method, request.url.path)
+            correlation_id = uuid4().hex[:12]
+            logger.exception(
+                "Unhandled error on %s %s correlation_id=%s",
+                request.method,
+                request.url.path,
+                correlation_id,
+            )
             return JSONResponse(
                 status_code=500,
-                content={"detail": "Internal server error"},
+                content={
+                    "detail": (
+                        "Internal server error. Reference ID: "
+                        f"{correlation_id}"
+                    ),
+                    "correlation_id": correlation_id,
+                },
+                headers={"X-Correlation-ID": correlation_id},
             )
 
 

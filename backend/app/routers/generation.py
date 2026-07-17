@@ -83,9 +83,14 @@ def generate_course(
 
     if getattr(settings, "generation_global_lock", True):
         other = _get_any_active_job(session)
-        if other is not None:
-            response.status_code = 200
-            return other
+        if other is not None and other.course_id != course_id:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Another course (id={other.course_id}) already has an active "
+                    "generation run. Wait for it to finish, then try again."
+                ),
+            )
 
     min_interval = float(getattr(settings, "generate_min_interval_seconds", 3.0) or 0)
     if min_interval > 0 and not allow_generate_start(course_id, min_interval_seconds=min_interval):

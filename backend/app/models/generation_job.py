@@ -4,6 +4,7 @@ from typing import Any, Optional
 from sqlalchemy import JSON, Column, DateTime
 from sqlmodel import Field, SQLModel
 
+from app.db_enums import sa_str_enum
 from app.models.enums import GenerationQualityMode, JobStatus, WebResearchMode
 
 
@@ -26,7 +27,14 @@ class GenerationJob(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     course_id: int = Field(foreign_key="courses.id", index=True)
-    status: JobStatus = Field(default=JobStatus.PENDING)
+    status: JobStatus = Field(
+        default=JobStatus.PENDING,
+        sa_column=Column(
+            sa_str_enum(JobStatus),
+            nullable=False,
+            server_default=JobStatus.PENDING.value,
+        ),
+    )
     # Set by POST /cancel while the worker is still running; orchestrator
     # checks between stages and finalizes to canceled/partial when safe.
     cancel_requested: bool = Field(default=False)
@@ -69,10 +77,20 @@ class GenerationJob(SQLModel, table=True):
     internal_risk_count: int = Field(default=0)
     # Locked architecture depth for this run (Preview | Premium).
     generation_quality_mode: GenerationQualityMode = Field(
-        default=GenerationQualityMode.PREMIUM
+        default=GenerationQualityMode.PREMIUM,
+        sa_column=Column(
+            sa_str_enum(GenerationQualityMode),
+            nullable=False,
+            server_default=GenerationQualityMode.PREMIUM.value,
+        ),
     )
     web_research_mode: WebResearchMode = Field(
-        default=WebResearchMode.AUTONOMOUS_GAP_FILL
+        default=WebResearchMode.AUTONOMOUS_GAP_FILL,
+        sa_column=Column(
+            sa_str_enum(WebResearchMode),
+            nullable=False,
+            server_default=WebResearchMode.AUTONOMOUS_GAP_FILL.value,
+        ),
     )
     # Internal-only research artifacts (admin/debug). Never in GenerationJobRead /
     # DOCX / script_text.

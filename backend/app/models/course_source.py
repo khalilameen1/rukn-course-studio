@@ -4,6 +4,7 @@ from typing import Optional
 from sqlalchemy import Boolean, Column, true as sa_true
 from sqlmodel import Field, SQLModel
 
+from app.db_enums import sa_str_enum
 from app.models.enums import Priority, SourceCategory
 
 
@@ -18,14 +19,23 @@ class CourseSource(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     course_id: int = Field(foreign_key="courses.id", index=True)
-    source_category: SourceCategory
+    source_category: SourceCategory = Field(
+        sa_column=Column(sa_str_enum(SourceCategory), nullable=False)
+    )
     # Display title (filename fallback). Course-specific — never Admin Knowledge.
     title: Optional[str] = Field(default=None)
     original_filename: Optional[str] = None
     file_path: Optional[str] = None
     mime_type: Optional[str] = None
     extracted_text: Optional[str] = None
-    priority: Priority = Field(default=Priority.MEDIUM)
+    priority: Priority = Field(
+        default=Priority.MEDIUM,
+        sa_column=Column(
+            sa_str_enum(Priority),
+            nullable=False,
+            server_default=Priority.MEDIUM.value,
+        ),
+    )
     status: str = Field(default="uploaded")
     # Cost hygiene: when False, source is kept but not injected into generation.
     # DB default must be TRUE (not integer 1) for Postgres compatibility.

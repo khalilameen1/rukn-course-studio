@@ -1,4 +1,5 @@
 from dataclasses import asdict
+import logging
 from pathlib import Path
 from uuid import uuid4
 
@@ -17,7 +18,13 @@ from app.schemas.course_source import (
 )
 from app.services.extraction import extract_text
 from app.services.source_analysis import CATEGORY_AVOID_POINTS, analyze_source_text
-from app.services.source_status import POOR_EXTRACTION, READY
+from app.services.source_status import (
+    FAILED,
+    POOR_EXTRACTION,
+    PROCESSING_FAILED,
+    READY,
+    UPLOADED,
+)
 from app.services.upload_safety import (
     assert_allowed_extension,
     assert_content_matches_extension,
@@ -29,6 +36,7 @@ from app.services.upload_safety import (
 )
 
 router = APIRouter(prefix="/courses/{course_id}/sources", tags=["sources"])
+logger = logging.getLogger(__name__)
 
 # Extraction quality levels whose text is trusted enough to store as
 # `extracted_text`. password_required / extraction_blocked / scanned_no_text
@@ -72,6 +80,10 @@ def _create_source_analysis(
         mime_type=mime_type,
         source_origin=source_origin,
     )
+    # Replace any prior analysis (reprocess path) so unique(source_id) holds.
+    for existing in source_analyses.list(session, source_id=source_id):
+        source_analyses.delete(session, existing.id)
+
     source_analyses.create(
         session,
         source_id=source_id,
@@ -85,6 +97,88 @@ def _create_source_analysis(
         extracted_at=None,  # set via memory ISO; column optional
         tokens_used=int(memory.get("tokens_used") or 0),
     )
+
+
+def _cleanup_stored_paths(*paths: Path | None) -> None:
+    for path in paths:
+        if path is None:
+            continue
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            logger.warning("Failed to cleanup stored file %s", path, exc_info=True)
+
+
+def _process_stored_source(
+    session: Session,
+    *,
+    source,
+    dest_path: Path,
+    suffix: str,
+    password: str | None,
+    source_category: SourceCategory,
+    priority: Priority,
+    include_in_generation: bool,
+    display_title: str,
+    safe_name: str,
+    mime_type: str | None,
+    source_origin: SourceOrigin | None,
+) -> object:
+    """Extract text + optional analysis after the file/DB row already exist.
+
+    Extraction/analysis failures update status but never raise — upload already
+    succeeded. Callers may still reprocess later from the stored file.
+    """
+    result = extract_text(dest_path, suffix, password=password)
+    extracted_text = None
+    source_hash = None
+    extracted_path = None
+    final_status = result.status or FAILED
+
+    if result.status in USABLE_EXTRACTION_STATUSES and result.text:
+        extracted_text = result.text
+        from app.generation.source_memory_store import compute_source_hash
+
+        source_hash = compute_source_hash(extracted_text)
+        extracted_path = _extracted_copy_path(source.course_id, Path(dest_path).stem)
+        try:
+            extracted_path.parent.mkdir(parents=True, exist_ok=True)
+            extracted_path.write_text(result.text, encoding="utf-8")
+        except OSError:
+            logger.exception("Failed writing extracted text copy for source %s", source.id)
+            extracted_path = None
+
+    source = course_sources.update(
+        session,
+        source.id,
+        extracted_text=extracted_text,
+        source_hash=source_hash,
+        status=final_status,
+    )
+
+    if extracted_text:
+        try:
+            _create_source_analysis(
+                session,
+                source.id,
+                extracted_text,
+                source_category,
+                title=display_title or f"source-{source.id}",
+                priority=priority.value,
+                include_in_generation=include_in_generation,
+                original_filename=safe_name,
+                mime_type=mime_type,
+                source_origin=source_origin.value if source_origin else None,
+            )
+        except Exception:
+            logger.exception("Source analysis failed after upload for source %s", source.id)
+            source = course_sources.update(
+                session,
+                source.id,
+                status=PROCESSING_FAILED,
+            ) or source
+
+    return source
 
 
 @router.post("/upload", response_model=CourseSourceRead, status_code=201)
@@ -103,8 +197,15 @@ async def upload_source(
 
     Course-specific only — never written to Admin Knowledge.
     `password` is only used for encrypted PDFs and only ever tried as-is.
+
+    Upload success (file + DB row) is separate from extraction/analysis success:
+    a 201 response with status ready/poor_extraction/processing_failed/etc.
+    always means the file was stored; only storage/DB failures return 5xx.
     """
     get_course_or_404(session, course_id)
+
+    if file is None or not (file.filename or "").strip():
+        raise HTTPException(status_code=400, detail="No file was provided.")
 
     suffix = assert_allowed_extension(file.filename)
     assert_declared_mime_ok(file.content_type)
@@ -114,57 +215,72 @@ async def upload_source(
     )
     assert_content_matches_extension(data, suffix)
 
-    course_dir = settings.storage_uploads_dir / str(course_id)
-    course_dir.mkdir(parents=True, exist_ok=True)
+    uploads_root = Path(settings.storage_uploads_dir)
+    try:
+        uploads_root.mkdir(parents=True, exist_ok=True)
+        course_dir = uploads_root / str(course_id)
+        course_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        logger.exception("Cannot create upload storage directory")
+        raise HTTPException(
+            status_code=500,
+            detail="Storage is not writable. Check STORAGE_DIR permissions and free disk space.",
+        ) from exc
+
     stem = uuid4().hex
     dest_path = course_dir / f"{stem}{suffix}"
-    dest_path.write_bytes(data)
+    try:
+        dest_path.write_bytes(data)
+    except OSError as exc:
+        logger.exception("Failed writing upload to %s", dest_path)
+        raise HTTPException(
+            status_code=500,
+            detail="Could not store the uploaded file. Check free disk space and STORAGE_DIR.",
+        ) from exc
 
-    result = extract_text(dest_path, suffix, password=password)
-
-    extracted_text = None
-    source_hash = None
-    if result.status in USABLE_EXTRACTION_STATUSES and result.text:
-        extracted_text = result.text
-        from app.generation.source_memory_store import compute_source_hash
-
-        source_hash = compute_source_hash(extracted_text)
-        extracted_path = _extracted_copy_path(course_id, stem)
-        extracted_path.parent.mkdir(parents=True, exist_ok=True)
-        extracted_path.write_text(result.text, encoding="utf-8")
+    if not dest_path.is_file() or dest_path.stat().st_size == 0:
+        _cleanup_stored_paths(dest_path)
+        raise HTTPException(status_code=500, detail="Stored upload file is missing or empty.")
 
     display_title = (source_title or "").strip() or safe_name
 
-    source = course_sources.create(
-        session,
-        course_id=course_id,
-        source_category=source_category,
-        title=display_title,
-        original_filename=safe_name,
-        file_path=str(dest_path),
-        mime_type=file.content_type,
-        extracted_text=extracted_text,
-        priority=priority,
-        status=result.status,
-        include_in_generation=include_in_generation,
-        source_hash=source_hash,
-    )
-
-    if extracted_text:
-        _create_source_analysis(
+    try:
+        source = course_sources.create(
             session,
-            source.id,
-            extracted_text,
-            source_category,
-            title=display_title or f"source-{source.id}",
-            priority=priority.value,
-            include_in_generation=include_in_generation,
+            course_id=course_id,
+            source_category=source_category,
+            title=display_title,
             original_filename=safe_name,
+            file_path=str(dest_path),
             mime_type=file.content_type,
-            source_origin=source_origin.value if source_origin else None,
+            extracted_text=None,
+            priority=priority,
+            status=UPLOADED,
+            include_in_generation=include_in_generation,
+            source_hash=None,
         )
+    except Exception as exc:
+        _cleanup_stored_paths(dest_path)
+        logger.exception("Database insert failed after storing upload")
+        raise HTTPException(
+            status_code=500,
+            detail="Could not save the source record after storing the file.",
+        ) from exc
 
-    return source
+    return _process_stored_source(
+        session,
+        source=source,
+        dest_path=dest_path,
+        suffix=suffix,
+        password=password,
+        source_category=source_category,
+        priority=priority,
+        include_in_generation=include_in_generation,
+        display_title=display_title,
+        safe_name=safe_name,
+        mime_type=file.content_type,
+        source_origin=source_origin,
+    )
 
 
 @router.post("/notes", response_model=CourseSourceRead, status_code=201)
@@ -195,18 +311,72 @@ def add_source_notes(
         source_hash=compute_source_hash(payload.text),
     )
 
-    _create_source_analysis(
-        session,
-        source.id,
-        payload.text,
-        payload.source_category,
-        title=display_title,
-        priority=payload.priority.value,
-        include_in_generation=payload.include_in_generation,
-        source_origin=payload.source_origin.value if payload.source_origin else None,
-    )
+    try:
+        _create_source_analysis(
+            session,
+            source.id,
+            payload.text,
+            payload.source_category,
+            title=display_title,
+            priority=payload.priority.value,
+            include_in_generation=payload.include_in_generation,
+            source_origin=payload.source_origin.value if payload.source_origin else None,
+        )
+    except Exception:
+        logger.exception("Source analysis failed for notes source %s", source.id)
+        source = course_sources.update(session, source.id, status=PROCESSING_FAILED) or source
 
     return source
+
+
+
+@router.post("/{source_id}/reprocess", response_model=CourseSourceRead)
+def reprocess_source(
+    course_id: int,
+    source_id: int,
+    password: str | None = Form(None),
+    session: Session = Depends(get_session),
+):
+    """Re-run extraction/analysis on an already-stored file (no re-upload)."""
+    get_course_or_404(session, course_id)
+    source = course_sources.get(session, source_id)
+    if source is None or source.course_id != course_id:
+        raise HTTPException(status_code=404, detail="Source not found")
+    if not source.file_path:
+        raise HTTPException(
+            status_code=400,
+            detail="This source has no stored file to reprocess (notes-only).",
+        )
+
+    dest_path = assert_path_under_root(Path(source.file_path), Path(settings.storage_uploads_dir))
+    if not dest_path.is_file():
+        raise HTTPException(
+            status_code=400,
+            detail="Stored file is missing. Please upload the source again.",
+        )
+
+    suffix = dest_path.suffix.lower()
+    if suffix not in {".docx", ".pdf", ".txt", ".md"}:
+        raise HTTPException(status_code=415, detail=f"Unsupported stored file type '{suffix}'.")
+
+    display_title = (source.title or source.original_filename or f"source-{source.id}")
+    safe_name = source.original_filename or display_title
+    source = course_sources.update(session, source.id, status=UPLOADED) or source
+
+    return _process_stored_source(
+        session,
+        source=source,
+        dest_path=dest_path,
+        suffix=suffix,
+        password=password,
+        source_category=source.source_category,
+        priority=source.priority,
+        include_in_generation=bool(source.include_in_generation),
+        display_title=display_title,
+        safe_name=safe_name,
+        mime_type=source.mime_type,
+        source_origin=None,
+    )
 
 
 @router.get("", response_model=list[CourseSourceRead])

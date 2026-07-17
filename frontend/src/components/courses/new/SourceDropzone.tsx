@@ -5,8 +5,9 @@ import type { Priority } from "@/lib/types";
 import type { SourceIntentId } from "@/lib/sourceIntentOptions";
 import SourceIntentPicker from "@/components/courses/new/SourceIntentPicker";
 
-const ACCEPT = ".docx,.doc,.pdf,.txt,.md";
-const FORMATS = ["PDF", "DOCX", "DOC", "TXT", "MD"];
+const ACCEPT = ".docx,.pdf,.txt,.md";
+const FORMATS = ["PDF", "DOCX", "TXT", "MD"];
+const ALLOWED_EXTENSIONS = new Set([".docx", ".pdf", ".txt", ".md"]);
 
 function UploadIcon() {
   return (
@@ -51,12 +52,23 @@ export default function SourceDropzone({
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragActive, setDragActive] = useState(false);
+  const [pickError, setPickError] = useState<string | null>(null);
 
   const pickFile = useCallback(
     (file: File | null) => {
       if (!file || disabled) return;
-      const ext = file.name.includes(".") ? file.name.split(".").pop()?.toLowerCase() : "";
-      if (!ext || !["docx", "doc", "pdf", "txt", "md"].includes(ext)) return;
+      setPickError(null);
+      const ext = file.name.includes(".")
+        ? `.${file.name.split(".").pop()?.toLowerCase()}`
+        : "";
+      if (!ALLOWED_EXTENSIONS.has(ext)) {
+        setPickError(
+          ext === ".doc"
+            ? "Classic .doc is not supported. Save as .docx, .pdf, .txt, or .md."
+            : `Unsupported file type${ext ? ` (${ext})` : ""}. Allowed: .docx, .pdf, .txt, .md.`,
+        );
+        return;
+      }
       onFileSelected(file);
     },
     [disabled, onFileSelected],
@@ -130,6 +142,9 @@ export default function SourceDropzone({
             </span>
           ))}
         </div>
+        {pickError ? (
+          <p className="text-center text-xs text-red-600 dark:text-red-400">{pickError}</p>
+        ) : null}
         {onPasteInstead ? (
           <button
             type="button"

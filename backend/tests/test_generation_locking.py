@@ -172,3 +172,31 @@ def test_latest_generation_job_restores_state_after_refresh(tmp_path, monkeypatc
 
     missing = client.get("/courses/999999/generate/latest")
     assert missing.status_code == 404
+
+
+def test_global_lock_returns_409_for_other_course(tmp_path, monkeypatch):
+    """An active job on course A must not silently attach to course B's Generate."""
+    client, engine = _make_client(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        "app.routers.generation.settings.generation_global_lock", True
+    )
+    course_a = _create_course(client)
+    course_b = _create_course(client)
+
+    with Session(engine) as session:
+        generation_jobs.create(
+            session,
+            course_id=course_a,
+            status=JobStatus.RUNNING,
+            current_stage="generating",
+            progress_percent=10,
+            log_json=[],
+        )
+
+    blocked = client.post(f"/courses/{course_b}/generate")
+    assert blocked.status_code == 409
+    assert "already has an active" in blocked.json()["detail"]
+
+    with Session(engine) as session:
+        jobs_b = generation_jobs.list(session, course_id=course_b)
+    assert jobs_b == []

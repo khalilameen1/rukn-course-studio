@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { Priority, SourceCategory } from "@/lib/types";
 import Card from "@/components/ui/Card";
 import { SOURCE_CATEGORY_HELPERS, SOURCE_CATEGORY_OPTIONS } from "@/lib/sourceCategories";
+import { formatUploadErrorForDisplay } from "@/lib/api";
 
 const PRIORITY_OPTIONS: Priority[] = ["high", "medium", "low"];
 
@@ -30,7 +31,7 @@ export default function SourceUploadForm({
       setFile(null);
       (e.target as HTMLFormElement).reset();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Upload failed");
+      setError(formatUploadErrorForDisplay(err));
     } finally {
       setSubmitting(false);
     }
@@ -92,6 +93,9 @@ export default function SourceUploadForm({
         >
           {submitting ? "Uploading..." : "Upload"}
         </button>
+        {!file && !submitting ? (
+          <p className="text-xs text-muted">Choose a file above to enable Upload.</p>
+        ) : null}
       </form>
     </Card>
   );

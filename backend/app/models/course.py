@@ -4,6 +4,7 @@ from typing import Any, Optional
 from sqlalchemy import JSON, Column
 from sqlmodel import Field, SQLModel
 
+from app.db_enums import sa_str_enum
 from app.models.enums import (
     ExplanationLevel,
     GenerationPreset,
@@ -46,21 +47,54 @@ class Course(SQLModel, table=True):
     course_type: str = Field(default="practical_skill")
     # Optional domain label (e.g. "meta_ads", "excel") — course-specific, not Admin Knowledge.
     course_domain: Optional[str] = Field(default=None)
-    structure_mode: StructureMode
+    structure_mode: StructureMode = Field(
+        sa_column=Column(sa_str_enum(StructureMode), nullable=False)
+    )
     # User-provided or Generate-Course-Map result — course-specific plan only.
     manual_map_text: Optional[str] = Field(default=None)
-    explanation_level: ExplanationLevel = Field(default=ExplanationLevel.FINAL_ONLY)
-    generation_preset: GenerationPreset = Field(default=GenerationPreset.BALANCED)
+    explanation_level: ExplanationLevel = Field(
+        default=ExplanationLevel.FINAL_ONLY,
+        sa_column=Column(
+            sa_str_enum(ExplanationLevel),
+            nullable=False,
+            server_default=ExplanationLevel.FINAL_ONLY.value,
+        ),
+    )
+    generation_preset: GenerationPreset = Field(
+        default=GenerationPreset.BALANCED,
+        sa_column=Column(
+            sa_str_enum(GenerationPreset),
+            nullable=False,
+            server_default=GenerationPreset.BALANCED.value,
+        ),
+    )
     # Preview = cheaper direction test; Premium = full locked pipeline (default).
     generation_quality_mode: GenerationQualityMode = Field(
-        default=GenerationQualityMode.PREMIUM
+        default=GenerationQualityMode.PREMIUM,
+        sa_column=Column(
+            sa_str_enum(GenerationQualityMode),
+            nullable=False,
+            server_default=GenerationQualityMode.PREMIUM.value,
+        ),
     )
     # Autonomous gap fill by default — research missing facts without asking.
     web_research_mode: WebResearchMode = Field(
-        default=WebResearchMode.AUTONOMOUS_GAP_FILL
+        default=WebResearchMode.AUTONOMOUS_GAP_FILL,
+        sa_column=Column(
+            sa_str_enum(WebResearchMode),
+            nullable=False,
+            server_default=WebResearchMode.AUTONOMOUS_GAP_FILL.value,
+        ),
     )
     # Default Egypt: local market realism for practical courses.
-    target_market: TargetMarket = Field(default=TargetMarket.EGYPT)
+    target_market: TargetMarket = Field(
+        default=TargetMarket.EGYPT,
+        sa_column=Column(
+            sa_str_enum(TargetMarket),
+            nullable=False,
+            server_default=TargetMarket.EGYPT.value,
+        ),
+    )
     # Persistent Web Source Memory cache across generation jobs (internal).
     web_source_memory_json: Optional[dict[str, Any]] = Field(
         default=None, sa_column=Column(JSON, nullable=True)

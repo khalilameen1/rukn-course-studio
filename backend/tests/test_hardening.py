@@ -130,7 +130,7 @@ def test_unsupported_extension_rejected(tmp_path, monkeypatch):
         files={"file": ("evil.exe", b"MZ", "application/octet-stream")},
         data={"source_category": "raw_material", "priority": "medium"},
     )
-    assert res.status_code == 400
+    assert res.status_code == 415
 
 
 def test_oversized_upload_rejected(tmp_path, monkeypatch):

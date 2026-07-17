@@ -3,9 +3,9 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { api } from "@/lib/api";
 import { EMPTY_COURSE_VALUES, type CourseFormValues } from "@/components/courses/CourseForm";
 import ActionError, { actionErrorFromUnknown } from "@/components/ui/ActionError";
+import { api, formatUploadErrorForDisplay } from "@/lib/api";
 import BriefWorkspace from "@/components/courses/new/BriefWorkspace";
 import CourseMapWorkspace from "@/components/courses/new/CourseMapWorkspace";
 import NewCourseStepBar from "@/components/courses/new/NewCourseStepBar";
@@ -256,7 +256,19 @@ export default function NewCoursePage() {
         throw new Error("Title, target learner, and course goal are required.");
       }
       const id = await ensureCourse();
-      await flushPendingSources(id);
+      try {
+        await flushPendingSources(id);
+      } catch (sourceErr) {
+        // Course row already exists — open the workspace so sources can be
+        // re-uploaded. Surface the failure via query flag on the detail page.
+        setAllowLeave(true);
+        clearNewCourseDraft();
+        const msg = formatUploadErrorForDisplay(sourceErr);
+        router.push(
+          `/courses/${id}?sources_failed=1&reason=${encodeURIComponent(msg.slice(0, 180))}`,
+        );
+        return;
+      }
       if (values.manual_map_text.trim()) {
         await api.updateCourse(id, { manual_map_text: values.manual_map_text });
       }
@@ -264,7 +276,15 @@ export default function NewCoursePage() {
       clearNewCourseDraft();
       router.push(`/courses/${id}`);
     } catch (err) {
-      setError(actionErrorFromUnknown(err, "Could not open course"));
+      const details = actionErrorFromUnknown(err, "Could not open course");
+      if (courseId) {
+        setError({
+          ...details,
+          nextStep: `A draft course already exists (#${courseId}). Open it from Courses, upload sources there, then generate.`,
+        });
+      } else {
+        setError(details);
+      }
     } finally {
       setBusy(false);
     }

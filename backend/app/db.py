@@ -47,6 +47,8 @@ def init_db() -> None:
     _ensure_source_analysis_columns()
     _ensure_course_source_columns()
     _ensure_ai_usage_events_table()
+    _widen_str_enum_columns()
+    _normalize_str_enum_storage()
 
 
 def _is_postgres() -> bool:
@@ -333,6 +335,147 @@ def _ensure_ai_usage_events_table() -> None:
             else:
                 conn.execute(
                     text(f"ALTER TABLE ai_usage_events ADD COLUMN {name} {sql_type}")
+                )
+
+
+def _widen_str_enum_columns() -> None:
+    """Widen legacy short VARCHAR enum columns so value strings fit.
+
+    Early SQLAlchemy Enum(name) columns were often VARCHAR(12). Current
+    SourceCategory values need up to 29 chars. SQLite ignores VARCHAR length;
+    Postgres rejects inserts that exceed it → HTTP 500 on source upload.
+    """
+    from sqlalchemy import inspect, text
+
+    targets = (
+        ("course_sources", "source_category", 64),
+        ("course_sources", "priority", 32),
+        ("courses", "structure_mode", 64),
+        ("courses", "explanation_level", 64),
+        ("courses", "generation_preset", 64),
+        ("courses", "generation_quality_mode", 32),
+        ("courses", "web_research_mode", 64),
+        ("courses", "target_market", 32),
+        ("generation_jobs", "status", 32),
+        ("generation_jobs", "generation_quality_mode", 32),
+        ("generation_jobs", "web_research_mode", 64),
+    )
+
+    if not _is_postgres():
+        return
+
+    try:
+        inspector = inspect(engine)
+        tables = set(inspector.get_table_names())
+    except Exception:
+        return
+
+    with engine.begin() as conn:
+        for table, column, length in targets:
+            if table not in tables:
+                continue
+            try:
+                cols = {c["name"]: c for c in inspector.get_columns(table)}
+            except Exception:
+                continue
+            if column not in cols:
+                continue
+            col_type = cols[column]["type"]
+            current_len = getattr(col_type, "length", None)
+            if current_len is not None and current_len >= length:
+                continue
+            try:
+                conn.execute(
+                    text(
+                        f"ALTER TABLE {table} ALTER COLUMN {column} "
+                        f"TYPE VARCHAR({length})"
+                    )
+                )
+            except Exception:
+                # Best-effort: do not block startup if the column is already TEXT
+                # or a native enum type we cannot alter here.
+                pass
+
+
+def _normalize_str_enum_storage() -> None:
+    """Rewrite enum NAME / legacy alias rows to current value strings.
+
+    Older SQLAlchemy defaults stored member names; column defaults and API
+    payloads use values. Renamed SourceCategory members (NOTES, MAIN_CONTENT,
+    …) also remain in older DBs. Mixed storage makes ORM loads raise
+    LookupError and surfaces as HTTP 500 on course/source list/open/upload.
+    """
+    from enum import Enum
+
+    from sqlalchemy import inspect, text
+
+    from app.models.enums import (
+        ExplanationLevel,
+        GenerationPreset,
+        GenerationQualityMode,
+        JobStatus,
+        Priority,
+        SourceCategory,
+        StructureMode,
+        TargetMarket,
+        WebResearchMode,
+    )
+    from app.services.source_category_migrate import SOURCE_CATEGORY_LEGACY_ALIASES
+
+    targets: list[tuple[str, str, type[Enum]]] = [
+        ("courses", "structure_mode", StructureMode),
+        ("courses", "explanation_level", ExplanationLevel),
+        ("courses", "generation_preset", GenerationPreset),
+        ("courses", "generation_quality_mode", GenerationQualityMode),
+        ("courses", "web_research_mode", WebResearchMode),
+        ("courses", "target_market", TargetMarket),
+        ("course_sources", "source_category", SourceCategory),
+        ("course_sources", "priority", Priority),
+        ("generation_jobs", "status", JobStatus),
+        ("generation_jobs", "generation_quality_mode", GenerationQualityMode),
+        ("generation_jobs", "web_research_mode", WebResearchMode),
+    ]
+
+    try:
+        inspector = inspect(engine)
+        tables = set(inspector.get_table_names())
+    except Exception:
+        return
+
+    with engine.begin() as conn:
+        if "course_sources" in tables:
+            try:
+                cols = {c["name"] for c in inspector.get_columns("course_sources")}
+            except Exception:
+                cols = set()
+            if "source_category" in cols:
+                for old, new in SOURCE_CATEGORY_LEGACY_ALIASES.items():
+                    conn.execute(
+                        text(
+                            "UPDATE course_sources SET source_category = :new "
+                            "WHERE source_category = :old"
+                        ),
+                        {"new": new, "old": old},
+                    )
+
+        for table, column, enum_cls in targets:
+            if table not in tables:
+                continue
+            try:
+                cols = {c["name"] for c in inspector.get_columns(table)}
+            except Exception:
+                continue
+            if column not in cols:
+                continue
+            for member in enum_cls:
+                if member.name == member.value:
+                    continue
+                conn.execute(
+                    text(
+                        f"UPDATE {table} SET {column} = :value "
+                        f"WHERE {column} = :name"
+                    ),
+                    {"value": member.value, "name": member.name},
                 )
 
 
