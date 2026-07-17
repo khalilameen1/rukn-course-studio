@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any, Optional
 
-from pydantic import BaseModel, ConfigDict, computed_field
+from pydantic import BaseModel, ConfigDict, computed_field, field_validator
 
 from app.models.enums import GenerationQualityMode, JobStatus, WebResearchMode
 
@@ -65,6 +65,12 @@ class GenerationJobRead(BaseModel):
     usage_by_stage_json: Optional[dict[str, Any]] = None
     created_at: datetime
     updated_at: datetime
+
+    @field_validator("waste_warnings_json", mode="before")
+    @classmethod
+    def _coerce_waste_warnings(cls, value: object) -> object:
+        # Older rows / ensure-added columns may be NULL in SQLite/Postgres.
+        return [] if value is None else value
 
     @computed_field  # type: ignore[prop-decorator]
     @property

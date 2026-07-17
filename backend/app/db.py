@@ -43,6 +43,7 @@ def init_db() -> None:
 
     SQLModel.metadata.create_all(engine)
     _ensure_generation_job_columns()
+    _backfill_generation_job_json_defaults()
     _ensure_course_columns()
     _ensure_source_analysis_columns()
     _ensure_course_source_columns()
@@ -477,6 +478,39 @@ def _normalize_str_enum_storage() -> None:
                     ),
                     {"value": member.value, "name": member.name},
                 )
+
+
+def _backfill_generation_job_json_defaults() -> None:
+    """NULL JSON list columns break GenerationJobRead (list required)."""
+    from sqlalchemy import inspect, text
+
+    try:
+        inspector = inspect(engine)
+        if "generation_jobs" not in inspector.get_table_names():
+            return
+        cols = {c["name"] for c in inspector.get_columns("generation_jobs")}
+    except Exception:
+        return
+
+    # SQLite TEXT and Postgres JSON/JSONB all accept a JSON array literal when
+    # cast appropriately. Prefer cast on Postgres; fall back to plain '[]'.
+    candidates = ["'[]'::json", "'[]'"] if _is_postgres() else ["'[]'"]
+    with engine.begin() as conn:
+        for column in ("waste_warnings_json", "log_json", "completed_reels_json"):
+            if column not in cols:
+                continue
+            for empty_array in candidates:
+                try:
+                    conn.execute(
+                        text(
+                            f"UPDATE generation_jobs SET {column} = {empty_array} "
+                            f"WHERE {column} IS NULL"
+                        )
+                    )
+                    break
+                except Exception:
+                    continue
+
 
 
 def get_session() -> Generator[Session, None, None]:
