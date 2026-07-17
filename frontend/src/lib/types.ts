@@ -147,6 +147,8 @@ export interface GenerationJob {
   output_docx_path: string | null;
   error_message: string | null;
   stopped_after_label?: string | null;
+  can_finalize_from_saved?: boolean;
+  can_download_completed?: boolean;
   completed_modules_count: number;
   completed_reels_count: number;
   total_lessons_count?: number;

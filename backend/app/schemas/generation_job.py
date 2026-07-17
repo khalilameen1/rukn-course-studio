@@ -242,6 +242,31 @@ class GenerationJobRead(BaseModel):
 
     @computed_field  # type: ignore[prop-decorator]
     @property
+    def can_finalize_from_saved(self) -> bool:
+        """UI hint: Finish/Retry may assemble Teleprompter without AI tokens.
+
+        Counter-based (map/reels JSON are internal). The finalize endpoint
+        re-checks full integrity before writing.
+        """
+        if self.output_docx_path:
+            return False
+        status_val = (
+            self.status.value if hasattr(self.status, "value") else str(self.status or "")
+        ).lower()
+        if status_val == "completed":
+            return False
+        total = int(self.total_lessons_count or 0)
+        done = int(self.completed_reels_count or 0)
+        return total > 0 and done >= total
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def can_download_completed(self) -> bool:
+        """Partial draft or final Teleprompter is available for download."""
+        return bool(self.partial_docx_path or self.output_docx_path)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
     def partial_docx_available(self) -> bool:
         return bool(self.partial_docx_path)
 

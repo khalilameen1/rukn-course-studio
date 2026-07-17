@@ -266,11 +266,32 @@ function RunSparkpage({
   );
 }
 
-function GenerationStatusPanel({ job }: { job: GenerationJob }) {
+function GenerationStatusPanel({
+  job,
+  onDownloadCompleted,
+  onRetryFinalize,
+  downloadingCompleted,
+  finalizingSaved,
+}: {
+  job: GenerationJob;
+  onDownloadCompleted?: () => void;
+  onRetryFinalize?: () => void;
+  downloadingCompleted?: boolean;
+  finalizingSaved?: boolean;
+}) {
   const showStoppedInfo =
     job.status === "partial" || job.status === "failed" || job.status === "canceled";
   const partialAvailable =
     job.partial_docx_available ?? Boolean(job.partial_docx_path);
+  const canDownload =
+    job.can_download_completed ?? Boolean(job.partial_docx_path || job.output_docx_path);
+  const canFinalize =
+    job.can_finalize_from_saved ??
+    ((job.total_lessons_count ?? 0) > 0 &&
+      (job.completed_lessons_count ?? job.completed_reels_count) >=
+        (job.total_lessons_count ?? 0) &&
+      !job.output_docx_path &&
+      job.status !== "completed");
   const isTerminal = TERMINAL_STATUSES.has(job.status);
   const completedLessons =
     job.completed_lessons_count ?? job.completed_reels_count;
@@ -284,19 +305,30 @@ function GenerationStatusPanel({ job }: { job: GenerationJob }) {
         job.public_stage_label ||
         (job.current_stage ? STAGE_LABELS[job.current_stage] ?? job.current_stage : "Preparing");
 
-  const completedSteps = PROGRESS_STEPS.filter((_, i) => isDone || i < currentIndex).map(
+  const allLessonsSaved =
+    totalLessons > 0 && completedLessons >= totalLessons && !job.output_docx_path;
+
+  // When stage is partial/failed, progressStepIndex is -1 — infer completed
+  // steps from lesson counts so the UI does not look like "stopped at start".
+  let completedSteps = PROGRESS_STEPS.filter((_, i) => isDone || i < currentIndex).map(
     (s) => s.label,
   );
+  if (isTerminal && !isDone && completedLessons > 0) {
+    const throughKey = allLessonsSaved || canFinalize ? "reviewing" : "generating";
+    const inferred = PROGRESS_STEPS.findIndex((s) => s.key === throughKey);
+    completedSteps = PROGRESS_STEPS.filter((_, i) => i <= inferred).map((s) => s.label);
+  }
   const inProgressStep =
     !isDone && currentIndex >= 0 ? PROGRESS_STEPS[currentIndex]?.label : currentLabel;
 
-  const allLessonsSaved =
-    totalLessons > 0 && completedLessons >= totalLessons && !job.output_docx_path;
-  const stoppedStepLabel = job.stopped_after_label ?? "an early step";
+  const stoppedStepLabel =
+    job.stopped_after_label ||
+    (allLessonsSaved ? "All lessons saved" : null) ||
+    (completedLessons > 0 ? "Saving lessons" : "an early step");
   const tips = job.research_tips ?? [];
 
   if (isDone) {
-    return <RunSparkpage job={job} />;
+    return <RunSparkpage job={job} onDownloadLatest={onDownloadCompleted} />;
   }
 
   return (
@@ -406,26 +438,54 @@ function GenerationStatusPanel({ job }: { job: GenerationJob }) {
         </div>
       </dl>
       {showStoppedInfo ? (
-        <p className="mt-3 text-muted">
-          Stopped after: {stoppedStepLabel} ({completedLessons} lesson(s) completed).
-          {allLessonsSaved ? (
-            <>
-              {" "}
-              Every lesson is saved — refresh this page to assemble the final Teleprompter
-              without using more tokens. You can also download the partial DOCX below.
-            </>
-          ) : (
-            <> Download partial output if available, then regenerate.</>
-          )}
-        </p>
-      ) : null}
-      {showStoppedInfo && job.error_message ? (
-        <p className="mt-1 text-red-600 dark:text-red-400">
-          {job.error_category
-            ? `${ERROR_CATEGORY_LABELS[job.error_category] ?? job.error_category}: `
-            : ""}
-          {job.error_message}
-        </p>
+        <div className="mt-4 rounded-md border border-border bg-surface-muted/30 px-3 py-3">
+          <p className="text-sm font-medium text-foreground">
+            {canFinalize ? "Lessons saved — finish without regenerating" : "Run stopped early"}
+          </p>
+          <p className="mt-1 text-xs text-muted">
+            Stopped after: {stoppedStepLabel} · {completedLessons}
+            {totalLessons > 0 ? `/${totalLessons}` : ""} lesson(s) saved.
+            {canFinalize
+              ? " All Final Master scripts are on disk. Finish export uses zero AI tokens."
+              : canDownload
+                ? " Download what completed, or start a new generation for the rest."
+                : " Start a new generation when you are ready."}
+          </p>
+          {job.error_message ? (
+            <p className="mt-2 text-xs text-red-600 dark:text-red-400">
+              {job.error_category
+                ? `${ERROR_CATEGORY_LABELS[job.error_category] ?? job.error_category}: `
+                : ""}
+              {job.error_message}
+            </p>
+          ) : null}
+          <div className="mt-3 flex flex-wrap gap-2">
+            {canDownload && onDownloadCompleted ? (
+              <button
+                type="button"
+                className="btn-secondary w-fit"
+                disabled={Boolean(downloadingCompleted || finalizingSaved)}
+                onClick={onDownloadCompleted}
+              >
+                {downloadingCompleted
+                  ? "Downloading…"
+                  : job.output_docx_path
+                    ? "Download Teleprompter DOCX"
+                    : "Download completed lessons"}
+              </button>
+            ) : null}
+            {canFinalize && onRetryFinalize ? (
+              <button
+                type="button"
+                className="btn-primary w-fit"
+                disabled={Boolean(finalizingSaved || downloadingCompleted)}
+                onClick={onRetryFinalize}
+              >
+                {finalizingSaved ? "Finishing…" : "Finish & export Teleprompter"}
+              </button>
+            ) : null}
+          </div>
+        </div>
       ) : null}
     </div>
   );
@@ -443,6 +503,8 @@ export default function GeneratePanel({
   const [job, setJob] = useState<GenerationJob | null>(null);
   const [starting, setStarting] = useState(false);
   const [canceling, setCanceling] = useState(false);
+  const [finalizingSaved, setFinalizingSaved] = useState(false);
+  const [downloadingCompleted, setDownloadingCompleted] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [qualityMode, setQualityMode] = useState<GenerationQualityMode>("premium");
   const [mission, setMission] = useState<MissionBrief | null>(null);
@@ -553,6 +615,44 @@ export default function GeneratePanel({
     }
   }
 
+  async function handleDownloadCompleted() {
+    if (!job) return;
+    setDownloadingCompleted(true);
+    setError(null);
+    try {
+      if (job.output_docx_path || job.status === "completed") {
+        await api.downloadLatestDocx(courseId, `course_${courseId}_teleprompter.docx`);
+      } else {
+        await api.downloadPartialDocx(
+          courseId,
+          job.id,
+          `course_${courseId}_job_${job.id}_completed.docx`,
+        );
+      }
+    } catch (err) {
+      setError(formatApiErrorForDisplay(err));
+    } finally {
+      setDownloadingCompleted(false);
+    }
+  }
+
+  async function handleRetryFinalize() {
+    if (!job) return;
+    setFinalizingSaved(true);
+    setError(null);
+    try {
+      const finished = await api.finalizeSavedJob(courseId, job.id);
+      updateJob(finished);
+      if (finished.status === "completed") {
+        onVersionCreated();
+      }
+    } catch (err) {
+      setError(formatApiErrorForDisplay(err));
+    } finally {
+      setFinalizingSaved(false);
+    }
+  }
+
   async function handleGenerate() {
     setStarting(true);
     setError(null);
@@ -621,10 +721,22 @@ export default function GeneratePanel({
   }
 
   const isRunning = job ? !TERMINAL_STATUSES.has(job.status) : false;
+  const canFinalizeSaved =
+    Boolean(job?.can_finalize_from_saved) ||
+    Boolean(
+      job &&
+        (job.total_lessons_count ?? 0) > 0 &&
+        (job.completed_lessons_count ?? job.completed_reels_count) >=
+          (job.total_lessons_count ?? 0) &&
+        !job.output_docx_path &&
+        job.status !== "completed",
+    );
   const hasUnresolvedIssue = job
     ? job.status === "partial" || job.status === "failed" || job.status === "canceled"
     : false;
   const justCompleted = job?.status === "completed";
+  // Prefer Finish export over a full regenerate when every lesson is already saved.
+  const showFullRegenerate = !canFinalizeSaved;
 
   return (
     <div className="flex flex-col gap-4">
@@ -652,7 +764,7 @@ export default function GeneratePanel({
           <select
             className="mt-1 block w-full max-w-xs rounded-md border border-border bg-surface px-3 py-2 text-sm"
             value={qualityMode}
-            disabled={starting || isRunning}
+            disabled={starting || isRunning || finalizingSaved}
             onChange={(e) => setQualityMode(e.target.value as GenerationQualityMode)}
           >
             {QUALITY_MODE_OPTIONS.map((opt) => (
@@ -668,19 +780,30 @@ export default function GeneratePanel({
       </div>
 
       <div className="flex flex-wrap items-center gap-3">
-        <button
-          onClick={handleGenerate}
-          disabled={starting || isRunning || canceling}
-          className="btn-primary w-fit"
-        >
-          {starting || isRunning
-            ? "Generating…"
-            : hasUnresolvedIssue
-              ? "Start generation again"
-              : justCompleted
-                ? "Run again"
-                : "Start generation"}
-        </button>
+        {showFullRegenerate ? (
+          <button
+            onClick={handleGenerate}
+            disabled={starting || isRunning || canceling || finalizingSaved}
+            className="btn-primary w-fit"
+          >
+            {starting || isRunning
+              ? "Generating…"
+              : hasUnresolvedIssue
+                ? "Start generation again"
+                : justCompleted
+                  ? "Run again"
+                  : "Start generation"}
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={handleRetryFinalize}
+            disabled={finalizingSaved || starting || canceling}
+            className="btn-primary w-fit"
+          >
+            {finalizingSaved ? "Finishing…" : "Finish & export Teleprompter"}
+          </button>
+        )}
         {isRunning ? (
           <button
             type="button"
@@ -689,6 +812,16 @@ export default function GeneratePanel({
             className="btn-secondary w-fit"
           >
             {canceling ? "Stopping…" : "Stop generation"}
+          </button>
+        ) : null}
+        {canFinalizeSaved && showFullRegenerate === false ? (
+          <button
+            type="button"
+            onClick={handleGenerate}
+            disabled={starting || isRunning || canceling || finalizingSaved}
+            className="btn-secondary w-fit"
+          >
+            Start new generation instead
           </button>
         ) : null}
       </div>
@@ -702,7 +835,15 @@ export default function GeneratePanel({
         </p>
       ) : null}
 
-      {job ? <GenerationStatusPanel job={job} /> : null}
+      {job ? (
+        <GenerationStatusPanel
+          job={job}
+          onDownloadCompleted={handleDownloadCompleted}
+          onRetryFinalize={handleRetryFinalize}
+          downloadingCompleted={downloadingCompleted}
+          finalizingSaved={finalizingSaved}
+        />
+      ) : null}
     </div>
   );
 }

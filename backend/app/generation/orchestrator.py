@@ -1136,16 +1136,45 @@ def run_generation(
             last_progress_message="Finalizing course",
         )
 
-        # --- Step 12: final review ---------------------------------------
-        final_result = provider.final_review(
-            FinalReviewInput(
-                course_map=course_map,
-                all_reels=all_reels,
-                rules_context=select_packed_rules_for_stage(rules_context, PipelineStage.FINAL_REVIEW),
+        # --- Step 12: final review (fail-soft) ---------------------------
+        # Every lesson's Final Master is already persisted. A provider
+        # timeout/error here must not discard that work — assemble from
+        # saved scripts and continue to DOCX export (enterprise recovery).
+        final_result: ReviewResult
+        try:
+            final_result = provider.final_review(
+                FinalReviewInput(
+                    course_map=course_map,
+                    all_reels=all_reels,
+                    rules_context=select_packed_rules_for_stage(
+                        rules_context, PipelineStage.FINAL_REVIEW
+                    ),
+                )
             )
-        )
-        _record_usage_event(session, job, provider, PipelineStage.FINAL_REVIEW, preset_value)
-        logs.append({"step": "final_review", "status": final_result.status.value})
+            _record_usage_event(
+                session, job, provider, PipelineStage.FINAL_REVIEW, preset_value
+            )
+            logs.append({"step": "final_review", "status": final_result.status.value})
+        except Exception as final_exc:  # noqa: BLE001
+            logs.append(
+                {
+                    "step": "final_review",
+                    "status": "skipped_provider_error",
+                    "error_type": type(final_exc).__name__,
+                    "message": redact_secrets(str(final_exc)[:200]),
+                }
+            )
+            final_result = ReviewResult(
+                scope=ReviewScope.FINAL,
+                status=ReviewStatus.PASS,
+                actions=[],
+            )
+            flush(
+                current_stage="reviewing",
+                last_completed_step="lessons_complete",
+                last_progress_message="Finalizing course",
+            )
+
         flush(
             current_stage="reviewing",
             progress_percent=PROGRESS_AFTER_FINAL_REVIEW,
@@ -1154,20 +1183,32 @@ def run_generation(
 
         # --- Step 13: rebuild only if final_review actually requires it --
         if final_result.status == ReviewStatus.NEEDS_REVISION:
-            final_course = provider.rebuild_final_course(
-                RebuildFinalCourseInput(
-                    course_map=course_map,
-                    all_reels=all_reels,
-                    final_review=final_result,
-                    rules_context=select_packed_rules_for_stage(
-                        rules_context, PipelineStage.REBUILD_FINAL_COURSE
-                    ),
+            try:
+                final_course = provider.rebuild_final_course(
+                    RebuildFinalCourseInput(
+                        course_map=course_map,
+                        all_reels=all_reels,
+                        final_review=final_result,
+                        rules_context=select_packed_rules_for_stage(
+                            rules_context, PipelineStage.REBUILD_FINAL_COURSE
+                        ),
+                    )
                 )
-            )
-            _record_usage_event(
-                session, job, provider, PipelineStage.REBUILD_FINAL_COURSE, preset_value
-            )
-            logs.append({"step": "rebuild_final_course", "triggered": True})
+                _record_usage_event(
+                    session, job, provider, PipelineStage.REBUILD_FINAL_COURSE, preset_value
+                )
+                logs.append({"step": "rebuild_final_course", "triggered": True})
+            except Exception as rebuild_exc:  # noqa: BLE001
+                logs.append(
+                    {
+                        "step": "rebuild_final_course",
+                        "triggered": False,
+                        "fallback": "assemble_saved",
+                        "error_type": type(rebuild_exc).__name__,
+                        "message": redact_secrets(str(rebuild_exc)[:200]),
+                    }
+                )
+                final_course = _assemble_final_course(course_map, all_reels)
         else:
             # No AI call needed: everything already passed, so assemble the
             # already-approved content directly.
@@ -1493,6 +1534,19 @@ def run_generation(
                         "message": redact_secrets(str(export_exc)[:200]),
                     }
                 )
+
+        # Enterprise recovery: if every Final Master lesson is already saved,
+        # complete the Teleprompter from disk instead of stranding the user on
+        # PARTIAL + "regenerate" (no extra AI tokens).
+        from app.services.finalize_saved_job import (
+            finalize_job_from_saved_lessons,
+            inspect_saved_lessons,
+        )
+
+        if inspect_saved_lessons(job).ok and not job.output_docx_path:
+            recovered = finalize_job_from_saved_lessons(session, job, force=True)
+            if recovered is not None and recovered.status == JobStatus.COMPLETED:
+                return recovered
 
         status = JobStatus.PARTIAL if has_saved_work else JobStatus.FAILED
         # Budget Guard (§6) - same as the success path, observational only.
