@@ -317,6 +317,8 @@ def test_call_structured_accepts_lessons_alias_for_course_map():
 
 
 def test_call_structured_bumps_max_tokens_after_truncation():
+    from app.generation.model_routing import MODEL_OUTPUT_MAX_TOKENS
+
     truncated = FakeResponse(
         [FakeTextBlock("partial")],
         stop_reason="max_tokens",
@@ -330,7 +332,8 @@ def test_call_structured_bumps_max_tokens_after_truncation():
 
     assert result.status == "pass"
     assert provider._client.messages.calls[0]["max_tokens"] == 1024
-    assert provider._client.messages.calls[1]["max_tokens"] == _bump_max_tokens(1024)
+    assert provider._client.messages.calls[1]["max_tokens"] == MODEL_OUTPUT_MAX_TOKENS
+    assert _bump_max_tokens(1024) == MODEL_OUTPUT_MAX_TOKENS
 
 
 def test_truncation_public_hint_mentions_token_limit():

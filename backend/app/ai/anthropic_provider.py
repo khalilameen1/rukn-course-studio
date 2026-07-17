@@ -151,11 +151,10 @@ def _public_api_hint(exc: BaseException) -> str:
 
 
 def _bump_max_tokens(current: int) -> int:
-    """Double output budget after truncation, capped for map-sized JSON."""
-    from app.generation.model_routing import MAP_MAX_TOKENS_CAP
+    """Jump to the model output ceiling after any truncation stop."""
+    from app.generation.model_routing import MODEL_OUTPUT_MAX_TOKENS
 
-    bumped = max(current * 2, current + 8192)
-    return min(bumped, MAP_MAX_TOKENS_CAP)
+    return max(int(current), MODEL_OUTPUT_MAX_TOKENS)
 
 
 def _normalize_tool_input(schema: type[BaseModel], data: object) -> object:
@@ -217,7 +216,7 @@ class AnthropicProvider(AIProvider):
         self,
         api_key: str | None = None,
         model_name: str | None = None,
-        max_tokens: int = 4096,
+        max_tokens: int | None = None,
         preset: GenerationPreset | None = None,
         request_timeout_seconds: float | None = None,
     ) -> None:
@@ -233,7 +232,13 @@ class AnthropicProvider(AIProvider):
         # (AI_MODEL_NAME env var), unless explicitly overridden by a caller
         # (e.g. tests). Never hardcode a model string anywhere else.
         self._model_name = model_name or settings.ai_model_name
-        self._max_tokens = max_tokens
+        # Anthropic requires max_tokens; default to the model output ceiling
+        # so stage calls never hit a soft product cap mid-response.
+        from app.generation.model_routing import MODEL_OUTPUT_MAX_TOKENS
+
+        self._max_tokens = (
+            int(max_tokens) if max_tokens is not None else MODEL_OUTPUT_MAX_TOKENS
+        )
         # Starts at the given (or default) preset's temperature; the
         # orchestrator calls `configure_for_run` once per generation run
         # with the course's actual preset (see that method below) - this

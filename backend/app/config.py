@@ -134,11 +134,10 @@ class Settings(BaseSettings):
     ai_model_name: str = ""
 
     # How long to wait for a single Anthropic API call before giving up
-    # (ANTHROPIC_REQUEST_TIMEOUT_SECONDS env var). Optional to set - a sane
-    # default (120s) means a hung request still surfaces as a clean,
-    # classifiable timeout error (see app/generation/errors.py) instead of
-    # hanging the generation run indefinitely.
-    anthropic_request_timeout_seconds: float = 120.0
+    # (ANTHROPIC_REQUEST_TIMEOUT_SECONDS env var). Large CourseMap / Final
+    # Master tool payloads can take several minutes at the 128k ceiling —
+    # 120s was aborting valid long generations as timeouts.
+    anthropic_request_timeout_seconds: float = 900.0
     # Off by default: ephemeral cache_control needs Anthropic prompt-caching
     # support; enabling without it caused invalid_request → "Unusable response".
     anthropic_prompt_cache_enabled: bool = False

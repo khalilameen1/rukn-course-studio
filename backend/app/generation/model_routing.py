@@ -1,27 +1,35 @@
 """Per-pipeline-stage AI provider routing overrides (§9).
 
 Default behavior: every stage uses Settings.ai_model_name and the course
-preset temperature unless listed below. Map/rebuild get higher max_tokens
-so large CourseMap JSON is less likely to truncate mid-tool-call.
+preset temperature unless listed below.
 
-Claude Sonnet 5's tokenizer counts ~30% more tokens than Sonnet 4.6 for the
-same text, and Premium maps often need ~40–60 lessons. 8192 routinely hit
-``stop_reason=max_tokens`` → empty/partial tool JSON → "CourseMap shape
-unusable after 3 tries".
+``max_tokens`` is required by the Anthropic API — it cannot be omitted. We
+set every generation stage to the model output ceiling (128k for Claude
+Sonnet 5 / Opus 4.x) so structured calls are never cut off mid-tool-call.
+Actual billed tokens are only what the model writes, not this ceiling.
 """
 
 from __future__ import annotations
 
 from app.prompts.prompt_registry import PipelineStage
 
-# Cap used when `_call_structured` doubles the budget after truncation.
-MAP_MAX_TOKENS_CAP = 65536
+# Claude Sonnet 5 / Opus 4.x documented max output. Anthropic requires
+# ``max_tokens`` on every messages.create call — this is the effective
+# "no soft product limit" ceiling.
+MODEL_OUTPUT_MAX_TOKENS = 128_000
+
+# Backward-compatible alias used by truncation retries.
+MAP_MAX_TOKENS_CAP = MODEL_OUTPUT_MAX_TOKENS
 
 MODEL_ROUTING_OVERRIDES: dict[PipelineStage, dict] = {
-    PipelineStage.BUILD_COURSE_MAP: {"max_tokens": 32768},
-    PipelineStage.REBUILD_FINAL_COURSE: {"max_tokens": 32768},
-    PipelineStage.WRITE_SINGLE_REEL: {"max_tokens": 6144},
-    PipelineStage.FINAL_REVIEW: {"max_tokens": 4096},
+    PipelineStage.BUILD_COURSE_MAP: {"max_tokens": MODEL_OUTPUT_MAX_TOKENS},
+    PipelineStage.REBUILD_FINAL_COURSE: {"max_tokens": MODEL_OUTPUT_MAX_TOKENS},
+    PipelineStage.WRITE_SINGLE_REEL: {"max_tokens": MODEL_OUTPUT_MAX_TOKENS},
+    PipelineStage.REVIEW_SINGLE_REEL: {"max_tokens": MODEL_OUTPUT_MAX_TOKENS},
+    PipelineStage.REVIEW_FIVE_REELS: {"max_tokens": MODEL_OUTPUT_MAX_TOKENS},
+    PipelineStage.REVIEW_MODULE: {"max_tokens": MODEL_OUTPUT_MAX_TOKENS},
+    PipelineStage.REVIEW_TWO_MODULES: {"max_tokens": MODEL_OUTPUT_MAX_TOKENS},
+    PipelineStage.FINAL_REVIEW: {"max_tokens": MODEL_OUTPUT_MAX_TOKENS},
 }
 
 

@@ -19,7 +19,28 @@ def test_resolve_stage_overrides_empty_unless_listed():
 
 
 def test_map_stage_uses_large_max_tokens_budget():
-    assert resolve_stage_overrides(PipelineStage.BUILD_COURSE_MAP)["max_tokens"] >= 32768
+    from app.generation.model_routing import MODEL_OUTPUT_MAX_TOKENS
+
+    assert (
+        resolve_stage_overrides(PipelineStage.BUILD_COURSE_MAP)["max_tokens"]
+        == MODEL_OUTPUT_MAX_TOKENS
+    )
+
+
+def test_all_generation_stages_use_model_output_ceiling():
+    from app.generation.model_routing import MODEL_OUTPUT_MAX_TOKENS
+
+    for stage in (
+        PipelineStage.BUILD_COURSE_MAP,
+        PipelineStage.WRITE_SINGLE_REEL,
+        PipelineStage.REVIEW_SINGLE_REEL,
+        PipelineStage.REVIEW_FIVE_REELS,
+        PipelineStage.REVIEW_MODULE,
+        PipelineStage.REVIEW_TWO_MODULES,
+        PipelineStage.FINAL_REVIEW,
+        PipelineStage.REBUILD_FINAL_COURSE,
+    ):
+        assert resolve_stage_overrides(stage)["max_tokens"] == MODEL_OUTPUT_MAX_TOKENS
 
 
 def test_no_override_path_uses_the_providers_own_configured_model_and_temperature():
