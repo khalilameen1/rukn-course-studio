@@ -65,6 +65,11 @@ def get_ai_provider(config: Settings = settings) -> AIProvider:
                 "Set the missing value(s), or set AI_PROVIDER=fake to use the "
                 "deterministic fake provider instead."
             )
+        from app.generation.generation_preflight import validate_ai_model_name
+
+        model_err = validate_ai_model_name(config.ai_model_name)
+        if model_err:
+            raise AIProviderConfigError(model_err)
         return AnthropicProvider(
             api_key=config.anthropic_api_key, model_name=config.ai_model_name
         )

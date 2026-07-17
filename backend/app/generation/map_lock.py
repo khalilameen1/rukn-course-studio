@@ -83,6 +83,42 @@ def end_map(course_id: int, session: Session | None = None) -> None:
             pass
 
 
+def clear_stale_map_locks(session: Session, *, max_age_seconds: int = STALE_SECONDS) -> int:
+    """Delete abandoned map locks (crash/deploy mid-map)."""
+    from sqlmodel import select
+
+    cutoff = _utcnow() - timedelta(seconds=max_age_seconds)
+    released = 0
+    try:
+        rows = list(session.exec(select(CourseMapLock)))
+    except Exception:
+        return 0
+    for row in rows:
+        locked_at = row.locked_at
+        if locked_at.tzinfo is None:
+            locked_at = locked_at.replace(tzinfo=timezone.utc)
+        if locked_at >= cutoff:
+            continue
+        try:
+            session.delete(row)
+            session.commit()
+            with _LOCK:
+                _MAP_BUSY.discard(row.course_id)
+            released += 1
+        except Exception:
+            try:
+                session.rollback()
+            except Exception:
+                pass
+    return released
+
+
+def clear_all_process_map_busy() -> None:
+    """Drop in-memory map busy flags (safe on process boot)."""
+    with _LOCK:
+        _MAP_BUSY.clear()
+
+
 def is_map_busy(course_id: int, session: Session | None = None) -> bool:
     with _LOCK:
         if course_id in _MAP_BUSY:

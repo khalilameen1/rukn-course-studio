@@ -52,6 +52,9 @@ def generate_course_map(course_id: int, session: Session = Depends(get_session))
     """
     get_course_or_404(session, course_id)
     _release_stale_active_jobs(session)
+    from app.generation.map_lock import clear_stale_map_locks
+
+    clear_stale_map_locks(session)
 
     if is_map_busy(course_id):
         raise HTTPException(
@@ -129,6 +132,9 @@ def generate_course(
     """
     get_course_or_404(session, course_id)
     _release_stale_active_jobs(session)
+    from app.generation.map_lock import clear_stale_map_locks
+
+    clear_stale_map_locks(session)
 
     if is_map_busy(course_id):
         raise HTTPException(
@@ -162,6 +168,19 @@ def generate_course(
     try:
         # Fail fast before claiming a slot if the provider cannot run.
         get_ai_provider()
+        from app.generation.generation_preflight import (
+            check_storage_disk,
+            generation_preflight,
+        )
+
+        pre = generation_preflight()
+        if not pre.get("ok"):
+            raise AIProviderConfigError(
+                "; ".join(pre.get("blockers") or ["Generation preflight failed."])
+            )
+        disk_err = check_storage_disk()
+        if disk_err:
+            raise HTTPException(status_code=507, detail=disk_err)
     except AIProviderConfigError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 

@@ -57,6 +57,15 @@ async def lifespan(app: FastAPI):
     with Session(engine) as session:
         seed_admin_knowledge(session)
 
+    from app.generation.boot_safety import run_generation_boot_safety
+
+    boot = run_generation_boot_safety()
+    if boot.get("missing_job_columns"):
+        logger.error(
+            "Generation may fail until DB columns exist: %s",
+            boot["missing_job_columns"],
+        )
+
     yield
 
 

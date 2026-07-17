@@ -1,33 +1,20 @@
 """Per-pipeline-stage AI provider routing overrides (§9).
 
-Default behavior (and today's *only* behavior, since
-`MODEL_ROUTING_OVERRIDES` starts empty): every stage uses whatever
-`Settings.ai_model_name` and the course's own `generation_preset`-resolved
-temperature already apply (see app/ai/anthropic_provider.py) - this module
-changes nothing unless a stage is explicitly listed below.
-
-To override a specific stage, add a `PipelineStage` key with any subset of
-`{"model", "temperature", "max_tokens"}` to `MODEL_ROUTING_OVERRIDES`. Any
-field left out of an override dict still falls back to the provider's own
-already-configured value for that call. Kept as a plain Python constant
-(no config-file loader) per this codebase's "explicit, readable code over
-a framework" style - see `.cursor/rules/v1-architecture-constraints.mdc`.
-
-`FakeProvider` never consults this - it has no concept of model/
-temperature at all.
+Default behavior: every stage uses Settings.ai_model_name and the course
+preset temperature unless listed below. Map/rebuild get higher max_tokens
+so large CourseMap JSON is less likely to truncate mid-tool-call.
 """
 
 from __future__ import annotations
 
 from app.prompts.prompt_registry import PipelineStage
 
-# Empty by default - no override is required for MVP. Example of what a
-# future override would look like (commented out intentionally):
-#
-#   MODEL_ROUTING_OVERRIDES: dict[PipelineStage, dict] = {
-#       PipelineStage.FINAL_REVIEW: {"temperature": 0.1},
-#   }
-MODEL_ROUTING_OVERRIDES: dict[PipelineStage, dict] = {}
+MODEL_ROUTING_OVERRIDES: dict[PipelineStage, dict] = {
+    PipelineStage.BUILD_COURSE_MAP: {"max_tokens": 8192},
+    PipelineStage.REBUILD_FINAL_COURSE: {"max_tokens": 8192},
+    PipelineStage.WRITE_SINGLE_REEL: {"max_tokens": 6144},
+    PipelineStage.FINAL_REVIEW: {"max_tokens": 4096},
+}
 
 
 def resolve_stage_overrides(stage: PipelineStage) -> dict:

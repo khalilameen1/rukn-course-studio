@@ -315,38 +315,51 @@ class AnthropicProvider(AIProvider):
                         f"required schema: {last_error}\nReturn ONLY a valid tool call this time."
                     )
 
+            response = None
+            last_api_exc: BaseException | None = None
             enable_cache = bool(
                 getattr(settings, "anthropic_prompt_cache_enabled", False)
             )
-            # Default: never send cache_control (avoids invalid_request_error
-            # when prompt-caching beta is not enabled on the account/model).
             variants: list[str | list[dict]] = [
                 content if enable_cache else _strip_cache_control(content)
             ]
             if enable_cache:
                 variants.append(_strip_cache_control(content))
 
-            response = None
-            last_api_exc: BaseException | None = None
             for variant in variants:
-                try:
-                    response = self._client.messages.create(
-                        model=model_name,
-                        max_tokens=max_tokens,
-                        temperature=temperature,
-                        tools=[tool],
-                        tool_choice={"type": "tool", "name": tool_name},
-                        messages=[{"role": "user", "content": variant}],
-                    )
-                    last_api_exc = None
+                for api_attempt in range(2):
+                    try:
+                        response = self._client.messages.create(
+                            model=model_name,
+                            max_tokens=max_tokens,
+                            temperature=temperature,
+                            tools=[tool],
+                            tool_choice={"type": "tool", "name": tool_name},
+                            messages=[{"role": "user", "content": variant}],
+                        )
+                        last_api_exc = None
+                        break
+                    except Exception as api_exc:  # noqa: BLE001
+                        last_api_exc = api_exc
+                        hay = f"{type(api_exc).__name__} {api_exc}".lower()
+                        # Overload / transient — one short retry
+                        if api_attempt == 0 and (
+                            "529" in hay
+                            or "overloaded" in hay
+                            or "temporarily" in hay
+                        ):
+                            import time
+
+                            time.sleep(1.5)
+                            continue
+                        if enable_cache and _is_cache_control_rejected(api_exc):
+                            break  # try next variant without cache
+                        raise
+                if response is not None:
                     break
-                except Exception as api_exc:  # noqa: BLE001 — optional cache fallback
-                    last_api_exc = api_exc
-                    if enable_cache and _is_cache_control_rejected(api_exc):
-                        continue
-                    # Re-raise provider errors unchanged so rate_limit / quota
-                    # / timeout classifiers still work (do not stamp "invalid").
-                    raise
+                if not (enable_cache and last_api_exc and _is_cache_control_rejected(last_api_exc)):
+                    if last_api_exc is not None:
+                        raise last_api_exc
 
             if response is None:
                 raise AnthropicProviderError(

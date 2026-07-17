@@ -155,13 +155,25 @@ def course_readiness(course_id: int, session: Session = Depends(get_session)):
             None if provider_ready else f"Missing: {', '.join(missing)}"
         )
 
-    can_start = provider_ready and not clarity.get("blockers")
+    from app.generation.generation_preflight import generation_preflight
+
+    preflight = generation_preflight()
+    can_start = (
+        provider_ready
+        and preflight.get("ok", True)
+        and not clarity.get("blockers")
+    )
     blockers: list[str] = []
     if not provider_ready:
         blockers.append("AI provider is not configured.")
     blockers.extend(clarity.get("blockers") or [])
+    blockers.extend(preflight.get("blockers") or [])
+    # Dedupe while preserving order
+    seen_b: set[str] = set()
+    blockers = [b for b in blockers if not (b in seen_b or seen_b.add(b))]
     warnings: list[str] = list(warnings_preload)
     warnings.extend(clarity.get("warnings") or [])
+    warnings.extend(preflight.get("warnings") or [])
     if len(included) == 0:
         warnings.append(
             "No course sources are included for generation. You can still start; "
@@ -218,8 +230,14 @@ def course_readiness(course_id: int, session: Session = Depends(get_session)):
         "premium_recommended": bool(clarity.get("premium_recommended")),
         "mission_brief": mission,
         "provider": provider,
-        "provider_ready": provider_ready,
-        "provider_detail": provider_detail,
+        "provider_ready": provider_ready and bool(preflight.get("ok", True)),
+        "provider_detail": provider_detail
+        or (
+            "; ".join(preflight.get("blockers") or [])
+            if preflight.get("blockers")
+            else None
+        ),
+        "generation_preflight": preflight,
         "can_start": can_start,
         "blockers": blockers,
         "warnings": warnings,

@@ -130,7 +130,8 @@ class Settings(BaseSettings):
     # is the ONLY place a model name should ever be set - never hardcode a
     # model string anywhere else.
     anthropic_api_key: str | None = None
-    ai_model_name: str = "claude-sonnet-5"
+    # Must be set explicitly when AI_PROVIDER=anthropic (no silent wrong default).
+    ai_model_name: str = ""
 
     # How long to wait for a single Anthropic API call before giving up
     # (ANTHROPIC_REQUEST_TIMEOUT_SECONDS env var). Optional to set - a sane
@@ -170,6 +171,8 @@ class Settings(BaseSettings):
     # Soft debounce between *new* generation starts for the same course
     # (active-job reuse is still immediate). Env: GENERATE_MIN_INTERVAL_SECONDS
     generate_min_interval_seconds: float = 3.0
+    # When true, skip free-space preflight (tests / special hosts).
+    generation_skip_disk_check: bool = False
 
     # When True (default), only one generation job may be active globally
     # across all courses. Env: GENERATION_GLOBAL_LOCK

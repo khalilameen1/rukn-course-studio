@@ -56,8 +56,15 @@ def classify_provider_error(exc: Exception) -> str:
         or "401" in haystack
         or "permission" in haystack
         or "forbidden" in haystack
+        or "aiproviderconfigerror" in haystack
     ):
         return "provider_unavailable"
+    if "507" in haystack or ("disk" in haystack and "full" in haystack):
+        return "unknown"
+    if "empty or had no lessons" in haystack or "empty map" in haystack:
+        return "malformed_response"
+    if "abandoned" in haystack:
+        return "unknown"
     if "invalid" in haystack or "malformed" in haystack:
         return "malformed_response"
     if "lookuperror" in haystack or "is not among the defined enum" in haystack:

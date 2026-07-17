@@ -430,27 +430,34 @@ def run_generation(
 
     def flush(**job_fields) -> GenerationJob:
         nonlocal job
-        refresh_usage = bool(job_fields.pop("refresh_usage", False))
-        # Persist heartbeat whenever we checkpoint saved work.
-        if "last_saved_at" not in job_fields and any(
-            key in job_fields
-            for key in (
-                "course_map_json",
-                "completed_reels_json",
-                "completed_reels_count",
-                "partial_docx_path",
-                "output_docx_path",
-                "last_completed_step",
-            )
-        ):
-            job_fields["last_saved_at"] = _utcnow()
-        if refresh_usage:
-            job_fields["estimated_usage_summary"] = _estimated_usage_summary(session, job.id)
-        job = generation_jobs.update(session, job.id, log_json=logs, **job_fields)
-        if refresh_usage:
-            # Optional emergency hard cap (disabled unless AI_RUNAWAY_HARD_CAP_USD set).
-            check_runaway_hard_cap(session, job_id=job.id, course_id=course_id)
-        return job
+        from app.generation.safe_flush import safe_job_flush
+
+        def _raw_flush(**fields) -> GenerationJob:
+            nonlocal job
+            refresh_usage = bool(fields.pop("refresh_usage", False))
+            # Persist heartbeat whenever we checkpoint saved work.
+            if "last_saved_at" not in fields and any(
+                key in fields
+                for key in (
+                    "course_map_json",
+                    "completed_reels_json",
+                    "completed_reels_count",
+                    "partial_docx_path",
+                    "output_docx_path",
+                    "last_completed_step",
+                )
+            ):
+                fields["last_saved_at"] = _utcnow()
+            if refresh_usage:
+                fields["estimated_usage_summary"] = _estimated_usage_summary(
+                    session, job.id
+                )
+            job = generation_jobs.update(session, job.id, log_json=logs, **fields)
+            if refresh_usage:
+                check_runaway_hard_cap(session, job_id=job.id, course_id=course_id)
+            return job
+
+        return safe_job_flush(_raw_flush, **job_fields)
 
     def _abort_if_canceled() -> None:
         generation_cancellation.stop_job_if_cancel_requested(
@@ -654,39 +661,52 @@ def run_generation(
         )
 
         # GENSPARK-style synthesis gate: confirm/drop signals before map write.
-        from app.generation.research_synthesis import synthesize_research_for_write
+        # Never abort the run if synthesis itself fails.
+        try:
+            from app.generation.research_synthesis import synthesize_research_for_write
 
-        flush(
-            current_stage="synthesizing",
-            progress_percent=4,
-            last_progress_message="Synthesizing research",
-        )
-        synthesis = synthesize_research_for_write(
-            ledger=research_result.ledger,
-            web_excerpts=research_result.web_excerpts_text,
-            upload_memory=research_result.upload_memory,
-        )
-        if synthesis.get("internal_brief"):
-            web_source_excerpts_all = (
-                _web_facts_as_excerpts(
-                    [("Research synthesis", str(synthesis["internal_brief"])[:1200])]
-                )
-                + web_source_excerpts_all
+            flush(
+                current_stage="synthesizing",
+                progress_percent=4,
+                last_progress_message="Synthesizing research",
             )
-        flush(
-            research_synthesis_summary=synthesis.get("public_note"),
-            last_progress_message=str(
-                synthesis.get("public_note") or "Synthesizing research"
-            ),
-        )
-        logs.append(
-            {
-                "step": "research_synthesis",
-                "supported": synthesis.get("supported"),
-                "omitted": synthesis.get("omitted"),
-                "weak": synthesis.get("weak"),
-            }
-        )
+            synthesis = synthesize_research_for_write(
+                ledger=research_result.ledger,
+                web_excerpts=research_result.web_excerpts_text,
+                upload_memory=research_result.upload_memory,
+            )
+            if synthesis.get("internal_brief"):
+                web_source_excerpts_all = (
+                    _web_facts_as_excerpts(
+                        [("Research synthesis", str(synthesis["internal_brief"])[:1200])]
+                    )
+                    + web_source_excerpts_all
+                )
+            flush(
+                research_synthesis_summary=synthesis.get("public_note"),
+                last_progress_message=str(
+                    synthesis.get("public_note") or "Synthesizing research"
+                ),
+            )
+            logs.append(
+                {
+                    "step": "research_synthesis",
+                    "supported": synthesis.get("supported"),
+                    "omitted": synthesis.get("omitted"),
+                    "weak": synthesis.get("weak"),
+                }
+            )
+        except Exception as synth_exc:  # noqa: BLE001
+            logs.append(
+                {
+                    "step": "research_synthesis_failed",
+                    "message": redact_secrets(str(synth_exc)[:200]),
+                }
+            )
+            flush(
+                current_stage="building_map",
+                last_progress_message="Building course map",
+            )
 
         # Run snapshot metadata (§2 & §3) - immutable once written here,
         # never touched again for the rest of this run. See
@@ -739,7 +759,19 @@ def run_generation(
             }
         )
         map_sources = _map_source_excerpts(usable_sources, memory_telemetry) + web_source_excerpts_all
+        from app.generation.context_budget import (
+            trim_rules_context,
+            trim_source_excerpts_for_map,
+        )
+
+        map_sources = trim_source_excerpts_for_map(map_sources)
         map_rules = select_packed_rules_for_stage(rules_context, PipelineStage.BUILD_COURSE_MAP)
+        conflict_records = []
+        for raw in getattr(tool_store, "authority_conflicts", None) or []:
+            try:
+                conflict_records.append(ConflictRecord.model_validate(raw))
+            except Exception:
+                continue
         map_rules = {
             **map_rules,
             "rukn_target_market_runtime": compile_market_guidance(brief.target_market),
@@ -747,12 +779,10 @@ def run_generation(
             "rukn_educational_transform_runtime": compile_educational_transform_guidance(),
             "rukn_official_tool_docs_runtime": compile_official_tool_guidance(tool_store),
             "rukn_knowledge_priority_runtime": compile_knowledge_priority_guidance(
-                [
-                    ConflictRecord.model_validate(c)
-                    for c in (getattr(tool_store, "authority_conflicts", None) or [])
-                ]
+                conflict_records
             ),
         }
+        map_rules = trim_rules_context(map_rules)
         if tool_store and getattr(tool_store, "authority_conflicts", None):
             logs.append(
                 {
@@ -794,6 +824,11 @@ def run_generation(
             }
         )
         total_reels = sum(len(m.reels) for m in course_map.modules)
+        if not course_map.modules or total_reels < 1:
+            raise RuntimeError(
+                "Course map was empty or had no lessons after build — "
+                "invalid/unusable provider map response."
+            )
         from app.generation.research_synthesis import format_architecture_summary
 
         architecture = format_architecture_summary(
@@ -1187,81 +1222,100 @@ def run_generation(
         # --- Export the DOCX and record a CourseVersion ------------------
         existing_versions = course_versions.list(session, course_id=course_id)
         version_number = next_version_number([v.version_number for v in existing_versions])
-        docx_path = export_final_course_to_docx(final_course, course_id, version_number)
+        try:
+            docx_path = export_final_course_to_docx(
+                final_course, course_id, version_number
+            )
+        except OSError as export_os_exc:
+            raise RuntimeError(
+                f"Could not write Teleprompter DOCX (disk/permissions): {export_os_exc}"
+            ) from export_os_exc
 
-        # Output Scoring Gates (§4) - runs against the exact text the DOCX
-        # was rendered from (re-rendered in-memory here purely to extract
-        # plain text for scoring; `export_final_course_to_docx` above
-        # already did the real render+save - this never touches, re-saves,
-        # or mutates the exported file). Observational only: never blocks
-        # export, regardless of result - see app/generation/output_scoring.py
-        # module docstring for why.
-        score_report = score_final_course(
-            extract_plain_text(render_final_course_docx(final_course)),
-            rules_context,
-            source_texts=[
-                u.course_source.extracted_text
-                for u in usable_sources
-                if u.course_source.extracted_text
-            ],
-            evidence_ledger=coerce_json_dict(getattr(job, "evidence_ledger_json", None)),
-        )
-        # Close provenance loop against Final Master scripts (internal + public one-liner).
-        from app.generation.evidence_provenance import (
-            format_provenance_summary,
-            mark_evidence_used_in_scripts,
-        )
+        # Output Scoring + provenance — observational only; never fail the run
+        # after a successful DOCX write.
+        score_report: OutputScoreReport | None = None
+        try:
+            score_report = score_final_course(
+                extract_plain_text(render_final_course_docx(final_course)),
+                rules_context,
+                source_texts=[
+                    u.course_source.extracted_text
+                    for u in usable_sources
+                    if u.course_source.extracted_text
+                ],
+                evidence_ledger=coerce_json_dict(
+                    getattr(job, "evidence_ledger_json", None)
+                ),
+            )
+            from app.generation.evidence_provenance import (
+                format_provenance_summary,
+                mark_evidence_used_in_scripts,
+            )
 
-        script_texts = [
-            (r.script_text or "")
-            for m in final_course.modules
-            for r in m.reels
-        ]
-        ledger_model = mark_evidence_used_in_scripts(
-            coerce_json_dict(getattr(job, "evidence_ledger_json", None)),
-            script_texts,
-        )
-        provenance = format_provenance_summary(
-            upload_count=len(usable_sources),
-            web_gap_count=len(
-                (coerce_json_dict(getattr(job, "web_source_memory_json", None)) or {}).get(
-                    "gaps_researched"
-                )
-                or []
-            ),
-            ledger=ledger_model,
-            web_searches=int(getattr(job, "web_searches_count", 0) or 0),
-            cache_hits=int(getattr(job, "research_memory_reuse_count", 0) or 0),
-        )
-        from app.generation.research_synthesis import (
-            grounding_confidence_label,
-            improve_next_run_tip,
-        )
-        from app.generation.brief_clarity import score_brief_clarity
+            script_texts = [
+                (r.script_text or "")
+                for m in final_course.modules
+                for r in m.reels
+            ]
+            ledger_model = mark_evidence_used_in_scripts(
+                coerce_json_dict(getattr(job, "evidence_ledger_json", None)),
+                script_texts,
+            )
+            provenance = format_provenance_summary(
+                upload_count=len(usable_sources),
+                web_gap_count=len(
+                    (
+                        coerce_json_dict(getattr(job, "web_source_memory_json", None))
+                        or {}
+                    ).get("gaps_researched")
+                    or []
+                ),
+                ledger=ledger_model,
+                web_searches=int(getattr(job, "web_searches_count", 0) or 0),
+                cache_hits=int(getattr(job, "research_memory_reuse_count", 0) or 0),
+            )
+            from app.generation.research_synthesis import (
+                grounding_confidence_label,
+                improve_next_run_tip,
+            )
+            from app.generation.brief_clarity import score_brief_clarity
 
-        confidence = grounding_confidence_label(ledger_model)
-        clarity_now = score_brief_clarity(
-            title=course.title or "",
-            audience=course.audience or "",
-            outcome=course.outcome or "",
-            special_notes=course.special_notes,
-        )
-        tip = improve_next_run_tip(
-            grounding_confidence=confidence,
-            clarity_score=int(clarity_now.get("clarity_score") or 0),
-            web_searches=int(getattr(job, "web_searches_count", 0) or 0),
-            cache_hits=int(getattr(job, "research_memory_reuse_count", 0) or 0),
-        )
-        flush(
-            evidence_ledger_json=ledger_model.model_dump(mode="json"),
-            provenance_summary=provenance,
-            grounding_confidence=confidence,
-            improve_next_tip=tip,
-            research_memory_reuse_count=int(
-                getattr(job, "research_memory_reuse_count", 0) or 0
-            ),
-        )
-        logs.append({"step": "output_scoring", "teleprompter_clean": score_report.teleprompter_clean})
+            confidence = grounding_confidence_label(ledger_model)
+            clarity_now = score_brief_clarity(
+                title=course.title or "",
+                audience=course.audience or "",
+                outcome=course.outcome or "",
+                special_notes=course.special_notes,
+            )
+            tip = improve_next_run_tip(
+                grounding_confidence=confidence,
+                clarity_score=int(clarity_now.get("clarity_score") or 0),
+                web_searches=int(getattr(job, "web_searches_count", 0) or 0),
+                cache_hits=int(getattr(job, "research_memory_reuse_count", 0) or 0),
+            )
+            flush(
+                evidence_ledger_json=ledger_model.model_dump(mode="json"),
+                provenance_summary=provenance,
+                grounding_confidence=confidence,
+                improve_next_tip=tip,
+                research_memory_reuse_count=int(
+                    getattr(job, "research_memory_reuse_count", 0) or 0
+                ),
+                output_score_json=score_report.model_dump(mode="json"),
+            )
+            logs.append(
+                {
+                    "step": "output_scoring",
+                    "teleprompter_clean": score_report.teleprompter_clean,
+                }
+            )
+        except Exception as score_exc:  # noqa: BLE001
+            logs.append(
+                {
+                    "step": "output_scoring_failed",
+                    "message": redact_secrets(str(score_exc)[:200]),
+                }
+            )
 
         # V1: user sees Teleprompter DOCX only. summary/report stay coarse /
         # null — never critic checkpoints, bridge text, or review inventory.
@@ -1291,7 +1345,9 @@ def run_generation(
             progress_percent=PROGRESS_AFTER_DOCX_EXPORT,
             output_docx_path=str(docx_path),
             last_completed_step="export_docx",
-            output_score_json=score_report.model_dump(mode="json"),
+            output_score_json=(
+                score_report.model_dump(mode="json") if score_report else None
+            ),
         )
 
         # --- Step 15: mark completed --------------------------------------

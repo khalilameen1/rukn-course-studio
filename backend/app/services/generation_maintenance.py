@@ -28,15 +28,23 @@ def release_stale_active_jobs(session: Session, *, max_age_minutes: float = 90.0
 
     Heartbeat = max(updated_at, last_saved_at). Threshold is long on purpose:
     a single premium LLM call can exceed 15 minutes.
+
+    Also: jobs stuck in `queued`/`pending` with no progress for a shorter
+    window (boot orphans) are released after max(15, max_age/3) minutes.
     """
-    cutoff = datetime.now(timezone.utc) - timedelta(minutes=max_age_minutes)
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(minutes=max_age_minutes)
+    orphan_cutoff = now - timedelta(minutes=max(15.0, max_age_minutes / 3.0))
     statement = select(GenerationJob).where(
         GenerationJob.status.in_(tuple(ACTIVE_LOCK_STATUSES)),
     )
     released = 0
     for job in list(session.exec(statement)):
         heartbeat = max(_as_utc(job.updated_at), _as_utc(job.last_saved_at))
-        if heartbeat >= cutoff:
+        stage = (job.current_stage or "").lower()
+        is_orphan_queue = stage in {"", "queued", "pending"} and not job.course_map_json
+        limit = orphan_cutoff if is_orphan_queue else cutoff
+        if heartbeat >= limit:
             continue
         generation_jobs.update(
             session,
