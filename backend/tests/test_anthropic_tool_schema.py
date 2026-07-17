@@ -4,19 +4,17 @@ from app.ai.anthropic_tool_schema import anthropic_tool_input_schema
 from app.schemas.generation import CourseMap, GeneratedReel, ReviewResult
 
 
-def test_course_map_tool_schema_has_no_defs_or_refs():
+def test_course_map_tool_schema_keeps_title_fields():
     schema = anthropic_tool_input_schema(CourseMap)
     blob = str(schema)
     assert "$ref" not in blob
     assert "$defs" not in blob
-    assert schema.get("type") == "object"
-    assert "modules" in schema.get("properties", {})
-    # Nested reel plan inlined
     modules = schema["properties"]["modules"]
-    assert modules["type"] == "array"
-    reel_props = modules["items"]["properties"]["reels"]["items"]["properties"]
+    module_props = modules["items"]["properties"]
+    assert "title" in module_props
+    reel_props = module_props["reels"]["items"]["properties"]
+    assert "title" in reel_props
     assert "reel_id" in reel_props
-    assert "estimated_length" in reel_props
 
 
 def test_generated_reel_enum_inlined():

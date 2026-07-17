@@ -7,7 +7,12 @@ ANTHROPIC_API_KEY and no network access.
 
 import pytest
 
-from app.ai.anthropic_provider import AnthropicProvider, AnthropicProviderError
+from app.ai.anthropic_provider import (
+    AnthropicProvider,
+    AnthropicProviderError,
+    _create_message_kwargs,
+    _model_rejects_custom_sampling,
+)
 from app.prompts.prompt_registry import PipelineStage, PROMPT_SPECS, load_prompt
 from app.ai.provider import (
     BuildCourseMapInput,
@@ -88,6 +93,33 @@ def _provider_with_responses(responses: list[FakeResponse]) -> AnthropicProvider
 
 
 VALID_REVIEW_RESULT = {"scope": "reel", "status": "pass", "actions": []}
+
+
+def test_sonnet_5_omits_temperature_and_disables_thinking():
+    assert _model_rejects_custom_sampling("claude-sonnet-5")
+    kwargs = _create_message_kwargs(
+        model_name="claude-sonnet-5",
+        max_tokens=1024,
+        temperature=0.45,
+        tools=[{"name": "x", "input_schema": {"type": "object", "properties": {}}}],
+        tool_name="x",
+        content="hi",
+    )
+    assert "temperature" not in kwargs
+    assert kwargs.get("thinking") == {"type": "disabled"}
+
+
+def test_older_models_still_pass_temperature():
+    kwargs = _create_message_kwargs(
+        model_name="claude-sonnet-4-5-20250929",
+        max_tokens=1024,
+        temperature=0.45,
+        tools=[{"name": "x", "input_schema": {"type": "object", "properties": {}}}],
+        tool_name="x",
+        content="hi",
+    )
+    assert kwargs.get("temperature") == 0.45
+    assert "thinking" not in kwargs
 
 
 def test_model_name_defaults_to_settings_single_source_of_truth(monkeypatch):

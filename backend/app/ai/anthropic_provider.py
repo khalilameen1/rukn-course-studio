@@ -86,6 +86,46 @@ def _strip_cache_control(content: str | list[dict]) -> str | list[dict]:
     return cleaned
 
 
+def _model_rejects_custom_sampling(model_name: str) -> bool:
+    """Claude Sonnet 5 / Opus 4.7+ / Fable reject non-default temperature (HTTP 400)."""
+    m = (model_name or "").lower()
+    return any(
+        token in m
+        for token in (
+            "claude-sonnet-5",
+            "claude-opus-4-7",
+            "claude-opus-4-8",
+            "claude-fable",
+        )
+    )
+
+
+def _create_message_kwargs(
+    *,
+    model_name: str,
+    max_tokens: int,
+    temperature: float,
+    tools: list[dict],
+    tool_name: str,
+    content: str | list[dict],
+) -> dict:
+    """Build messages.create kwargs compatible with the target model."""
+    kwargs: dict = {
+        "model": model_name,
+        "max_tokens": max_tokens,
+        "tools": tools,
+        "tool_choice": {"type": "tool", "name": tool_name},
+        "messages": [{"role": "user", "content": content}],
+    }
+    if _model_rejects_custom_sampling(model_name):
+        # Omit temperature/top_p/top_k entirely (Sonnet 5 breaking change).
+        # Disable adaptive thinking for forced structured tool output.
+        kwargs["thinking"] = {"type": "disabled"}
+    else:
+        kwargs["temperature"] = temperature
+    return kwargs
+
+
 def _is_cache_control_rejected(exc: BaseException) -> bool:
     text = f"{type(exc).__name__} {exc}".lower()
     return (
@@ -94,6 +134,20 @@ def _is_cache_control_rejected(exc: BaseException) -> bool:
         or "prompt-caching" in text
         or ("invalid_request" in text and "cache" in text)
     )
+
+
+def _public_api_hint(exc: BaseException) -> str:
+    low = str(exc).lower()
+    if "temperature" in low or "top_p" in low or "top_k" in low:
+        return (
+            "This Claude model rejects custom temperature (Sonnet 5). "
+            "Redeploy the latest backend and retry."
+        )
+    if "tool" in low or "input_schema" in low:
+        return "Anthropic rejected the tool schema. Redeploy the latest backend and retry."
+    if "invalid_request" in low:
+        return "Anthropic invalid_request — verify AI_MODEL_NAME=claude-sonnet-5."
+    return "Anthropic API rejected the request."
 
 
 class AnthropicProvider(AIProvider):
@@ -336,12 +390,14 @@ class AnthropicProvider(AIProvider):
                 for api_attempt in range(2):
                     try:
                         response = self._client.messages.create(
-                            model=model_name,
-                            max_tokens=max_tokens,
-                            temperature=temperature,
-                            tools=[tool],
-                            tool_choice={"type": "tool", "name": tool_name},
-                            messages=[{"role": "user", "content": variant}],
+                            **_create_message_kwargs(
+                                model_name=model_name,
+                                max_tokens=max_tokens,
+                                temperature=temperature,
+                                tools=[tool],
+                                tool_name=tool_name,
+                                content=variant,
+                            )
                         )
                         last_api_exc = None
                         break
@@ -360,16 +416,31 @@ class AnthropicProvider(AIProvider):
                             continue
                         if enable_cache and _is_cache_control_rejected(api_exc):
                             break  # try next variant without cache
+                        # Surface invalid_request clearly (e.g. Sonnet 5 + temperature).
+                        if "invalid" in hay or "badrequest" in hay:
+                            raise AnthropicProviderError(
+                                f"Anthropic API rejected the request (invalid/unusable): {api_exc}",
+                                public_hint=_public_api_hint(api_exc),
+                            ) from api_exc
                         raise
                 if response is not None:
                     break
                 if not (enable_cache and last_api_exc and _is_cache_control_rejected(last_api_exc)):
                     if last_api_exc is not None:
+                        hay = f"{type(last_api_exc).__name__} {last_api_exc}".lower()
+                        if "invalid" in hay or "badrequest" in hay:
+                            raise AnthropicProviderError(
+                                f"Anthropic API rejected the request (invalid/unusable): {last_api_exc}",
+                                public_hint=_public_api_hint(last_api_exc),
+                            ) from last_api_exc
                         raise last_api_exc
 
             if response is None:
                 raise AnthropicProviderError(
-                    f"Anthropic API rejected the request (invalid/unusable): {last_api_exc}"
+                    f"Anthropic API rejected the request (invalid/unusable): {last_api_exc}",
+                    public_hint=_public_api_hint(last_api_exc)
+                    if last_api_exc
+                    else "Anthropic API rejected the request.",
                 ) from last_api_exc
 
             tool_use = next(
