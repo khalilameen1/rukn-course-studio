@@ -74,6 +74,7 @@ from app.generation.budget_guard import (
 from app.generation import cancellation as generation_cancellation
 from app.generation.cancellation import GenerationCanceled
 from app.generation.errors import classify_provider_error, error_message_for
+from app.services.json_coerce import coerce_json_dict, coerce_json_list
 from app.security.secret_redaction import redact_secrets
 from app.generation.output_scoring import OutputScoreReport, score_final_course
 from app.generation.pricing import estimate_cost_usd
@@ -508,7 +509,7 @@ def run_generation(
                 memory_items=memory_items,
                 mode=research_mode,
                 prefer_fake=prefer_fake,
-                cached_web_memory=getattr(course, "web_source_memory_json", None),
+                cached_web_memory=coerce_json_dict(getattr(course, "web_source_memory_json", None)),
                 course_id=course.id,
             )
             memory_telemetry.web_searches_count = research_result.web_searches_count
@@ -585,7 +586,7 @@ def run_generation(
                 memory_items=memory_items,
                 mode=WebResearchMode.DISABLED,
                 prefer_fake=True,
-                cached_web_memory=getattr(course, "web_source_memory_json", None),
+                cached_web_memory=coerce_json_dict(getattr(course, "web_source_memory_json", None)),
             )
             research_result.ledger = mark_research_failure(
                 research_result.ledger, str(research_exc)
@@ -1287,6 +1288,8 @@ def run_generation(
             category = "runaway_guard"
         else:
             user_error = error_message_for(category, has_saved_work=has_saved_work)
+            if category == "unknown":
+                user_error = f"{user_error} ({type(exc).__name__})"
         flush(
             status=status,
             current_stage="partial" if has_saved_work else "failed",
@@ -1353,7 +1356,7 @@ def _load_active_rules(session: Session) -> dict[str, str]:
 
 def _usable_memory(usable: UsableSource) -> dict | None:
     if usable.analysis and usable.analysis.source_memory_json:
-        return usable.analysis.source_memory_json
+        return coerce_json_dict(usable.analysis.source_memory_json)
     return None
 
 
@@ -1411,17 +1414,22 @@ def _load_usable_sources_with_memory(
         needs_promise = mixed or is_transcript
 
         promise_ok = True
-        if needs_promise and analysis and analysis.source_memory_json:
-            existing_fp = (analysis.source_memory_json or {}).get("promise_fingerprint")
-            md = (analysis.source_memory_json or {}).get("mixed_draft_memory") or {}
+        memory_dict = (
+            coerce_json_dict(analysis.source_memory_json)
+            if analysis and analysis.source_memory_json
+            else None
+        )
+        if needs_promise and memory_dict:
+            existing_fp = memory_dict.get("promise_fingerprint")
+            md = coerce_json_dict(memory_dict.get("mixed_draft_memory")) or {}
             if not existing_fp:
-                existing_fp = (md or {}).get("promise_fingerprint")
+                existing_fp = md.get("promise_fingerprint")
             promise_ok = existing_fp == promise_fp
 
         if (
             analysis
-            and analysis.source_memory_json
-            and memory_matches_hash(analysis.source_memory_json, text)
+            and memory_dict
+            and memory_matches_hash(memory_dict, text)
             and promise_ok
         ):
             tele.reused_source_memory_count += 1
@@ -1438,8 +1446,8 @@ def _load_usable_sources_with_memory(
             original_filename=source.original_filename,
             mime_type=source.mime_type,
             source_origin=(
-                (analysis.source_memory_json or {}).get("declared_source_origin")
-                if analysis and analysis.source_memory_json
+                (memory_dict or {}).get("declared_source_origin")
+                if memory_dict
                 else None
             ),
         )
@@ -1450,9 +1458,9 @@ def _load_usable_sources_with_memory(
             memory = build_source_memory_payload(
                 **memory_kwargs,
                 summary=analysis.source_summary,
-                chunks=analysis.chunks_json,
-                key_points=analysis.key_points_json,
-                avoid_points=analysis.avoid_points_json,
+                chunks=coerce_json_list(analysis.chunks_json),
+                key_points=coerce_json_list(analysis.key_points_json),
+                avoid_points=coerce_json_list(analysis.avoid_points_json),
             )
             if needs_promise:
                 memory["promise_fingerprint"] = promise_fp
@@ -1474,9 +1482,9 @@ def _load_usable_sources_with_memory(
             memory = build_source_memory_payload(
                 **memory_kwargs,
                 summary=analysis.source_summary,
-                chunks=analysis.chunks_json,
-                key_points=analysis.key_points_json,
-                avoid_points=analysis.avoid_points_json,
+                chunks=coerce_json_list(analysis.chunks_json),
+                key_points=coerce_json_list(analysis.key_points_json),
+                avoid_points=coerce_json_list(analysis.avoid_points_json),
             )
             if needs_promise:
                 memory["promise_fingerprint"] = promise_fp

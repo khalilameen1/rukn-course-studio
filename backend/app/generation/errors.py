@@ -48,7 +48,19 @@ def classify_provider_error(exc: Exception) -> str:
         return "timeout"
     if "connection" in haystack or "unavailable" in haystack or "503" in haystack:
         return "provider_unavailable"
+    if (
+        "api key" in haystack
+        or "apikey" in haystack
+        or "authentication" in haystack
+        or "unauthorized" in haystack
+        or "401" in haystack
+        or "permission" in haystack
+        or "forbidden" in haystack
+    ):
+        return "provider_unavailable"
     if "invalid" in haystack or "malformed" in haystack:
+        return "malformed_response"
+    if "lookuperror" in haystack or "is not among the defined enum" in haystack:
         return "malformed_response"
     if (
         "context length" in haystack

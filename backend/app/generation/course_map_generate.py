@@ -34,6 +34,7 @@ from app.models.course import Course
 from app.models.enums import GenerationQualityMode, WebResearchMode
 from app.prompts.prompt_registry import PipelineStage
 from app.schemas.generation import CourseMap
+from app.services.json_coerce import coerce_json_dict
 
 
 def format_course_map_text(course_map: CourseMap) -> str:
@@ -111,7 +112,9 @@ def generate_and_save_course_map(
         memory_items=memory_items,
         mode=research_mode,
         prefer_fake=prefer_fake,
-        cached_web_memory=getattr(course, "web_source_memory_json", None),
+        cached_web_memory=coerce_json_dict(
+            getattr(course, "web_source_memory_json", None)
+        ),
         course_id=course.id,
     )
     from app.generation.official_tool_docs import (
