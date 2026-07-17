@@ -43,11 +43,15 @@ def init_db() -> None:
 
     SQLModel.metadata.create_all(engine)
     _ensure_generation_job_columns()
-    _backfill_generation_job_json_defaults()
     _ensure_course_columns()
     _ensure_source_analysis_columns()
     _ensure_course_source_columns()
     _ensure_ai_usage_events_table()
+    # After ADD COLUMN helpers: promote any leftover TEXT `*_json` columns on
+    # Postgres to real JSON, then fill NULL list defaults. Order matters —
+    # promote before backfill so cast/`::json` paths are consistent.
+    _promote_json_text_columns()
+    _backfill_generation_job_json_defaults()
     _widen_str_enum_columns()
     _normalize_str_enum_storage()
 
@@ -171,8 +175,63 @@ def _ensure_source_analysis_columns() -> None:
             if name in existing:
                 continue
             conn.execute(
-                text(f"ALTER TABLE source_analyses ADD COLUMN {name} {sql_type}")
+                text(
+                    f"ALTER TABLE source_analyses ADD COLUMN "
+                    f"{name} {_json_safe_type(name, sql_type)}"
+                )
             )
+
+
+def _promote_json_text_columns() -> None:
+    """Convert legacy TEXT/VARCHAR `*_json` columns to JSON on Postgres.
+
+    Early ensure-helpers added JSON fields as TEXT. Stock SQLAlchemy JSON then
+    skips deserialization on Postgres → ORM returns strings → Generate/upload
+    crashes. TypeDecorators in app/db_json.py paper over reads; this promotes
+    storage so the driver + indexes behave correctly going forward.
+    """
+    if not _is_postgres():
+        return
+
+    from sqlalchemy import inspect, text
+
+    try:
+        inspector = inspect(engine)
+        tables = inspector.get_table_names()
+    except Exception:
+        return
+
+    with engine.begin() as conn:
+        for table in tables:
+            try:
+                columns = inspector.get_columns(table)
+            except Exception:
+                continue
+            for col in columns:
+                name = col.get("name") or ""
+                if not name.endswith("_json"):
+                    continue
+                type_name = type(col.get("type")).__name__.lower()
+                # Already JSON/JSONB — leave alone.
+                if "json" in type_name:
+                    continue
+                # TEXT / VARCHAR / CHAR leftovers from ADD COLUMN helpers.
+                using = (
+                    f"CASE "
+                    f"WHEN {name} IS NULL THEN NULL "
+                    f"WHEN btrim({name}::text) = '' THEN NULL "
+                    f"ELSE {name}::json END"
+                )
+                try:
+                    conn.execute(
+                        text(
+                            f"ALTER TABLE {table} ALTER COLUMN {name} "
+                            f"TYPE JSON USING {using}"
+                        )
+                    )
+                except Exception:
+                    # Best-effort: bad rows / permissions must not block startup.
+                    pass
 
 
 def _ensure_generation_job_columns() -> None:

@@ -1,10 +1,11 @@
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from sqlalchemy import JSON, Column
+from sqlalchemy import Column
 from sqlmodel import Field, SQLModel
 
 from app.db_enums import sa_str_enum
+from app.db_json import sa_json_object
 from app.models.enums import (
     ExplanationLevel,
     GenerationPreset,
@@ -97,15 +98,15 @@ class Course(SQLModel, table=True):
     )
     # Persistent Web Source Memory cache across generation jobs (internal).
     web_source_memory_json: Optional[dict[str, Any]] = Field(
-        default=None, sa_column=Column(JSON, nullable=True)
+        default=None, sa_column=Column(sa_json_object(), nullable=True)
     )
     # Official Tool Documentation Gate memory (internal) — tools + docs notes.
     official_tool_memory_json: Optional[dict[str, Any]] = Field(
-        default=None, sa_column=Column(JSON, nullable=True)
+        default=None, sa_column=Column(sa_json_object(), nullable=True)
     )
     status: str = Field(default="draft")
     active_rules_snapshot_json: Optional[dict[str, Any]] = Field(
-        default=None, sa_column=Column(JSON, nullable=True)
+        default=None, sa_column=Column(sa_json_object(), nullable=True)
     )
     created_at: datetime = Field(default_factory=_utcnow)
     updated_at: datetime = Field(default_factory=_utcnow)

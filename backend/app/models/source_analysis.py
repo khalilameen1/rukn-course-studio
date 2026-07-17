@@ -1,8 +1,10 @@
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from sqlalchemy import JSON, Column
+from sqlalchemy import Column
 from sqlmodel import Field, SQLModel
+
+from app.db_json import sa_json_array, sa_json_object
 
 
 def _utcnow() -> datetime:
@@ -22,19 +24,19 @@ class SourceAnalysis(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     source_id: int = Field(foreign_key="course_sources.id", index=True, unique=True)
     chunks_json: list[dict[str, Any]] = Field(
-        default_factory=list, sa_column=Column(JSON, nullable=False)
+        default_factory=list, sa_column=Column(sa_json_array(), nullable=False)
     )
     source_summary: str
     key_points_json: list[str] = Field(
-        default_factory=list, sa_column=Column(JSON, nullable=False)
+        default_factory=list, sa_column=Column(sa_json_array(), nullable=False)
     )
     avoid_points_json: list[str] = Field(
-        default_factory=list, sa_column=Column(JSON, nullable=False)
+        default_factory=list, sa_column=Column(sa_json_array(), nullable=False)
     )
     # Persistent Source Memory (facts/examples/terminology/summary) — built once.
     # Generation prompts use this; full CourseSource.extracted_text is not resent.
     source_memory_json: Optional[dict[str, Any]] = Field(
-        default=None, sa_column=Column(JSON, nullable=True)
+        default=None, sa_column=Column(sa_json_object(), nullable=True)
     )
     # Content hash of extracted_text at memory-build time (fast skip check).
     source_hash: Optional[str] = Field(default=None, index=True)

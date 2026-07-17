@@ -9,8 +9,10 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from sqlalchemy import JSON, Column
+from sqlalchemy import Column
 from sqlmodel import Field, SQLModel
+
+from app.db_json import sa_json_object
 
 
 def _utcnow() -> datetime:
@@ -31,5 +33,5 @@ class AuditLog(SQLModel, table=True):
     success: bool = Field(default=True)
     error_message: Optional[str] = None
     details_json: Optional[dict[str, Any]] = Field(
-        default=None, sa_column=Column(JSON, nullable=True)
+        default=None, sa_column=Column(sa_json_object(), nullable=True)
     )

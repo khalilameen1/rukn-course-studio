@@ -1,10 +1,11 @@
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from sqlalchemy import JSON, Column, DateTime
+from sqlalchemy import Column, DateTime
 from sqlmodel import Field, SQLModel
 
 from app.db_enums import sa_str_enum
+from app.db_json import sa_json_array, sa_json_object
 from app.models.enums import GenerationQualityMode, JobStatus, WebResearchMode
 
 
@@ -41,7 +42,7 @@ class GenerationJob(SQLModel, table=True):
     current_stage: Optional[str] = None
     progress_percent: int = Field(default=0)
     log_json: list[dict[str, Any]] = Field(
-        default_factory=list, sa_column=Column(JSON, nullable=False)
+        default_factory=list, sa_column=Column(sa_json_array(), nullable=False)
     )
     output_docx_path: Optional[str] = None
     error_message: Optional[str] = None
@@ -95,13 +96,13 @@ class GenerationJob(SQLModel, table=True):
     # Internal-only research artifacts (admin/debug). Never in GenerationJobRead /
     # DOCX / script_text.
     source_memory_json: Optional[dict[str, Any]] = Field(
-        default=None, sa_column=Column(JSON, nullable=True)
+        default=None, sa_column=Column(sa_json_object(), nullable=True)
     )
     web_source_memory_json: Optional[dict[str, Any]] = Field(
-        default=None, sa_column=Column(JSON, nullable=True)
+        default=None, sa_column=Column(sa_json_object(), nullable=True)
     )
     evidence_ledger_json: Optional[dict[str, Any]] = Field(
-        default=None, sa_column=Column(JSON, nullable=True)
+        default=None, sa_column=Column(sa_json_object(), nullable=True)
     )
     # Source / web memory telemetry for this run (internal — not DOCX).
     source_tokens_used: int = Field(default=0)
@@ -111,10 +112,10 @@ class GenerationJob(SQLModel, table=True):
     research_memory_reuse_count: int = Field(default=0)
     # Coarse waste-warning codes for the simple usage panel (never DOCX).
     waste_warnings_json: list[str] = Field(
-        default_factory=list, sa_column=Column(JSON, nullable=False)
+        default_factory=list, sa_column=Column(sa_json_array(), nullable=False)
     )
     usage_by_stage_json: Optional[dict[str, Any]] = Field(
-        default=None, sa_column=Column(JSON, nullable=True)
+        default=None, sa_column=Column(sa_json_object(), nullable=True)
     )
     # Internal-only persisted pipeline state, written incrementally as
     # each piece completes (not batched at the end) - this is what makes a
@@ -123,18 +124,18 @@ class GenerationJob(SQLModel, table=True):
     # to the end user - see app/schemas/generation_job.py, same exclusion
     # principle as `log_json`.
     course_map_json: Optional[dict[str, Any]] = Field(
-        default=None, sa_column=Column(JSON, nullable=True)
+        default=None, sa_column=Column(sa_json_object(), nullable=True)
     )
     completed_reels_json: list[dict[str, Any]] = Field(
-        default_factory=list, sa_column=Column(JSON, nullable=False)
+        default_factory=list, sa_column=Column(sa_json_array(), nullable=False)
     )
 
     # --- AI-ops / quality-control hardening ----------------------------
     run_snapshot_json: Optional[dict[str, Any]] = Field(
-        default=None, sa_column=Column(JSON, nullable=True)
+        default=None, sa_column=Column(sa_json_object(), nullable=True)
     )
     output_score_json: Optional[dict[str, Any]] = Field(
-        default=None, sa_column=Column(JSON, nullable=True)
+        default=None, sa_column=Column(sa_json_object(), nullable=True)
     )
     budget_warning: Optional[str] = None
 
