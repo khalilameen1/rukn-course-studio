@@ -242,6 +242,7 @@ _FATAL_REASON_CODES = frozenset(
         "source_hallucination",
         "factual_error",
         "critic_fatal",
+        "empty_script",
     }
 )
 _FATAL_PREFIXES = ("fatal", "factual")
@@ -252,6 +253,7 @@ _SERIOUS_REASON_CODES = frozenset(
         "source_hallucination",
         "factual_error",
         "critic_fatal",
+        "empty_script",
         "repetition",
         "repeated_opening",
         "overhyped_hook",
@@ -872,8 +874,11 @@ def run_generation(
                     quality_mode=quality_mode,
                     target_market=brief.target_market,
                 )
-                # Final script only — strip accidental research leaks before persist.
+                # Final script only — strip accidental research / meta leaks before persist.
                 cleaned = strip_research_leaks_from_script(generated.script_text)
+                from app.generation.teleprompter_checks import strip_meta_instruction_lines
+
+                cleaned = strip_meta_instruction_lines(cleaned)
                 if cleaned != generated.script_text:
                     generated = generated.model_copy(update={"script_text": cleaned})
                 if needs_review:
@@ -1718,6 +1723,20 @@ def _local_review_single_reel(
     """
     actions: list[ReviewAction] = []
 
+    script = (generated.script_text or "").strip()
+    if not script:
+        actions.append(
+            ReviewAction(
+                action=ReviewActionType.REWRITE,
+                target_id=generated.reel_id,
+                reason_code="empty_script",
+                instruction=(
+                    f"Reel '{generated.title}' has no spoken script — write a full "
+                    "Final Master teleprompter script for this lesson."
+                ),
+            )
+        )
+
     for match in check_forbidden_phrases(generated.script_text, rules_context):
         instruction = f"Remove the forbidden phrase '{match.phrase}'."
         if match.replacement_hint:
@@ -2141,9 +2160,11 @@ def _write_and_review_reel(
         ]
 
     # --- 3. Final Master rewrite(s) — max MAX_FINAL_REBUILD_ATTEMPTS -------
+    # Never ship the first draft as the product: always attempt Final Master.
     master = draft
     needs_review = False
     rebuilds = 0
+    wrote_final_master = False
     retry_guard = IdenticalRetryGuard()
     while rebuilds < MAX_FINAL_REBUILD_ATTEMPTS:
         # Never retry the exact same failed prompt input.
@@ -2154,6 +2175,7 @@ def _write_and_review_reel(
             break
         progress(f"{PROGRESS_REBUILD_MASTER} for lesson {lesson_n}/{total_reels}")
         master = _write(phase="final_master", feedback=feedback)
+        wrote_final_master = True
         write_count += 1
         rebuilds += 1
 
@@ -2194,11 +2216,21 @@ def _write_and_review_reel(
         feedback = [a.instruction for a in serious_actions]
         draft = master  # fingerprint next attempt against latest script
 
+    if not wrote_final_master:
+        # Guard was blocked before any Final Master write — force one pass so
+        # the product is never the unreviewed first draft.
+        progress(f"{PROGRESS_REBUILD_MASTER} for lesson {lesson_n}/{total_reels}")
+        master = _write(phase="final_master", feedback=feedback)
+        wrote_final_master = True
+        write_count += 1
+        needs_review = True
+
     if needs_review:
         master = master.model_copy(update={"self_check_status": ReviewStatus.NEEDS_REVISION})
 
     cleaned = strip_research_leaks_from_script(master.script_text)
     from app.generation.source_isolation import strip_untrusted_fences_for_docx
+    from app.generation.teleprompter_checks import strip_meta_instruction_lines
 
     cleaned = strip_untrusted_fences_for_docx(cleaned)
     cleaned = rewrite_script_market_evergreen(cleaned, target_market=target_market)
@@ -2208,8 +2240,15 @@ def _write_and_review_reel(
     )
     cleaned, _claim_conflict = remove_unsupported_weak_claim(cleaned, source_quality="weak")
     cleaned = strip_conflict_notes_from_script(cleaned)
+    cleaned = strip_meta_instruction_lines(cleaned)
     if cleaned != master.script_text:
         master = master.model_copy(update={"script_text": cleaned})
+
+    if not (master.script_text or "").strip():
+        raise RuntimeError(
+            f"Lesson '{reel_plan.title}' ({reel_plan.reel_id}) produced an empty "
+            "Final Master script — refusing to save unusable content."
+        )
 
     return master, write_count, caught_locally, needs_review
 

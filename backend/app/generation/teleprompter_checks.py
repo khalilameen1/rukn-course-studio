@@ -91,6 +91,8 @@ TELEPROMPTER_FORBIDDEN_SUBSTRINGS: tuple[str, ...] = (
     "mentor advised",
     "critic said",
     "student asked",
+    "بعد المراجعة",
+    "بعد المراجعه",
     "market analysis",
     "evergreen review",
     "adapted from",
@@ -169,6 +171,58 @@ def find_forbidden_substrings(text: str) -> list[str]:
     insensitively) in `text` - empty list means clean."""
     lowered = (text or "").lower()
     return [substring for substring in TELEPROMPTER_FORBIDDEN_SUBSTRINGS if substring in lowered]
+
+
+# Lines that look like AI meta / review leakage in spoken script (Arabic + EN).
+_META_LINE_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
+    re.compile(p, re.IGNORECASE)
+    for p in (
+        r"بعد المراجع",
+        r"\bcritic said\b",
+        r"\bmentor advised\b",
+        r"\bstudent asked\b",
+        r"\bneeds confirmation\b",
+        r"\baccording to (source|wikipedia|official)\b",
+        r"\bresearch note\b",
+        r"\bnote to instructor\b",
+        r"\[pause\]|\(pause\)|\[breath\]|\(breath\)",
+    )
+)
+
+
+def strip_meta_instruction_lines(script_text: str) -> str:
+    """Drop whole lines that are meta/review leakage — keep spoken content.
+
+    AI models commonly paste review feedback into `script_text`. Scoring
+    alone does not remove them from the DOCX; this is the last scrub before
+    persist/export.
+    """
+    if not script_text:
+        return script_text
+    kept: list[str] = []
+    for line in script_text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            kept.append("")
+            continue
+        if any(p.search(stripped) for p in _META_LINE_PATTERNS):
+            continue
+        # Also drop lines that are mostly a known forbidden substring.
+        low = stripped.lower()
+        if any(s in low for s in (
+            "specialist_critic",
+            "mentor_review",
+            "student_review",
+            "needs_confirmation",
+            "production pack",
+            "asset brief",
+        )):
+            continue
+        kept.append(line.rstrip())
+    # Collapse excessive blank lines created by removals.
+    text = "\n".join(kept)
+    text = re.sub(r"\n{3,}", "\n\n", text).strip()
+    return text
 
 
 def module_lesson_structure_present(text: str) -> bool:

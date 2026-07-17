@@ -205,8 +205,9 @@ class FakeProvider(AIProvider):
             if any("forbidden" in (f or "").lower() for f in input.previous_review_feedback):
                 opener = f"خلّينا نثبت فرق عملي في {input.reel.title} من غير حشو."
             elif input.previous_review_feedback:
+                # Absorb feedback silently — never narrate that a review happened.
                 body = list(body) + [
-                    "بعد المراجعة: وضّحنا الخطوة العملية وسدّينا أي قفزة مش واضحة."
+                    "وضّحنا الخطوة العملية وسدّينا أي قفزة مش واضحة للطالب.",
                 ]
             closer = {
                 "no_loop_needed": "كده النقطة اكتملت، ومفيش لازمة نلفّ عليها.",

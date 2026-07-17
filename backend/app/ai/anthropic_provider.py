@@ -237,6 +237,13 @@ class AnthropicProvider(AIProvider):
                 last_error = str(exc)
                 continue
 
+            # AI models often return schema-valid but empty script_text.
+            if schema is GeneratedReel:
+                script = (getattr(result, "script_text", None) or "").strip()
+                if not script:
+                    last_error = "GeneratedReel.script_text is empty"
+                    continue
+
             # Captured only on the attempt that actually succeeded - see
             # AI Usage Center (§5). `response.usage` attributes are only
             # present on a real Anthropic SDK response; `getattr(...,
