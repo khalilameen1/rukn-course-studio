@@ -1487,6 +1487,9 @@ def run_generation(
             user_error = error_message_for(category, has_saved_work=has_saved_work)
             if category == "unknown":
                 user_error = f"{user_error} ({type(exc).__name__})"
+            hint = getattr(exc, "public_hint", None)
+            if category == "malformed_response" and isinstance(hint, str) and hint.strip():
+                user_error = f"{user_error} — {hint.strip()[:180]}"
         flush(
             status=status,
             current_stage="partial" if has_saved_work else "failed",

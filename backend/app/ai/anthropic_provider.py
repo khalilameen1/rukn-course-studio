@@ -49,8 +49,8 @@ from app.generation.presets import (
 from app.prompts.prompt_registry import PipelineStage, get_prompt_spec, load_prompt
 from app.schemas.generation import CourseMap, FinalCourse, GeneratedReel, ReviewResult
 
-# "Retry once if JSON validation fails" -> 1 initial attempt + 1 retry.
-MAX_ATTEMPTS = 2
+# "Retry if JSON validation fails" -> initial + retries.
+MAX_ATTEMPTS = 3
 
 ModelT = TypeVar("ModelT", bound=BaseModel)
 
@@ -58,12 +58,18 @@ ModelT = TypeVar("ModelT", bound=BaseModel)
 class AnthropicProviderError(RuntimeError):
     """Raised when the model's output still fails schema validation after a retry."""
 
+    def __init__(self, message: str, *, public_hint: str | None = None) -> None:
+        super().__init__(message)
+        self.public_hint = public_hint
+
 
 def _tool_for_schema(schema: type[BaseModel], name: str) -> dict:
+    from app.ai.anthropic_tool_schema import anthropic_tool_input_schema
+
     return {
         "name": name,
         "description": f"Return data matching the {schema.__name__} schema.",
-        "input_schema": schema.model_json_schema(),
+        "input_schema": anthropic_tool_input_schema(schema),
     }
 
 
@@ -403,5 +409,9 @@ class AnthropicProvider(AIProvider):
 
         raise AnthropicProviderError(
             f"{schema.__name__} output failed validation after {MAX_ATTEMPTS} attempt(s): "
-            f"{last_error}"
+            f"{last_error}",
+            public_hint=(
+                f"{schema.__name__} shape unusable after {MAX_ATTEMPTS} tries. "
+                "Confirm AI_MODEL_NAME=claude-sonnet-5 and retry; try Preview if Premium keeps failing."
+            ),
         )

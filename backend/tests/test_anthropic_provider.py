@@ -195,12 +195,13 @@ def test_call_structured_retries_once_then_succeeds():
 def test_call_structured_raises_after_exhausting_retries():
     invalid1 = FakeResponse([FakeToolUseBlock("review_result", {"scope": "reel"})])
     invalid2 = FakeResponse([FakeToolUseBlock("review_result", {"bad": "data"})])
-    provider = _provider_with_responses([invalid1, invalid2])
+    invalid3 = FakeResponse([FakeToolUseBlock("review_result", {"still": "bad"})])
+    provider = _provider_with_responses([invalid1, invalid2, invalid3])
 
     with pytest.raises(AnthropicProviderError):
         provider._call_structured("prompt", ReviewResult, "review_result")
 
-    assert len(provider._client.messages.calls) == 2
+    assert len(provider._client.messages.calls) == 3
 
 
 def test_call_structured_treats_missing_tool_call_as_failure_and_retries():
