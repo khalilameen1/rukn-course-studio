@@ -10,12 +10,13 @@ from typing import Any
 from app.ai.factory import get_ai_provider, missing_anthropic_config
 from app.config import settings
 
-# Slugs that are placeholders / known-bad defaults — never call Anthropic with these.
+# Strings that are clearly placeholders — never call Anthropic with these.
+# Note: `claude-sonnet-5` is a real Anthropic API ID (Sonnet 5) — allow it.
 _BAD_MODEL_MARKERS = (
-    "claude-sonnet-5",  # historical bad default
     "your-model",
     "changeme",
     "example",
+    "placeholder",
     "<",
     ">",
 )

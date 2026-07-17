@@ -18,7 +18,8 @@ import pytest
 
 def test_validate_rejects_bad_model_slug():
     assert validate_ai_model_name("") is not None
-    assert validate_ai_model_name("claude-sonnet-5") is not None
+    assert validate_ai_model_name("changeme") is not None
+    assert validate_ai_model_name("claude-sonnet-5") is None  # official Sonnet 5 ID
     assert validate_ai_model_name("claude-sonnet-4-5-20250929") is None
 
 
@@ -26,10 +27,20 @@ def test_get_ai_provider_rejects_bad_anthropic_model():
     cfg = Settings(
         ai_provider="anthropic",
         anthropic_api_key="sk-test",
-        ai_model_name="claude-sonnet-5",
+        ai_model_name="changeme",
     )
     with pytest.raises(AIProviderConfigError):
         get_ai_provider(cfg)
+
+
+def test_get_ai_provider_accepts_sonnet_5():
+    cfg = Settings(
+        ai_provider="anthropic",
+        anthropic_api_key="sk-test",
+        ai_model_name="claude-sonnet-5",
+    )
+    provider = get_ai_provider(cfg)
+    assert provider._model_name == "claude-sonnet-5"
 
 
 def test_generation_preflight_fake_ok():
