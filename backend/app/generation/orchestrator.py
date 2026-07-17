@@ -73,7 +73,11 @@ from app.generation.budget_guard import (
 )
 from app.generation import cancellation as generation_cancellation
 from app.generation.cancellation import GenerationCanceled
-from app.generation.errors import classify_provider_error, error_message_for
+from app.generation.errors import (
+    UnusableOutputError,
+    classify_provider_error,
+    error_message_for,
+)
 from app.services.json_coerce import coerce_json_dict, coerce_json_list
 from app.security.secret_redaction import redact_secrets
 from app.generation.output_scoring import OutputScoreReport, score_final_course
@@ -825,9 +829,13 @@ def run_generation(
         )
         total_reels = sum(len(m.reels) for m in course_map.modules)
         if not course_map.modules or total_reels < 1:
-            raise RuntimeError(
+            raise UnusableOutputError(
                 "Course map was empty or had no lessons after build — "
-                "invalid/unusable provider map response."
+                "invalid/unusable provider map response.",
+                public_hint=(
+                    "Course map came back with no lessons after the planning pass. "
+                    "Retry; try Preview if Premium keeps failing."
+                ),
             )
         from app.generation.research_synthesis import format_architecture_summary
 

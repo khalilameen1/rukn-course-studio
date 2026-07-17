@@ -233,6 +233,28 @@ def test_call_structured_raises_after_exhausting_retries():
     with pytest.raises(AnthropicProviderError):
         provider._call_structured("prompt", ReviewResult, "review_result")
 
+
+def test_call_structured_rejects_course_map_with_no_lessons():
+    empty_lessons = {
+        "course_title": "Course",
+        "main_thread": "thread",
+        "modules": [
+            {
+                "module_id": "m1",
+                "title": "Module",
+                "purpose": "p",
+                "reels": [],
+            }
+        ],
+    }
+    responses = [
+        FakeResponse([FakeToolUseBlock("course_map", empty_lessons)]) for _ in range(3)
+    ]
+    provider = _provider_with_responses(responses)
+
+    with pytest.raises(AnthropicProviderError, match="no lessons"):
+        provider._call_structured("prompt", CourseMap, "course_map")
+
     assert len(provider._client.messages.calls) == 3
 
 

@@ -10,6 +10,8 @@ def test_course_map_tool_schema_keeps_title_fields():
     assert "$ref" not in blob
     assert "$defs" not in blob
     modules = schema["properties"]["modules"]
+    assert modules.get("minItems") == 1
+    assert "modules" in schema.get("required", [])
     module_props = modules["items"]["properties"]
     assert "title" in module_props
     reel_props = module_props["reels"]["items"]["properties"]

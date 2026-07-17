@@ -6,6 +6,7 @@ import pytest
 from app.generation.errors import (
     ERROR_CATEGORY_MESSAGES,
     ERROR_CATEGORY_MESSAGES_NOTHING_SAVED,
+    UnusableOutputError,
     classify_provider_error,
     error_message_for,
 )
@@ -68,3 +69,12 @@ def test_error_message_for_unknown_category_falls_back_safely():
         error_message_for("something-made-up", has_saved_work=False)
         == ERROR_CATEGORY_MESSAGES_NOTHING_SAVED["unknown"]
     )
+
+
+def test_unusable_output_error_classifies_as_malformed_and_keeps_hint():
+    exc = UnusableOutputError(
+        "Course map was empty or had no lessons after build",
+        public_hint="Course map came back with no lessons.",
+    )
+    assert classify_provider_error(exc) == "malformed_response"
+    assert exc.public_hint == "Course map came back with no lessons."

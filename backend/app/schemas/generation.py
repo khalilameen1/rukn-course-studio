@@ -63,6 +63,9 @@ class ModulePlan(BaseModel):
     `bridge_project` connects this module to the next one (see the
     `rukn_practical_course_rules` admin knowledge rule) and is null for modules
     that don't end in one.
+
+    `reels` may be empty in unit tests that inject a reel separately; the
+    Anthropic map path rejects maps with zero lessons before save.
     """
 
     module_id: str
@@ -73,11 +76,16 @@ class ModulePlan(BaseModel):
 
 
 class CourseMap(BaseModel):
-    """Stage 1 output: the full course skeleton before any reel is generated."""
+    """Stage 1 output: the full course skeleton before any reel is generated.
+
+    ``modules`` must be non-empty so Anthropic tool schemas advertise
+    ``minItems: 1`` and sparse title-only maps fail validation instead of
+    surviving into a silent Unusable response after the two-pass map.
+    """
 
     course_title: str
     main_thread: str
-    modules: list[ModulePlan] = Field(default_factory=list)
+    modules: list[ModulePlan] = Field(min_length=1)
 
 
 class GeneratedReel(BaseModel):

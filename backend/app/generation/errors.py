@@ -16,6 +16,15 @@ returned to the end user.
 
 ErrorCategory = str
 
+
+class UnusableOutputError(RuntimeError):
+    """Provider/orchestrator output we cannot persist — carries a short UI hint."""
+
+    def __init__(self, message: str, *, public_hint: str | None = None) -> None:
+        super().__init__(message)
+        self.public_hint = public_hint
+
+
 _CATEGORIES: tuple[str, ...] = (
     "rate_limit",
     "insufficient_quota",
@@ -69,9 +78,11 @@ def classify_provider_error(exc: Exception) -> str:
         return "malformed_response"
     if "lookuperror" in haystack or "is not among the defined enum" in haystack:
         return "malformed_response"
-    # AnthropicProviderError / schema retries — never leave these as opaque "unknown".
+    # AnthropicProviderError / UnusableOutputError / schema retries —
+    # never leave these as opaque "unknown".
     if (
         "anthropicprovidererror" in haystack
+        or "unusableoutputerror" in haystack
         or "failed validation" in haystack
         or "did not return a tool call" in haystack
         or "schema invalid" in haystack

@@ -447,7 +447,8 @@ class AnthropicProvider(AIProvider):
                 (block for block in response.content if block.type == "tool_use"), None
             )
             if tool_use is None:
-                last_error = "model did not return a tool call"
+                stop = getattr(response, "stop_reason", None)
+                last_error = f"model did not return a tool call (stop_reason={stop})"
                 continue
 
             try:
@@ -461,6 +462,17 @@ class AnthropicProvider(AIProvider):
                 script = (getattr(result, "script_text", None) or "").strip()
                 if not script:
                     last_error = "GeneratedReel.script_text is empty"
+                    continue
+
+            # Title-only / empty maps validate without minItems on nested reels.
+            if schema is CourseMap:
+                modules = getattr(result, "modules", None) or []
+                reel_count = sum(len(getattr(m, "reels", None) or []) for m in modules)
+                if not modules or reel_count < 1:
+                    last_error = (
+                        f"CourseMap empty or had no lessons "
+                        f"(modules={len(modules)}, reels={reel_count})"
+                    )
                     continue
 
             # Captured only on the attempt that actually succeeded - see
