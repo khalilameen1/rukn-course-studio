@@ -10,6 +10,7 @@ from app.config import settings
 from app.crud import ai_usage_events, course_versions, courses, generation_jobs
 from app.db import get_session
 from app.generation.cancellation import CANCEL_REQUESTED_MESSAGE, request_cancel
+from app.generation.generation_lock import claim_generation_job, generation_start_guard
 from app.generation.generation_state import ACTIVE_LOCK_STATUSES, is_active_lock_status
 from app.generation.orchestrator import run_generation_job
 from app.models.enums import JobStatus
@@ -75,13 +76,6 @@ def _get_active_job(session: Session, course_id: int) -> GenerationJob | None:
     return session.exec(statement).first()
 
 
-def _get_any_active_job(session: Session) -> GenerationJob | None:
-    statement = select(GenerationJob).where(
-        GenerationJob.status.in_(tuple(ACTIVE_LOCK_STATUSES)),
-    )
-    return session.exec(statement).first()
-
-
 @router.post("/generate-map", response_model=CourseRead)
 def generate_course_map(course_id: int, session: Session = Depends(get_session)):
     """Build Final Course Map via Creator→Student→Specialist→Mentor→rebuild.
@@ -114,30 +108,14 @@ def generate_course(
     (200) instead of starting a duplicate. New runs return 201.
 
     Also: one active generation globally (optional), soft per-course debounce
-    against double-click cost burn.
+    against double-click cost burn. Slot claim is serialized so two concurrent
+    POSTs cannot both start Anthropic runs.
     """
     get_course_or_404(session, course_id)
     _release_stale_active_jobs(session)
-    active = _get_active_job(session, course_id)
-    if active is not None:
-        response.status_code = 200
-        return active
-
-    if getattr(settings, "generation_global_lock", True):
-        other = _get_any_active_job(session)
-        if other is not None and other.course_id != course_id:
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    f"Another course (id={other.course_id}) already has an active "
-                    "generation run. Wait for it to finish, then try again."
-                ),
-            )
 
     min_interval = float(getattr(settings, "generate_min_interval_seconds", 3.0) or 0)
     if min_interval > 0 and not allow_generate_start(course_id, min_interval_seconds=min_interval):
-        # Soft throttle: still never start a second Claude run; return
-        # latest job for this course if any, else 429 with clear detail.
         recent = generation_jobs.list(session, course_id=course_id)
         if recent:
             response.status_code = 200
@@ -156,11 +134,35 @@ def generate_course(
         updates["web_research_mode"] = request.web_research_mode
     if updates:
         courses.update(session, course_id, **updates)
+
+    try:
+        with generation_start_guard(course_id):
+            claimed, created = claim_generation_job(
+                session,
+                course_id,
+                generation_quality_mode=request.generation_quality_mode,
+                web_research_mode=request.web_research_mode,
+            )
+            job_id = claimed.id
+    except RuntimeError as exc:
+        detail = str(exc)
+        if detail.startswith("GLOBAL_LOCK:"):
+            raise HTTPException(
+                status_code=409,
+                detail=detail.removeprefix("GLOBAL_LOCK:").strip(),
+            ) from exc
+        raise
+
+    if not created:
+        response.status_code = 200
+        return claimed
+
     try:
         job = run_generation_job(
             course_id,
             generation_quality_mode=request.generation_quality_mode,
             web_research_mode=request.web_research_mode,
+            existing_job_id=job_id,
         )
         record_generate_start(course_id)
         response.status_code = 201
@@ -168,6 +170,15 @@ def generate_course(
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except AIProviderConfigError as exc:
+        generation_jobs.update(
+            session,
+            job_id,
+            status=JobStatus.FAILED,
+            current_stage="failed",
+            error_message=str(exc)[:300],
+            error_category="provider_unavailable",
+            last_progress_message="Generation could not start",
+        )
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 

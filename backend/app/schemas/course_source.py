@@ -1,7 +1,8 @@
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, computed_field, field_validator
+from pydantic import BaseModel, ConfigDict, computed_field, field_serializer, field_validator
 
 from app.models.enums import Priority, SourceCategory, SourceOrigin
 from app.schemas.validators import (
@@ -48,6 +49,13 @@ class CourseSourceRead(BaseModel):
     include_in_generation: bool = True
     source_hash: Optional[str] = None
     created_at: datetime
+
+    @field_serializer("file_path")
+    @classmethod
+    def _basename_file_path(cls, value: object) -> str | None:
+        if value is None or value == "":
+            return None
+        return Path(str(value)).name or None
 
     @field_validator("include_in_generation", mode="before")
     @classmethod

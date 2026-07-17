@@ -351,6 +351,7 @@ def run_generation(
     provider: AIProvider | None = None,
     generation_quality_mode: GenerationQualityMode | None = None,
     web_research_mode: WebResearchMode | None = None,
+    existing_job_id: int | None = None,
 ) -> GenerationJob:
     """Run the full pipeline for `course_id` and return the finished job.
 
@@ -388,17 +389,34 @@ def run_generation(
         or WebResearchMode.AUTONOMOUS_GAP_FILL
     )
 
-    job = generation_jobs.create(
-        session,
-        course_id=course_id,
-        status=JobStatus.RUNNING,
-        current_stage="queued",
-        progress_percent=0,
-        log_json=[],
-        generation_quality_mode=quality_mode,
-        web_research_mode=research_mode,
-        last_progress_message="Preparing course",
-    )
+    if existing_job_id is not None:
+        job = generation_jobs.get(session, existing_job_id)
+        if job is None or job.course_id != course_id:
+            raise ValueError(
+                f"Generation job {existing_job_id} not found for course {course_id}"
+            )
+        job = generation_jobs.update(
+            session,
+            job.id,
+            status=JobStatus.RUNNING,
+            current_stage="queued",
+            progress_percent=0,
+            generation_quality_mode=quality_mode,
+            web_research_mode=research_mode,
+            last_progress_message="Preparing course",
+        )
+    else:
+        job = generation_jobs.create(
+            session,
+            course_id=course_id,
+            status=JobStatus.RUNNING,
+            current_stage="queued",
+            progress_percent=0,
+            log_json=[],
+            generation_quality_mode=quality_mode,
+            web_research_mode=research_mode,
+            last_progress_message="Preparing course",
+        )
     logs: list[dict] = []
     # Initialized here (not inside `try`) so the `except` block below can
     # always safely reference them - a failure that happens before
@@ -1319,6 +1337,7 @@ def run_generation_job(
     provider: AIProvider | None = None,
     generation_quality_mode: GenerationQualityMode | None = None,
     web_research_mode: WebResearchMode | None = None,
+    existing_job_id: int | None = None,
 ) -> GenerationJob:
     """Session-managing entry point - safe to call from outside a request.
 
@@ -1334,6 +1353,9 @@ def run_generation_job(
     `BackgroundTasks.add_task(run_generation_job, course_id)` or a real task
     queue later needs no change to this function - it already only takes
     plain, serializable arguments (a course id, optionally a provider).
+
+    `existing_job_id` is the PENDING slot claimed by the router under the
+    generation start lock — avoids a second create after the TOCTOU window.
     """
     with Session(engine) as session:
         return run_generation(
@@ -1342,6 +1364,7 @@ def run_generation_job(
             provider,
             generation_quality_mode=generation_quality_mode,
             web_research_mode=web_research_mode,
+            existing_job_id=existing_job_id,
         )
 
 
