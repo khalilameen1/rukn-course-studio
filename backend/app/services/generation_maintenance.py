@@ -10,6 +10,10 @@ from app.crud import generation_jobs
 from app.generation.generation_state import ACTIVE_LOCK_STATUSES
 from app.models.enums import JobStatus
 from app.models.generation_job import GenerationJob
+from app.services.finalize_saved_job import (
+    finalize_job_from_saved_lessons,
+    job_eligible_for_saved_finalize,
+)
 
 
 def _as_utc(dt: datetime | None) -> datetime:
@@ -20,20 +24,31 @@ def _as_utc(dt: datetime | None) -> datetime:
     return dt.astimezone(timezone.utc)
 
 
-def release_stale_active_jobs(session: Session, *, max_age_minutes: float = 90.0) -> int:
-    """Mark abandoned pending/running/paused jobs failed so Generate is not stuck.
+def release_stale_active_jobs(
+    session: Session,
+    *,
+    max_age_minutes: float = 90.0,
+    finalize_after_minutes: float = 8.0,
+) -> int:
+    """Recover or release abandoned pending/running/paused jobs.
+
+    1. If every lesson is already saved and the worker heartbeat is stale,
+       finalize to COMPLETED + DOCX **without any AI call**.
+    2. Otherwise mark truly abandoned runs FAILED so Generate is not stuck.
 
     Sync Generate cannot remain RUNNING after the HTTP worker dies (crash,
     deploy, proxy timeout). Cancel only works while the worker is alive.
 
-    Heartbeat = max(updated_at, last_saved_at). Threshold is long on purpose:
-    a single premium LLM call can exceed 15 minutes.
+    Heartbeat = max(updated_at, last_saved_at). Threshold is long on purpose
+    for in-flight lesson AI calls; finalize-after is shorter because
+    post-lesson stages should only need assembly/export once lessons exist.
 
     Also: jobs stuck in `queued`/`pending` with no progress for a shorter
     window (boot orphans) are released after max(15, max_age/3) minutes.
     """
     now = datetime.now(timezone.utc)
     cutoff = now - timedelta(minutes=max_age_minutes)
+    finalize_cutoff = now - timedelta(minutes=finalize_after_minutes)
     orphan_cutoff = now - timedelta(minutes=max(15.0, max_age_minutes / 3.0))
     statement = select(GenerationJob).where(
         GenerationJob.status.in_(tuple(ACTIVE_LOCK_STATUSES)),
@@ -43,9 +58,25 @@ def release_stale_active_jobs(session: Session, *, max_age_minutes: float = 90.0
         heartbeat = max(_as_utc(job.updated_at), _as_utc(job.last_saved_at))
         stage = (job.current_stage or "").lower()
         is_orphan_queue = stage in {"", "queued", "pending"} and not job.course_map_json
+
+        # Prefer no-AI finalization when all lessons are already on disk/DB.
+        if job_eligible_for_saved_finalize(job) and heartbeat < finalize_cutoff:
+            finalized = finalize_job_from_saved_lessons(session, job)
+            if finalized is not None and finalized.status == JobStatus.COMPLETED:
+                released += 1
+                continue
+
         limit = orphan_cutoff if is_orphan_queue else cutoff
         if heartbeat >= limit:
             continue
+
+        # Last chance: if lessons are complete, finalize instead of failing.
+        if job_eligible_for_saved_finalize(job):
+            finalized = finalize_job_from_saved_lessons(session, job)
+            if finalized is not None and finalized.status == JobStatus.COMPLETED:
+                released += 1
+                continue
+
         generation_jobs.update(
             session,
             job.id,
