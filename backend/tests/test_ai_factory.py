@@ -96,7 +96,13 @@ def test_unknown_provider_fails_clearly():
 
 
 def test_provider_name_is_case_and_whitespace_insensitive():
-    provider = get_ai_provider(_settings(ai_provider=" ANTHROPIC ", anthropic_api_key="k", ai_model_name="m"))
+    provider = get_ai_provider(
+        _settings(
+            ai_provider=" ANTHROPIC ",
+            anthropic_api_key="k",
+            ai_model_name="claude-sonnet-5",
+        )
+    )
 
     assert isinstance(provider, AnthropicProvider)
 
