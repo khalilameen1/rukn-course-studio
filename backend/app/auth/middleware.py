@@ -91,8 +91,12 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
         try:
             payload = verify_token(token, settings.auth_secret_key)
-        except InvalidTokenError as exc:
-            return JSONResponse({"detail": str(exc)}, status_code=401)
+        except InvalidTokenError:
+            # Never echo token-parser details to clients (AI-typical info leak).
+            return JSONResponse(
+                {"detail": "Invalid or expired token"},
+                status_code=401,
+            )
 
         request.state.username = payload["sub"]
         return await call_next(request)

@@ -33,12 +33,18 @@ def normalize_origin(value: str | None) -> str | None:
 
 
 def normalize_cors_origins(origins: list[str]) -> list[str]:
-    """Dedupe while preserving order; drop empties after normalize_origin."""
+    """Dedupe while preserving order; drop empties and unsafe wildcards.
+
+    `Access-Control-Allow-Origin: *` with `allow_credentials=True` is invalid
+    and a common AI misconfig — reject bare `*` / `null` origins.
+    """
     seen: set[str] = set()
     out: list[str] = []
     for item in origins:
         normalized = normalize_origin(item)
         if not normalized or normalized in seen:
+            continue
+        if normalized in {"*", "null"}:
             continue
         seen.add(normalized)
         out.append(normalized)

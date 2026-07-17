@@ -29,6 +29,10 @@ def verify_credentials(
             "to enable login."
         )
 
-    username_ok = hmac.compare_digest(username, config.admin_username)
-    password_ok = hmac.compare_digest(password, config.admin_password)
+    try:
+        username_ok = hmac.compare_digest(username, config.admin_username)
+        password_ok = hmac.compare_digest(password, config.admin_password)
+    except (TypeError, ValueError):
+        # Non-str inputs or rare length edge cases must never 500 the login path.
+        return False
     return username_ok and password_ok

@@ -1,7 +1,8 @@
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Optional
 
-from pydantic import BaseModel, ConfigDict, computed_field, field_validator
+from pydantic import BaseModel, ConfigDict, computed_field, field_serializer, field_validator
 
 from app.models.enums import GenerationQualityMode, JobStatus, WebResearchMode
 from app.schemas.validators import (
@@ -11,6 +12,14 @@ from app.schemas.validators import (
 )
 from app.services.enum_coerce import coerce_str_enum
 from app.services.json_coerce import coerce_json_dict, coerce_json_list
+
+
+def _public_storage_name(value: object) -> str | None:
+    """Return basename only — never absolute server paths in API responses."""
+    if value is None or value == "":
+        return None
+    name = Path(str(value)).name
+    return name or None
 
 
 class GenerateCourseRequest(BaseModel):
@@ -72,6 +81,11 @@ class GenerationJobRead(BaseModel):
     usage_by_stage_json: Optional[dict[str, Any]] = None
     created_at: datetime
     updated_at: datetime
+
+    @field_serializer("output_docx_path", "partial_docx_path")
+    @classmethod
+    def _serialize_storage_paths(cls, value: object) -> str | None:
+        return _public_storage_name(value)
 
     @field_validator("waste_warnings_json", mode="before")
     @classmethod

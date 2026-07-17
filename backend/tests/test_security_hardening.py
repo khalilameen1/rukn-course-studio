@@ -302,3 +302,126 @@ def test_production_refuses_auth_disabled(monkeypatch):
     res = client.get("/courses")
     assert res.status_code == 503
     assert "AUTH_ENABLED" in res.json()["detail"]
+
+
+def test_api_hides_absolute_storage_paths():
+    from datetime import datetime, timezone
+
+    from app.schemas.course_version import CourseVersionRead
+    from app.schemas.generation_job import GenerationJobRead
+
+    now = datetime.now(timezone.utc)
+    job = GenerationJobRead.model_validate(
+        {
+            "id": 1,
+            "course_id": 1,
+            "status": "completed",
+            "current_stage": "done",
+            "output_docx_path": r"C:\Users\secret\storage\outputs\course_1_v2.docx",
+            "error_message": None,
+            "last_completed_step": "export",
+            "error_category": None,
+            "partial_docx_path": "/var/app/storage/outputs/partial_job_9.docx",
+            "generation_quality_mode": "premium",
+            "web_research_mode": "autonomous_gap_fill",
+            "created_at": now,
+            "updated_at": now,
+        }
+    )
+    dumped = job.model_dump(mode="json")
+    assert dumped["output_docx_path"] == "course_1_v2.docx"
+    assert dumped["partial_docx_path"] == "partial_job_9.docx"
+    assert r"C:\Users" not in str(dumped)
+    assert "/var/app" not in str(dumped)
+    assert job.partial_docx_available is True
+
+    ver = CourseVersionRead.model_validate(
+        {
+            "id": 1,
+            "course_id": 1,
+            "version_number": 2,
+            "output_docx_path": "/secret/disk/outputs/course_1_v2.docx",
+            "summary_text": None,
+            "report_text": None,
+            "created_at": now,
+        }
+    )
+    assert ver.model_dump()["output_docx_path"] == "course_1_v2.docx"
+
+
+def test_cors_wildcard_stripped():
+    from app.cors_origins import normalize_cors_origins
+
+    assert "*" not in normalize_cors_origins(["*", "http://localhost:3000"])
+    assert normalize_cors_origins(["http://localhost:3000"]) == ["http://localhost:3000"]
+
+
+def test_ssrf_rejects_cgnat_and_ipv4_mapped():
+    with pytest.raises(UnsafeURLError):
+        assert_safe_public_https_url("https://100.64.1.1/x")
+    with pytest.raises(UnsafeURLError):
+        assert_safe_public_https_url("https://[::ffff:127.0.0.1]/x")
+
+
+def test_docx_zip_bomb_rejected(tmp_path):
+    import zipfile
+
+    from app.services.docx_zip_guard import assert_docx_zip_safe
+    from app.services.extraction import extract_text
+
+    bomb = tmp_path / "bomb.docx"
+    with zipfile.ZipFile(bomb, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("word/document.xml", b"\x00" * 1000)
+
+    class _Info:
+        filename = "word/document.xml"
+        file_size = 90 * 1024 * 1024
+        compress_size = 1000
+
+    class _Zip:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def infolist(self):
+            return [_Info()]
+
+    with patch("app.services.docx_zip_guard.zipfile.ZipFile", return_value=_Zip()):
+        with pytest.raises(ValueError, match="uncompressed|zip bomb|oversized"):
+            assert_docx_zip_safe(bomb)
+
+    class _Trav:
+        filename = "../etc/passwd"
+        file_size = 10
+        compress_size = 10
+
+    class _ZipTrav(_Zip):
+        def infolist(self):
+            return [_Trav()]
+
+    with patch("app.services.docx_zip_guard.zipfile.ZipFile", return_value=_ZipTrav()):
+        with pytest.raises(ValueError, match="unsafe"):
+            assert_docx_zip_safe(bomb)
+
+    tiny = tmp_path / "ok.docx"
+    with zipfile.ZipFile(tiny, "w") as zf:
+        zf.writestr(
+            "word/document.xml",
+            '<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+            "<w:body><w:p><w:r><w:t>hello teleprompter text here for extraction</w:t></w:r></w:p></w:body></w:document>",
+        )
+        zf.writestr("[Content_Types].xml", "<Types></Types>")
+    assert_docx_zip_safe(tiny)
+    result = extract_text(tiny, ".docx")
+    assert result.status in ("ready", "poor_extraction", "failed", "extraction_blocked")
+
+
+def test_invalid_token_detail_is_generic(auth_on):
+    res = client.get(
+        "/auth/me",
+        headers={"Authorization": "Bearer not-a.real-token"},
+    )
+    assert res.status_code == 401
+    assert res.json()["detail"] == "Invalid or expired token"

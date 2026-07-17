@@ -28,10 +28,12 @@ _BLOCKED_NETWORKS: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...] = (
     ipaddress.ip_network("172.16.0.0/12"),
     ipaddress.ip_network("192.168.0.0/16"),
     ipaddress.ip_network("169.254.0.0/16"),
+    ipaddress.ip_network("100.64.0.0/10"),  # CGNAT / carrier-grade NAT
     ipaddress.ip_network("0.0.0.0/8"),
     ipaddress.ip_network("::1/128"),
     ipaddress.ip_network("fc00::/7"),
     ipaddress.ip_network("fe80::/10"),
+    ipaddress.ip_network("::ffff:0:0/96"),  # IPv4-mapped IPv6 (check mapped below too)
 )
 
 
@@ -40,6 +42,9 @@ class UnsafeURLError(ValueError):
 
 
 def _is_blocked_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    # Unwrap IPv4-mapped IPv6 (::ffff:a.b.c.d) so private v4 cannot sneak in.
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        ip = ip.ipv4_mapped
     if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
         return True
     if ip.is_multicast or ip.is_unspecified:

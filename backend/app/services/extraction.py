@@ -81,6 +81,12 @@ def _extract_plain_text(path: Path) -> ExtractionResult:
 
 
 def _extract_docx(path: Path) -> ExtractionResult:
+    from app.services.docx_zip_guard import assert_docx_zip_safe
+
+    try:
+        assert_docx_zip_safe(path)
+    except ValueError as exc:
+        return ExtractionResult(status=FAILED, error=str(exc)[:200])
     document = DocxDocument(str(path))
     parts = [paragraph.text for paragraph in document.paragraphs]
     for table in document.tables:
