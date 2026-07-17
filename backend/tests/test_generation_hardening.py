@@ -99,8 +99,11 @@ def test_safe_flush_retries_without_optional_columns():
 
 
 def test_map_stage_has_higher_max_tokens():
+    from app.generation.model_routing import MODEL_OUTPUT_MAX_TOKENS
+
     ov = resolve_stage_overrides(PipelineStage.BUILD_COURSE_MAP)
-    assert ov.get("max_tokens", 0) >= 8192
+    # No soft product cap: every map call uses the model output ceiling.
+    assert ov.get("max_tokens", 0) == MODEL_OUTPUT_MAX_TOKENS
     assert PipelineStage.BUILD_COURSE_MAP in MODEL_ROUTING_OVERRIDES
 
 
