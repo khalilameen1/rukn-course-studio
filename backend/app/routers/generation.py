@@ -1,3 +1,4 @@
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -24,6 +25,46 @@ from app.services.upload_safety import assert_path_under_root
 router = APIRouter(prefix="/courses/{course_id}", tags=["generation"])
 
 DOCX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
+def _as_utc(dt: datetime | None) -> datetime:
+    if dt is None:
+        return datetime.fromtimestamp(0, tz=timezone.utc)
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def _release_stale_active_jobs(session: Session, *, max_age_minutes: float = 15.0) -> int:
+    """Mark abandoned pending/running/paused jobs failed so Generate is not stuck.
+
+    Sync Generate cannot remain RUNNING after the HTTP worker dies (crash,
+    deploy, proxy timeout). Cancel only works while the worker is alive.
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=max_age_minutes)
+    statement = select(GenerationJob).where(
+        GenerationJob.status.in_(tuple(ACTIVE_LOCK_STATUSES)),
+    )
+    released = 0
+    for job in list(session.exec(statement)):
+        if _as_utc(job.updated_at) >= cutoff:
+            continue
+        generation_jobs.update(
+            session,
+            job.id,
+            status=JobStatus.FAILED,
+            current_stage="failed",
+            cancel_requested=False,
+            error_message=(
+                "Previous generation run was abandoned (server restart, timeout, "
+                "or crash). Start Generate again."
+            ),
+            error_category="abandoned_run",
+            last_progress_message="Previous run abandoned — ready to retry",
+        )
+        released += 1
+    return released
+
+
 
 
 def _get_active_job(session: Session, course_id: int) -> GenerationJob | None:
@@ -76,6 +117,7 @@ def generate_course(
     against double-click cost burn.
     """
     get_course_or_404(session, course_id)
+    _release_stale_active_jobs(session)
     active = _get_active_job(session, course_id)
     if active is not None:
         response.status_code = 200

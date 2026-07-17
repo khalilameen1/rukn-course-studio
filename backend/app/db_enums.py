@@ -1,29 +1,55 @@
-"""SQLAlchemy helpers for persisting `str, Enum` columns by **value**.
+﻿"""SQLAlchemy helpers for persisting str Enum columns by value.
 
-SQLAlchemy's default Enum column stores member **names** (`PREMIUM`), while
-our API, Pydantic, and TEXT column defaults use **values** (`premium`).
-Mixed rows cause `LookupError` on ORM load → HTTP 500 on course list/open.
+SQLAlchemy default Enum stores member names (PREMIUM); API/Pydantic use values
+(premium). Mixed rows caused LookupError -> HTTP 500 on Generate.
 """
 
 from __future__ import annotations
 
 from enum import Enum
-from typing import Type
+from typing import Any, Type
 
-from sqlalchemy import Enum as SAEnum
+from sqlalchemy import String, TypeDecorator
 
 
-def sa_str_enum(enum_cls: Type[Enum], *, length: int = 64) -> SAEnum:
-    """VARCHAR enum column that reads and writes `enum.value`.
+def _coerce_enum_member(enum_cls: Type[Enum], value: Any) -> Enum:
+    if isinstance(value, enum_cls):
+        return value
+    raw = getattr(value, "value", value)
+    if isinstance(raw, enum_cls):
+        return raw
+    text = str(raw)
+    try:
+        return enum_cls(text)
+    except ValueError:
+        pass
+    try:
+        return enum_cls[text]
+    except KeyError as exc:
+        raise LookupError(
+            f"{text!r} is not among the defined enum values for {enum_cls.__name__}"
+        ) from exc
 
-    `length` must cover the longest value (e.g. mixed_quality_ai_course_draft).
-    Older DBs often have VARCHAR(12) sized for member *names* — widen via
-    `_widen_str_enum_columns` in app/db.py on startup.
-    """
-    return SAEnum(
-        enum_cls,
-        values_callable=lambda members: [item.value for item in members],
-        native_enum=False,
-        validate_strings=True,
-        length=length,
-    )
+
+class _StrEnumValue(TypeDecorator):
+    impl = String
+    cache_ok = True
+
+    def __init__(self, enum_cls: Type[Enum], length: int = 64):
+        super().__init__(length=length)
+        self.enum_cls = enum_cls
+
+    def process_bind_param(self, value: Any, dialect: Any) -> str | None:
+        if value is None:
+            return None
+        return _coerce_enum_member(self.enum_cls, value).value
+
+    def process_result_value(self, value: Any, dialect: Any) -> Enum | None:
+        if value is None:
+            return None
+        return _coerce_enum_member(self.enum_cls, value)
+
+
+def sa_str_enum(enum_cls: Type[Enum], *, length: int = 64) -> _StrEnumValue:
+    """VARCHAR enum column that stores enum.value and tolerates legacy NAME rows."""
+    return _StrEnumValue(enum_cls, length=length)

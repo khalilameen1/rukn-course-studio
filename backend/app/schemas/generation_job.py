@@ -36,12 +36,12 @@ class GenerationJobRead(BaseModel):
     status: JobStatus
     cancel_requested: bool = False
     current_stage: Optional[str]
-    progress_percent: int
+    progress_percent: int = 0
     output_docx_path: Optional[str]
     error_message: Optional[str]
     last_completed_step: Optional[str]
-    completed_modules_count: int
-    completed_reels_count: int
+    completed_modules_count: int = 0
+    completed_reels_count: int = 0
     total_lessons_count: int = 0
     needs_review_count: int = 0
     error_category: Optional[str]
@@ -69,8 +69,45 @@ class GenerationJobRead(BaseModel):
     @field_validator("waste_warnings_json", mode="before")
     @classmethod
     def _coerce_waste_warnings(cls, value: object) -> object:
-        # Older rows / ensure-added columns may be NULL in SQLite/Postgres.
         return [] if value is None else value
+
+    @field_validator("cancel_requested", mode="before")
+    @classmethod
+    def _coerce_cancel_requested(cls, value: object) -> object:
+        return False if value is None else value
+
+    @field_validator(
+        "progress_percent",
+        "completed_modules_count",
+        "completed_reels_count",
+        "total_lessons_count",
+        "needs_review_count",
+        "internal_risk_count",
+        "web_searches_count",
+        "reused_source_memory_count",
+        "research_memory_reuse_count",
+        mode="before",
+    )
+    @classmethod
+    def _coerce_null_ints(cls, value: object) -> object:
+        return 0 if value is None else value
+
+    @field_validator("status", "generation_quality_mode", "web_research_mode", mode="before")
+    @classmethod
+    def _coerce_enum_name_or_value(cls, value: object) -> object:
+        """Accept legacy NAME strings (`RUNNING`) as well as values (`running`)."""
+        if value is None or not isinstance(value, str):
+            return value
+        for enum_cls in (JobStatus, GenerationQualityMode, WebResearchMode):
+            try:
+                return enum_cls(value)
+            except ValueError:
+                pass
+            try:
+                return enum_cls[value]
+            except KeyError:
+                pass
+        return value
 
     @computed_field  # type: ignore[prop-decorator]
     @property
