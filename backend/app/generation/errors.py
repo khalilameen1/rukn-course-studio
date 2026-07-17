@@ -62,6 +62,15 @@ def classify_provider_error(exc: Exception) -> str:
         return "malformed_response"
     if "lookuperror" in haystack or "is not among the defined enum" in haystack:
         return "malformed_response"
+    # AnthropicProviderError / schema retries — never leave these as opaque "unknown".
+    if (
+        "anthropicprovidererror" in haystack
+        or "failed validation" in haystack
+        or "did not return a tool call" in haystack
+        or "schema invalid" in haystack
+        or "output failed validation" in haystack
+    ):
+        return "malformed_response"
     if (
         "context length" in haystack
         or "context_length" in haystack

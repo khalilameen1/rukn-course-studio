@@ -67,6 +67,29 @@ def _tool_for_schema(schema: type[BaseModel], name: str) -> dict:
     }
 
 
+def _strip_cache_control(content: str | list[dict]) -> str | list[dict]:
+    """Remove prompt-cache markers — safe for models/accounts without caching."""
+    if not isinstance(content, list):
+        return content
+    cleaned: list[dict] = []
+    for block in content:
+        if isinstance(block, dict) and "cache_control" in block:
+            cleaned.append({k: v for k, v in block.items() if k != "cache_control"})
+        else:
+            cleaned.append(block)
+    return cleaned
+
+
+def _is_cache_control_rejected(exc: BaseException) -> bool:
+    text = f"{type(exc).__name__} {exc}".lower()
+    return (
+        "cache_control" in text
+        or "prompt caching" in text
+        or "prompt-caching" in text
+        or ("invalid_request" in text and "cache" in text)
+    )
+
+
 class AnthropicProvider(AIProvider):
     def __init__(
         self,
@@ -292,14 +315,43 @@ class AnthropicProvider(AIProvider):
                         f"required schema: {last_error}\nReturn ONLY a valid tool call this time."
                     )
 
-            response = self._client.messages.create(
-                model=model_name,
-                max_tokens=max_tokens,
-                temperature=temperature,
-                tools=[tool],
-                tool_choice={"type": "tool", "name": tool_name},
-                messages=[{"role": "user", "content": content}],
+            enable_cache = bool(
+                getattr(settings, "anthropic_prompt_cache_enabled", False)
             )
+            # Default: never send cache_control (avoids invalid_request_error
+            # when prompt-caching beta is not enabled on the account/model).
+            variants: list[str | list[dict]] = [
+                content if enable_cache else _strip_cache_control(content)
+            ]
+            if enable_cache:
+                variants.append(_strip_cache_control(content))
+
+            response = None
+            last_api_exc: BaseException | None = None
+            for variant in variants:
+                try:
+                    response = self._client.messages.create(
+                        model=model_name,
+                        max_tokens=max_tokens,
+                        temperature=temperature,
+                        tools=[tool],
+                        tool_choice={"type": "tool", "name": tool_name},
+                        messages=[{"role": "user", "content": variant}],
+                    )
+                    last_api_exc = None
+                    break
+                except Exception as api_exc:  # noqa: BLE001 — optional cache fallback
+                    last_api_exc = api_exc
+                    if enable_cache and _is_cache_control_rejected(api_exc):
+                        continue
+                    # Re-raise provider errors unchanged so rate_limit / quota
+                    # / timeout classifiers still work (do not stamp "invalid").
+                    raise
+
+            if response is None:
+                raise AnthropicProviderError(
+                    f"Anthropic API rejected the request (invalid/unusable): {last_api_exc}"
+                ) from last_api_exc
 
             tool_use = next(
                 (block for block in response.content if block.type == "tool_use"), None

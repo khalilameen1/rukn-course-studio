@@ -138,6 +138,9 @@ class Settings(BaseSettings):
     # classifiable timeout error (see app/generation/errors.py) instead of
     # hanging the generation run indefinitely.
     anthropic_request_timeout_seconds: float = 120.0
+    # Off by default: ephemeral cache_control needs Anthropic prompt-caching
+    # support; enabling without it caused invalid_request → "Unusable response".
+    anthropic_prompt_cache_enabled: bool = False
 
     # Auth for this internal MVP (see app/auth/). Admin gets full scopes;
     # optional OPERATOR_* credentials get courses:* only (no Admin Knowledge).

@@ -152,15 +152,31 @@ def test_message_content_marks_stable_rules_for_cache():
     assert "runtime_hint" in flat
 
 
-def test_call_structured_succeeds_on_first_attempt():
+def test_call_structured_strips_cache_control_by_default():
     responses = [FakeResponse([FakeToolUseBlock("review_result", VALID_REVIEW_RESULT)])]
     provider = _provider_with_responses(responses)
+    blocks = [
+        {"type": "text", "text": "stable", "cache_control": {"type": "ephemeral"}},
+        {"type": "text", "text": "dynamic"},
+    ]
+    provider._call_structured(blocks, ReviewResult, "review_result")
+    sent = provider._client.messages.calls[0]["messages"][0]["content"]
+    assert isinstance(sent, list)
+    assert all("cache_control" not in b for b in sent if isinstance(b, dict))
 
-    result = provider._call_structured("prompt", ReviewResult, "review_result")
 
-    assert isinstance(result, ReviewResult)
-    assert result.status == "pass"
-    assert len(provider._client.messages.calls) == 1
+def test_classify_anthropic_provider_error_as_malformed():
+    from app.generation.errors import classify_provider_error
+    from app.ai.anthropic_provider import AnthropicProviderError
+
+    assert (
+        classify_provider_error(
+            AnthropicProviderError(
+                "CourseMap output failed validation after 2 attempt(s): missing modules"
+            )
+        )
+        == "malformed_response"
+    )
 
 
 def test_call_structured_retries_once_then_succeeds():
@@ -482,4 +498,13 @@ def test_each_provider_method_calls_correct_tool_and_prompt(
     assert isinstance(result, expected_type)
     call = provider._client.messages.calls[0]
     assert call["tool_choice"] == {"type": "tool", "name": tool_name}
-    assert prompt_file_marker in call["messages"][0]["content"]
+    content = call["messages"][0]["content"]
+    if isinstance(content, list):
+        flat = "".join(
+            block.get("text", "")
+            for block in content
+            if isinstance(block, dict)
+        )
+    else:
+        flat = str(content)
+    assert prompt_file_marker in flat
