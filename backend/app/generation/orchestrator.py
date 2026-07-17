@@ -1127,6 +1127,15 @@ def run_generation(
 
         _abort_if_canceled()
 
+        # Heartbeat before the long final-review AI call so maintenance can
+        # distinguish a living worker from a dead one stuck after all lessons
+        # were saved (see app/services/finalize_saved_job.py).
+        flush(
+            current_stage="reviewing",
+            last_completed_step="lessons_complete",
+            last_progress_message="Finalizing course",
+        )
+
         # --- Step 12: final review ---------------------------------------
         final_result = provider.final_review(
             FinalReviewInput(

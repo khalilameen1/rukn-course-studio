@@ -100,6 +100,19 @@ function formatSavedAt(iso: string | null | undefined): string {
   }
 }
 
+/** Current lesson label: never exceeds total (fixes "Lesson 114 of 113"). */
+export function displayCurrentLessonNumber(
+  completedLessons: number,
+  totalLessons: number,
+  isTerminal: boolean,
+): number {
+  if (totalLessons <= 0) return 0;
+  if (isTerminal || completedLessons >= totalLessons) {
+    return Math.min(Math.max(completedLessons, 0), totalLessons);
+  }
+  return Math.min(completedLessons + 1, totalLessons);
+}
+
 function progressStepIndex(stage: string | null | undefined): number {
   if (!stage) return -1;
   if (stage === "synthesizing") return PROGRESS_STEPS.findIndex((s) => s.key === "filling_gaps");
@@ -314,7 +327,9 @@ function GenerationStatusPanel({ job }: { job: GenerationJob }) {
           ) : null}
           {totalLessons > 0 ? (
             <p className="mt-1 text-xs text-muted">
-              Lesson {completedLessons + (isTerminal ? 0 : 1)} of {totalLessons}
+              Lesson{" "}
+              {displayCurrentLessonNumber(completedLessons, totalLessons, isTerminal)} of{" "}
+              {totalLessons}
             </p>
           ) : null}
         </div>
