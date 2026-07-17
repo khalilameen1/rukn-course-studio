@@ -9,6 +9,7 @@ from app.constants import DOCX_MEDIA_TYPE
 from app.crud import generation_jobs
 from app.db import get_session
 from app.schemas.generation_job import GenerationJobRead
+from app.services.finalize_saved_job import try_recover_job_from_saved_lessons
 from app.services.generation_maintenance import release_stale_active_jobs
 from app.services.upload_safety import assert_course_output_file
 
@@ -31,7 +32,8 @@ def get_job(
 ):
     # Release abandoned actives so polling does not show a false Running state.
     release_stale_active_jobs(session)
-    return _get_job_for_course(session, job_id, course_id)
+    job = _get_job_for_course(session, job_id, course_id)
+    return try_recover_job_from_saved_lessons(session, job)
 
 
 @router.get("/{job_id}/download-partial")

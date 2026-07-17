@@ -22,6 +22,7 @@ from app.schemas.course import CourseRead
 from app.schemas.course_version import CourseVersionRead
 from app.schemas.generation_job import GenerateCourseRequest, GenerationJobRead
 from app.security.request_throttle import can_generate_start, record_generate_start
+from app.services.finalize_saved_job import try_recover_job_from_saved_lessons
 from app.services.generation_maintenance import release_stale_active_jobs
 from app.services.upload_safety import assert_course_output_file
 
@@ -254,7 +255,8 @@ def latest_generation_job(course_id: int, session: Session = Depends(get_session
         raise HTTPException(
             status_code=404, detail="No generation run for this course yet"
         )
-    return max(jobs, key=lambda j: j.id)
+    latest = max(jobs, key=lambda j: j.id)
+    return try_recover_job_from_saved_lessons(session, latest)
 
 
 @router.post("/generate/{job_id}/cancel", response_model=GenerationJobRead)

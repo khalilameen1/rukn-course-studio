@@ -235,6 +235,13 @@ class GenerationJobRead(BaseModel):
 
     @computed_field  # type: ignore[prop-decorator]
     @property
+    def stopped_after_label(self) -> str | None:
+        from app.services.finalize_saved_job import format_stopped_after_label
+
+        return format_stopped_after_label(self.last_completed_step)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
     def partial_docx_available(self) -> bool:
         return bool(self.partial_docx_path)
 
