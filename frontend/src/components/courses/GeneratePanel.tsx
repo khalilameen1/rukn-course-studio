@@ -290,6 +290,9 @@ function GenerationStatusPanel({ job }: { job: GenerationJob }) {
   const inProgressStep =
     !isDone && currentIndex >= 0 ? PROGRESS_STEPS[currentIndex]?.label : currentLabel;
 
+  const allLessonsSaved =
+    totalLessons > 0 && completedLessons >= totalLessons && !job.output_docx_path;
+  const stoppedStepLabel = job.stopped_after_label ?? "an early step";
   const tips = job.research_tips ?? [];
 
   if (isDone) {
@@ -404,8 +407,16 @@ function GenerationStatusPanel({ job }: { job: GenerationJob }) {
       </dl>
       {showStoppedInfo ? (
         <p className="mt-3 text-muted">
-          Stopped after: {job.last_completed_step ?? "the first step"} ({completedLessons} lesson(s)
-          completed). Download partial output if available, then regenerate.
+          Stopped after: {stoppedStepLabel} ({completedLessons} lesson(s) completed).
+          {allLessonsSaved ? (
+            <>
+              {" "}
+              Every lesson is saved — refresh this page to assemble the final Teleprompter
+              without using more tokens. You can also download the partial DOCX below.
+            </>
+          ) : (
+            <> Download partial output if available, then regenerate.</>
+          )}
         </p>
       ) : null}
       {showStoppedInfo && job.error_message ? (

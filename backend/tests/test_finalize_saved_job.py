@@ -11,8 +11,10 @@ from app.crud import course_versions, courses, generation_jobs
 from app.models.enums import ExplanationLevel, JobStatus, StructureMode
 from app.services.finalize_saved_job import (
     finalize_job_from_saved_lessons,
+    format_stopped_after_label,
     inspect_saved_lessons,
     job_eligible_for_saved_finalize,
+    try_recover_job_from_saved_lessons,
 )
 from app.services.generation_maintenance import release_stale_active_jobs
 
@@ -210,3 +212,61 @@ def test_stale_release_finalizes_complete_lessons_instead_of_failing(tmp_path, m
         assert fresh.status == JobStatus.COMPLETED
         assert fresh.output_docx_path
         assert fresh.error_category is None
+
+
+def test_format_stopped_after_label():
+    assert format_stopped_after_label("reel:m1-r3") == "Saving lessons"
+    assert format_stopped_after_label("final_review") == "Final review"
+    assert format_stopped_after_label(None) is None
+
+
+def test_partial_timeout_job_recovers_on_try_recover(tmp_path, monkeypatch):
+    engine = _make_session(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        "app.services.finalize_saved_job.settings.storage_dir", tmp_path / "storage"
+    )
+    monkeypatch.setattr(
+        "app.services.finalize_saved_job.settings.storage_outputs_dir",
+        tmp_path / "storage" / "outputs",
+    )
+    monkeypatch.setattr(
+        "app.services.docx_export.settings.storage_outputs_dir",
+        tmp_path / "storage" / "outputs",
+    )
+
+    course_map, reels = _map_and_reels(2)
+    with Session(engine) as session:
+        course = courses.create(
+            session,
+            title="T",
+            audience="a",
+            outcome="o",
+            structure_mode=StructureMode.CONNECTED_NO_MODULES,
+            explanation_level=ExplanationLevel.FINAL_ONLY,
+        )
+        job = generation_jobs.create(
+            session,
+            course_id=course.id,
+            status=JobStatus.PARTIAL,
+            current_stage="failed",
+            progress_percent=85,
+            course_map_json=course_map,
+            completed_reels_json=reels,
+            completed_reels_count=2,
+            total_lessons_count=2,
+            last_completed_step="reel:r2",
+            error_category="timeout",
+            error_message=(
+                "Generation stopped after saving completed sections — "
+                "the AI provider took too long to respond."
+            ),
+            partial_docx_path="/tmp/partial_job_1.docx",
+        )
+        assert job_eligible_for_saved_finalize(job)
+
+        recovered = try_recover_job_from_saved_lessons(session, job)
+        assert recovered.status == JobStatus.COMPLETED
+        assert recovered.output_docx_path
+        assert recovered.error_message is None
+        assert recovered.error_category is None
+        assert recovered.progress_percent == 100

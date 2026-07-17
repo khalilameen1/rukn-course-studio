@@ -145,9 +145,22 @@ def inspect_saved_lessons(job: GenerationJob) -> SavedLessonsInspection:
     )
 
 
+# Active runs plus terminal runs that timed out / were abandoned after every
+# lesson was already persisted (e.g. Job 51 → PARTIAL + timeout).
+RECOVERABLE_STATUSES: frozenset[JobStatus] = frozenset(
+    {
+        JobStatus.PENDING,
+        JobStatus.RUNNING,
+        JobStatus.PAUSED,
+        JobStatus.PARTIAL,
+        JobStatus.FAILED,
+    }
+)
+
+
 def job_eligible_for_saved_finalize(job: GenerationJob) -> bool:
-    """True when an active job looks stuck after all lessons were saved."""
-    if job.status not in {JobStatus.PENDING, JobStatus.RUNNING, JobStatus.PAUSED}:
+    """True when a job can be completed from saved lessons without AI."""
+    if job.status not in RECOVERABLE_STATUSES:
         return False
     if job.output_docx_path:
         return False
@@ -160,6 +173,47 @@ def job_eligible_for_saved_finalize(job: GenerationJob) -> bool:
         if not (total > 0 and done >= total):
             return False
     return inspect_saved_lessons(job).ok
+
+
+def format_stopped_after_label(last_completed_step: str | None) -> str | None:
+    """User-safe label for where a run stopped (never raw log_json)."""
+    if not last_completed_step:
+        return None
+    step = last_completed_step.strip()
+    if not step:
+        return None
+    if step.startswith("reel:"):
+        return "Saving lessons"
+    if step.startswith("module:"):
+        return "Module review"
+    if step == "lessons_complete":
+        return "All lessons saved"
+    if step == "final_review":
+        return "Final review"
+    if step == "rebuild_final_course":
+        return "Final assembly"
+    if step == "save_internal_json":
+        return "Saving course"
+    if step == "export_docx":
+        return "Teleprompter export"
+    if step == "build_map":
+        return "Course map"
+    return step.replace("_", " ")
+
+
+def try_recover_job_from_saved_lessons(
+    session: Session,
+    job: GenerationJob,
+) -> GenerationJob:
+    """If every lesson is saved, finalize to COMPLETED on read/poll (no AI)."""
+    if job.status == JobStatus.COMPLETED and job.output_docx_path:
+        return job
+    if job.output_docx_path:
+        return job
+    if not job_eligible_for_saved_finalize(job):
+        return job
+    recovered = finalize_job_from_saved_lessons(session, job)
+    return recovered if recovered is not None else job
 
 
 def backup_job_snapshot(job: GenerationJob) -> Path:
@@ -358,6 +412,7 @@ def finalize_job_from_saved_lessons(
         last_progress_message=handoff,
         error_message=None,
         error_category=None,
+        partial_docx_path=job.partial_docx_path,
         cancel_requested=False,
         log_json=logs,
         last_saved_at=datetime.now(timezone.utc),

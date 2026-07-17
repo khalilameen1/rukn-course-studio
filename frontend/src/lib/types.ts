@@ -146,7 +146,7 @@ export interface GenerationJob {
   progress_percent: number;
   output_docx_path: string | null;
   error_message: string | null;
-  last_completed_step: string | null;
+  stopped_after_label?: string | null;
   completed_modules_count: number;
   completed_reels_count: number;
   total_lessons_count?: number;
