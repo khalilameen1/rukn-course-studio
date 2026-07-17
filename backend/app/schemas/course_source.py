@@ -2,7 +2,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, computed_field, field_serializer, field_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_serializer, field_validator
 
 from app.models.enums import Priority, SourceCategory, SourceOrigin
 from app.schemas.validators import (
@@ -33,7 +33,17 @@ class CourseSourcePatch(BaseModel):
     title: Optional[str] = None
 
 
+class SourceAnalysisPreview(BaseModel):
+    """Coarse understanding preview for the Sources UI (never full extract / DOCX)."""
+
+    source_id: int
+    source_summary: Optional[str] = None
+    key_points: list[str] = []
+
+
 class CourseSourceRead(BaseModel):
+    """Public source row — never returns full extracted_text (data minimization)."""
+
     model_config = ConfigDict(from_attributes=True)
 
     id: int
@@ -43,7 +53,8 @@ class CourseSourceRead(BaseModel):
     original_filename: Optional[str]
     file_path: Optional[str]
     mime_type: Optional[str]
-    extracted_text: Optional[str]
+    # Loaded from ORM for computed fields only — excluded from JSON.
+    extracted_text: Optional[str] = Field(default=None, exclude=True)
     priority: PriorityLoose
     status: str
     include_in_generation: bool = True
@@ -61,6 +72,16 @@ class CourseSourceRead(BaseModel):
     @classmethod
     def _null_include_true(cls, value: object) -> object:
         return True if value is None else value
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def has_extracted_text(self) -> bool:
+        return bool((self.extracted_text or "").strip())
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def extract_char_count(self) -> int:
+        return len(self.extracted_text or "")
 
     @computed_field  # type: ignore[prop-decorator]
     @property

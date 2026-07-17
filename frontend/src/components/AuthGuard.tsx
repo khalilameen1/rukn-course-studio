@@ -2,15 +2,18 @@
 
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { getToken } from "@/lib/auth";
+import {
+  getToken,
+  hasScope,
+  SCOPE_ADMIN_KNOWLEDGE,
+  SCOPE_AI_USAGE,
+} from "@/lib/auth";
 
 const PUBLIC_PATHS = new Set(["/login"]);
 
 /**
  * Client-side gate: redirects to /login when there's no stored token.
- * Doesn't validate the token against the backend - an expired/invalid
- * token is instead caught on the first API call (see lib/api.ts), which
- * clears it and redirects the same way.
+ * Also blocks /admin and /ai-usage without the matching scope (server still enforces).
  */
 export default function AuthGuard({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -18,12 +21,25 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    // Runs on mount and on every route change to decide whether this route
-    // needs a redirect to /login; not derivable from render since it reads
-    // localStorage (a browser-only external system).
     const isPublicPath = PUBLIC_PATHS.has(pathname);
     if (!isPublicPath && !getToken()) {
       router.replace("/login");
+      return;
+    }
+    if (
+      !isPublicPath &&
+      (pathname === "/admin" || pathname.startsWith("/admin/")) &&
+      !hasScope(SCOPE_ADMIN_KNOWLEDGE)
+    ) {
+      router.replace("/courses");
+      return;
+    }
+    if (
+      !isPublicPath &&
+      (pathname === "/ai-usage" || pathname.startsWith("/ai-usage/")) &&
+      !hasScope(SCOPE_AI_USAGE)
+    ) {
+      router.replace("/courses");
       return;
     }
     // eslint-disable-next-line react-hooks/set-state-in-effect

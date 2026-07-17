@@ -142,11 +142,11 @@ def test_strip_and_forbid_research_leaks_in_docx():
 
 
 def test_progress_labels_are_status_only():
-    # Research-stage labels stay on locked coarse map vocabulary (no evidence UI).
-    assert PROGRESS_READING_UPLOADS == "Building course map"
-    assert PROGRESS_FILLING_FACTS == "Building course map"
+    # Coarse ladder only — never evidence/citation UI copy.
+    assert PROGRESS_READING_UPLOADS == "Reading sources"
+    assert PROGRESS_FILLING_FACTS == "Filling knowledge gaps"
     assert PROGRESS_BUILDING_MEMORY == "Building course map"
-    assert PROGRESS_SPECIALIST_CRITIC == "Running specialist critic"
+    assert PROGRESS_SPECIALIST_CRITIC == "Reviewing lesson quality"
 
 
 def test_ledger_persists_internally_not_in_job_read(session):

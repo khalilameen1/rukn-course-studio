@@ -6,7 +6,9 @@ import type { AdminKnowledgeItem } from "@/lib/types";
 import KnowledgeItemForm, {
   type KnowledgeItemFormValues,
 } from "@/components/admin/KnowledgeItemForm";
-import KnowledgeItemGrid from "@/components/admin/KnowledgeItemGrid";
+import KnowledgeItemGrid, {
+  useKnowledgeCatalog,
+} from "@/components/admin/KnowledgeItemGrid";
 import EmptyState from "@/components/ui/EmptyState";
 import PageHeader from "@/components/ui/PageHeader";
 import DeployDiagnostics from "@/components/admin/DeployDiagnostics";
@@ -18,6 +20,7 @@ export default function AdminKnowledgePage() {
   const [editingItem, setEditingItem] = useState<AdminKnowledgeItem | null>(null);
   const [showInactive, setShowInactive] = useState(false);
   const [actionBusy, setActionBusy] = useState<string | null>(null);
+  const catalog = useKnowledgeCatalog();
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -64,6 +67,35 @@ export default function AdminKnowledgePage() {
     }
   }
 
+  async function handleRefreshDefaults() {
+    if (actionBusy) return;
+    setActionBusy("refresh-defaults");
+    try {
+      const preview = await api.refreshKnowledgeDefaults({ dryRun: true, confirm: false });
+      const keys = preview.would_refresh ?? [];
+      if (
+        !confirm(
+          `${preview.message}\n\nKeys (${keys.length}):\n${keys.slice(0, 12).join("\n")}` +
+            (keys.length > 12 ? "\n…" : "") +
+            "\n\nApply? Previous active rows are kept inactive as backups.",
+        )
+      ) {
+        return;
+      }
+      const report = await api.refreshKnowledgeDefaults({
+        dryRun: false,
+        confirm: true,
+      });
+      alert(report.message);
+      setShowInactive(true);
+      await refresh();
+    } catch (err) {
+      setError(formatApiErrorForDisplay(err));
+    } finally {
+      setActionBusy(null);
+    }
+  }
+
   async function handleSubmit(values: KnowledgeItemFormValues) {
     if (actionBusy) return;
     setActionBusy(editingItem ? `save-${editingItem.id}` : "create");
@@ -77,10 +109,31 @@ export default function AdminKnowledgePage() {
       };
 
       if (editingItem) {
-        await api.updateKnowledgeItem(editingItem.id, payload);
+        const meta = catalog[editingItem.key];
+        if (meta?.stable) {
+          const preview = (await api.updateKnowledgeItem(editingItem.id, payload, {
+            confirm: false,
+            dryRun: true,
+          })) as Record<string, unknown>;
+          if (
+            !confirm(
+              `${String(preview.message ?? "High-trust key change")}\n\n` +
+                `Fingerprint ${preview.content_fingerprint_before} → ${preview.content_fingerprint_after}\n\n` +
+                "Apply as a new version? A JSON snapshot is written first.",
+            )
+          ) {
+            return;
+          }
+        }
+        await api.updateKnowledgeItem(editingItem.id, payload, {
+          confirm: true,
+          dryRun: false,
+          confirmKey: editingItem.key,
+        });
         setEditingItem(null);
       } else {
-        await api.createKnowledgeItem(payload);
+        const known = Boolean(catalog[values.key]);
+        await api.createKnowledgeItem(payload, { allowCustomKey: !known });
       }
       await refresh();
     } catch (err) {
@@ -172,6 +225,16 @@ export default function AdminKnowledgePage() {
         >
           {actionBusy === "cleanup" ? "Working…" : "Clean duplicate active items"}
         </button>
+        <button
+          type="button"
+          className="btn-secondary"
+          disabled={Boolean(actionBusy)}
+          onClick={handleRefreshDefaults}
+        >
+          {actionBusy === "refresh-defaults"
+            ? "Refreshing…"
+            : "Refresh system defaults from code"}
+        </button>
       </div>
 
       {loading ? (
@@ -184,6 +247,7 @@ export default function AdminKnowledgePage() {
       ) : (
         <KnowledgeItemGrid
           items={items}
+          catalog={catalog}
           onEdit={setEditingItem}
           onDelete={handleDelete}
           onActivate={handleActivate}
@@ -196,6 +260,7 @@ export default function AdminKnowledgePage() {
         editingItem={editingItem}
         onSubmit={handleSubmit}
         onCancel={() => setEditingItem(null)}
+        onActivateVersion={handleActivate}
       />
     </div>
   );

@@ -63,6 +63,7 @@ from app.generation.knowledge_priority_ladder import (
 )
 from app.models.enums import SourceCategory
 from app.prompts.prompt_registry import PipelineStage
+from app.data.admin_knowledge_registry import STABLE_RULE_KEYS, STAGE_RULE_KEYS
 from app.services.source_analysis import SHORT_SOURCE_MAX_CHARS, select_relevant_chunks
 
 DEFAULT_MAX_TOTAL_CHARS = 6000
@@ -74,196 +75,10 @@ DEFAULT_MAX_TOTAL_CHARS = 6000
 # for traceability - so an old run's snapshot can be compared against
 # whatever version is active today. Not read by anything at runtime other
 # than the snapshot builder.
-PROMPT_COMPILER_VERSION = "2.21"
+PROMPT_COMPILER_VERSION = "2.22"
 
-# Stage -> the admin-knowledge keys actually relevant to it. Missing/
-# inactive keys are simply omitted (never an error) - see
-# app/generation/orchestrator.py `_load_active_rules`.
-# `rukn_generation_presets` is deliberately never included anywhere here:
-# it's for admin visibility / programmatic preset resolution, not prompt
-# text (see app/generation/presets.py).
-_STAGE_RULE_KEYS: dict[PipelineStage, tuple[str, ...]] = {
-    PipelineStage.BUILD_COURSE_MAP: (
-        "rukn_core_rules",
-        "rukn_practical_course_rules",
-        "rukn_high_signal_reel_doctrine",
-        "rukn_dynamic_teaching_curve",
-        "rukn_creator_persona_engine",
-        "rukn_creator_critic_loop",
-        "rukn_student_confusion_layer",
-        "rukn_master_mentor_engine",
-        "rukn_market_evergreen_gates",
-        "rukn_official_tool_docs_gate",
-        "rukn_originality_rights_gate",
-        "rukn_cost_hygiene_trusted_knowledge",
-        "rukn_knowledge_priority_ladder",
-        "rukn_source_authority_firewall",
-        "rukn_interpretation_guardrails",
-        "rukn_educational_creator_standard",
-        "rukn_source_distillation_gate",
-        "rukn_transcript_topic_relevance_gate",
-        "rukn_source_imperfection_gate",
-    ),
-    PipelineStage.WRITE_SINGLE_REEL: (
-        "rukn_core_rules",
-        "rukn_practical_course_rules",
-        "rukn_writing_style",
-        "rukn_high_signal_reel_doctrine",
-        "rukn_dynamic_teaching_curve",
-        "rukn_creator_persona_engine",
-        "rukn_creator_critic_loop",
-        "rukn_student_confusion_layer",
-        "rukn_master_mentor_engine",
-        "rukn_teleprompter_docx_contract",
-        "rukn_market_evergreen_gates",
-        "rukn_official_tool_docs_gate",
-        "rukn_originality_rights_gate",
-        "rukn_cost_hygiene_trusted_knowledge",
-        "rukn_knowledge_priority_ladder",
-        "rukn_source_authority_firewall",
-        "rukn_grounded_claims_gate",
-        "rukn_interpretation_guardrails",
-        "rukn_educational_creator_standard",
-        "rukn_source_distillation_gate",
-        "rukn_transcript_topic_relevance_gate",
-        "rukn_source_imperfection_gate",
-    ),
-    PipelineStage.REVIEW_SINGLE_REEL: (
-        "rukn_writing_style",
-        "rukn_high_signal_reel_doctrine",
-        "rukn_dynamic_teaching_curve",
-        "rukn_creator_persona_engine",
-        "rukn_creator_critic_loop",
-        "rukn_student_confusion_layer",
-        "rukn_master_mentor_engine",
-        "rukn_forbidden_phrases",
-        "rukn_quality_rubric",
-        "rukn_market_evergreen_gates",
-        "rukn_official_tool_docs_gate",
-        "rukn_originality_rights_gate",
-        "rukn_cost_hygiene_trusted_knowledge",
-        "rukn_knowledge_priority_ladder",
-        "rukn_source_authority_firewall",
-        "rukn_interpretation_guardrails",
-        "rukn_educational_creator_standard",
-        "rukn_anti_patterns_quality_checks",
-        "rukn_source_distillation_gate",
-        "rukn_transcript_topic_relevance_gate",
-        "rukn_source_imperfection_gate",
-    ),
-    PipelineStage.REVIEW_FIVE_REELS: (
-        "rukn_writing_style",
-        "rukn_high_signal_reel_doctrine",
-        "rukn_dynamic_teaching_curve",
-        "rukn_creator_persona_engine",
-        "rukn_creator_critic_loop",
-        "rukn_student_confusion_layer",
-        "rukn_master_mentor_engine",
-        "rukn_forbidden_phrases",
-        "rukn_quality_rubric",
-        "rukn_market_evergreen_gates",
-        "rukn_official_tool_docs_gate",
-        "rukn_originality_rights_gate",
-        "rukn_knowledge_priority_ladder",
-        "rukn_source_authority_firewall",
-        "rukn_interpretation_guardrails",
-        "rukn_educational_creator_standard",
-        "rukn_anti_patterns_quality_checks",
-        "rukn_source_distillation_gate",
-        "rukn_transcript_topic_relevance_gate",
-        "rukn_source_imperfection_gate",
-    ),
-    PipelineStage.REVIEW_MODULE: (
-        "rukn_writing_style",
-        "rukn_high_signal_reel_doctrine",
-        "rukn_dynamic_teaching_curve",
-        "rukn_creator_persona_engine",
-        "rukn_creator_critic_loop",
-        "rukn_student_confusion_layer",
-        "rukn_master_mentor_engine",
-        "rukn_forbidden_phrases",
-        "rukn_quality_rubric",
-        "rukn_market_evergreen_gates",
-        "rukn_official_tool_docs_gate",
-        "rukn_originality_rights_gate",
-        "rukn_knowledge_priority_ladder",
-        "rukn_source_authority_firewall",
-        "rukn_interpretation_guardrails",
-        "rukn_educational_creator_standard",
-        "rukn_anti_patterns_quality_checks",
-        "rukn_source_distillation_gate",
-        "rukn_transcript_topic_relevance_gate",
-        "rukn_source_imperfection_gate",
-    ),
-    PipelineStage.REVIEW_TWO_MODULES: (
-        "rukn_writing_style",
-        "rukn_high_signal_reel_doctrine",
-        "rukn_dynamic_teaching_curve",
-        "rukn_creator_persona_engine",
-        "rukn_creator_critic_loop",
-        "rukn_student_confusion_layer",
-        "rukn_master_mentor_engine",
-        "rukn_forbidden_phrases",
-        "rukn_quality_rubric",
-        "rukn_market_evergreen_gates",
-        "rukn_official_tool_docs_gate",
-        "rukn_originality_rights_gate",
-        "rukn_knowledge_priority_ladder",
-        "rukn_source_authority_firewall",
-        "rukn_interpretation_guardrails",
-        "rukn_educational_creator_standard",
-        "rukn_anti_patterns_quality_checks",
-        "rukn_source_distillation_gate",
-        "rukn_transcript_topic_relevance_gate",
-        "rukn_source_imperfection_gate",
-    ),
-    PipelineStage.FINAL_REVIEW: (
-        "rukn_forbidden_phrases",
-        "rukn_quality_rubric",
-        "rukn_high_signal_reel_doctrine",
-        "rukn_dynamic_teaching_curve",
-        "rukn_creator_persona_engine",
-        "rukn_creator_critic_loop",
-        "rukn_student_confusion_layer",
-        "rukn_master_mentor_engine",
-        "rukn_teleprompter_docx_contract",
-        "rukn_market_evergreen_gates",
-        "rukn_official_tool_docs_gate",
-        "rukn_originality_rights_gate",
-        "rukn_knowledge_priority_ladder",
-        "rukn_source_authority_firewall",
-        "rukn_grounded_claims_gate",
-        "rukn_interpretation_guardrails",
-        "rukn_educational_creator_standard",
-        "rukn_anti_patterns_quality_checks",
-        "rukn_source_distillation_gate",
-        "rukn_transcript_topic_relevance_gate",
-        "rukn_source_imperfection_gate",
-    ),
-    PipelineStage.REBUILD_FINAL_COURSE: (
-        "rukn_writing_style",
-        "rukn_high_signal_reel_doctrine",
-        "rukn_dynamic_teaching_curve",
-        "rukn_creator_persona_engine",
-        "rukn_creator_critic_loop",
-        "rukn_student_confusion_layer",
-        "rukn_master_mentor_engine",
-        "rukn_forbidden_phrases",
-        "rukn_teleprompter_docx_contract",
-        "rukn_market_evergreen_gates",
-        "rukn_official_tool_docs_gate",
-        "rukn_originality_rights_gate",
-        "rukn_knowledge_priority_ladder",
-        "rukn_source_authority_firewall",
-        "rukn_grounded_claims_gate",
-        "rukn_interpretation_guardrails",
-        "rukn_educational_creator_standard",
-        "rukn_anti_patterns_quality_checks",
-        "rukn_source_distillation_gate",
-        "rukn_transcript_topic_relevance_gate",
-        "rukn_source_imperfection_gate",
-    ),
-}
+# Stage maps + stable keys: see app/data/admin_knowledge_registry.py
+_STAGE_RULE_KEYS = STAGE_RULE_KEYS
 
 
 def select_rules_for_stage(all_rules: dict[str, str], stage: PipelineStage) -> dict[str, str]:
@@ -297,40 +112,8 @@ def select_packed_rules_for_stage(
 
 # --- Prompt caching preparation (§8) ------------------------------------
 #
-# The fixed Rukn admin-knowledge keys below never change per-course - they
-# are exactly what a real "stable" cache-control block would cover if/when
-# Anthropic prompt caching is wired in (see app/ai/anthropic_provider.py
-# and README.md "Prompt caching" for the honest current status: prepared,
-# not wired - the existing `_build_prompt` serializes one big JSON blob per
-# call today, mixing stable rules and dynamic per-course content in the
-# same block, so there is no separate stable message block to attach
-# `cache_control` to yet without a larger restructuring).
-STABLE_RULE_KEYS: tuple[str, ...] = (
-    "rukn_core_rules",
-    "rukn_practical_course_rules",
-    "rukn_writing_style",
-    "rukn_forbidden_phrases",
-    "rukn_quality_rubric",
-    "rukn_teleprompter_docx_contract",
-    "rukn_high_signal_reel_doctrine",
-    "rukn_dynamic_teaching_curve",
-    "rukn_creator_persona_engine",
-    "rukn_creator_critic_loop",
-    "rukn_student_confusion_layer",
-    "rukn_master_mentor_engine",
-    "rukn_market_evergreen_gates",
-    "rukn_official_tool_docs_gate",
-    "rukn_originality_rights_gate",
-    "rukn_knowledge_priority_ladder",
-    "rukn_source_authority_firewall",
-    "rukn_grounded_claims_gate",
-    "rukn_interpretation_guardrails",
-    "rukn_educational_creator_standard",
-    "rukn_anti_patterns_quality_checks",
-    "rukn_source_distillation_gate",
-    "rukn_transcript_topic_relevance_gate",
-    "rukn_source_imperfection_gate",
-)
+# Stable keys for a future Anthropic cache-control block. Canonical set is
+# the union of all STAGE_RULE_KEYS (imported from admin_knowledge_registry).
 
 
 def split_stable_and_dynamic_rules(
@@ -1116,6 +899,21 @@ def compile_source_context(
     degrade gracefully, don't fail.
     """
     excerpts = [_build_excerpt(source, query_text) for source in sources]
+    # Drop near-duplicate claim excerpts across sources (prompt cost hygiene).
+    from app.generation.claim_dedup import _norm_key
+
+    deduped: list[SourceExcerpt] = []
+    seen_keys: set[str] = set()
+    for excerpt in excerpts:
+        key = _norm_key(excerpt.text or "") or _norm_key(getattr(excerpt, "title", "") or "")
+        if not key:
+            deduped.append(excerpt)
+            continue
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        deduped.append(excerpt)
+    excerpts = deduped
     # Hard-cap low-signal excerpts before shared budget (credit hygiene).
     from app.generation.source_usefulness import LOW_SIGNAL_BRIEF_MAX_CHARS
 

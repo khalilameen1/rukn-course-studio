@@ -1,7 +1,10 @@
+"use client";
+
 import Link from "next/link";
 import BackendStatus from "@/components/BackendStatus";
 import Card from "@/components/ui/Card";
 import PageHeader from "@/components/ui/PageHeader";
+import { hasScope, SCOPE_ADMIN_KNOWLEDGE, SCOPE_AI_USAGE } from "@/lib/auth";
 
 const WORKFLOW = ["Inputs", "Generate", "Teleprompter-ready DOCX"] as const;
 
@@ -10,20 +13,25 @@ const SECTIONS = [
     href: "/admin",
     title: "Admin Knowledge Center",
     description: "Fixed ROKN rules used by every generation run.",
+    scope: SCOPE_ADMIN_KNOWLEDGE as string | null,
   },
   {
     href: "/courses",
     title: "Courses",
     description: "Create a brief, upload sources, generate the final DOCX.",
+    scope: null,
   },
   {
     href: "/ai-usage",
     title: "AI Usage / Operations",
     description: "Provider status and estimated app usage (not account balance).",
+    scope: SCOPE_AI_USAGE as string | null,
   },
 ];
 
 export default function Home() {
+  const sections = SECTIONS.filter((s) => !s.scope || hasScope(s.scope));
+
   return (
     <div className="flex flex-col gap-8">
       <PageHeader
@@ -45,7 +53,7 @@ export default function Home() {
       <BackendStatus />
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {SECTIONS.map((section) => (
+        {sections.map((section) => (
           <Link key={section.href} href={section.href} className="block">
             <Card interactive className="h-full">
               <h2 className="font-medium text-foreground">{section.title}</h2>

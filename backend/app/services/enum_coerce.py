@@ -1,9 +1,7 @@
-"""Coerce str Enum inputs that AI clients / legacy DBs often send wrong.
+"""Coerce str Enum inputs that clients / legacy DBs often send wrong.
 
-Typical mistakes this absorbs:
-- member NAME (`RUNNING`, `NOTES`) instead of value (`running`, `user_notes`)
-- renamed SourceCategory aliases (`main_content` → `scientific_reference`)
-- Enum instances mixed with bare strings
+Accepts member NAME (`RUNNING`) or value (`running`), plus optional aliases.
+Unrecognized values are returned unchanged so Pydantic can raise normally.
 """
 
 from __future__ import annotations
@@ -11,6 +9,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any, Type, TypeVar
 
+from app.db.types import resolve_str_enum_member
 from app.services.source_category_migrate import SOURCE_CATEGORY_LEGACY_ALIASES
 
 E = TypeVar("E", bound=Enum)
@@ -22,11 +21,6 @@ def coerce_str_enum(
     *,
     aliases: dict[str, str] | None = None,
 ) -> Any:
-    """Return an `enum_cls` member when possible; otherwise return `value` unchanged.
-
-    Leaving unrecognized values untouched lets Pydantic raise a normal
-    validation error instead of inventing a silent default.
-    """
     if value is None or isinstance(value, enum_cls):
         return value
     raw = getattr(value, "value", value)
@@ -38,14 +32,9 @@ def coerce_str_enum(
     if aliases and text in aliases:
         text = aliases[text]
     try:
-        return enum_cls(text)
-    except ValueError:
+        return resolve_str_enum_member(enum_cls, text)
+    except LookupError:
         pass
-    try:
-        return enum_cls[text]
-    except KeyError:
-        pass
-    # Case-insensitive value match (AI forms often send Title Case).
     lowered = text.lower()
     for member in enum_cls:
         if member.value.lower() == lowered or member.name.lower() == lowered:

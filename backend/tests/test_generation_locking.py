@@ -120,7 +120,12 @@ def test_regenerate_from_scratch_still_works_once_previous_job_is_terminal(tmp_p
     response = client.post(f"/courses/{course_id}/generate")
 
     assert response.status_code == 201
-    assert response.json()["status"] == "completed"
+    job_id = response.json()["id"]
+    # Async claim: worker finishes via BackgroundTasks before TestClient returns;
+    # response body is the claim snapshot — poll for terminal status.
+    latest = client.get(f"/jobs/{job_id}?course_id={course_id}")
+    assert latest.status_code == 200
+    assert latest.json()["status"] == "completed"
 
     with Session(engine) as session:
         jobs = generation_jobs.list(session, course_id=course_id)
@@ -134,7 +139,9 @@ def test_no_existing_job_generates_normally(tmp_path, monkeypatch):
     response = client.post(f"/courses/{course_id}/generate")
 
     assert response.status_code == 201
-    assert response.json()["status"] == "completed"
+    job_id = response.json()["id"]
+    latest = client.get(f"/jobs/{job_id}?course_id={course_id}")
+    assert latest.json()["status"] == "completed"
 
 
 def test_latest_generation_job_restores_state_after_refresh(tmp_path, monkeypatch):

@@ -111,7 +111,10 @@ export interface CourseSource {
   original_filename: string | null;
   file_path: string | null;
   mime_type: string | null;
-  extracted_text: string | null;
+  /** Full extract is never returned by the API (data minimization). */
+  extracted_text?: string | null;
+  has_extracted_text?: boolean;
+  extract_char_count?: number;
   priority: Priority;
   status: string;
   /** Human-readable status from backend computed field. */
@@ -159,9 +162,22 @@ export interface GenerationJob {
   last_saved_at?: string | null;
   estimated_usage_summary?: string | null;
   estimated_duration_summary?: string | null;
-  internal_risk_count?: number;
+  sources_run_summary?: string | null;
+  provenance_summary?: string | null;
+  architecture_summary?: string | null;
+  grounding_confidence?: string | null;
+  research_synthesis_summary?: string | null;
+  improve_next_tip?: string | null;
   generation_quality_mode?: GenerationQualityMode;
   web_research_mode?: WebResearchMode;
+  budget_warning?: string | null;
+  waste_warnings_json?: string[];
+  web_searches_count?: number;
+  research_memory_reuse_count?: number;
+  research_tips?: string[];
+  agent_roster?: { id: string; label: string; state: string }[];
+  live_eta_summary?: string | null;
+  public_stage_label?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -179,6 +195,7 @@ export interface CourseVersion {
 export interface LoginResponse {
   access_token: string;
   token_type: string;
+  scopes?: string[];
 }
 
 export interface HealthResponse {

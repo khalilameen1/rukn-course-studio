@@ -22,25 +22,26 @@ SOURCE_STATUS_MESSAGES: dict[str, str] = {
     PROCESSING: "Processing the uploaded file.",
     READY: "Text extracted successfully. Ready to use for generation.",
     PASSWORD_REQUIRED: (
-        "This PDF is password-protected. Re-upload it with the correct "
-        "password to extract its text."
+        "This PDF is password-protected. Use Unlock with the correct password "
+        "(no need to re-upload), or replace the file."
     ),
     EXTRACTION_BLOCKED: (
         "No text could be extracted from this file. It may be corrupted or "
-        "in a format we can't read."
+        "in a format we can't read. Try Retry, or upload a cleaner copy."
     ),
     SCANNED_NO_TEXT: (
-        "This PDF appears to be scanned or image-only, with no selectable "
-        "text. OCR isn't supported yet, so this source can't be used for "
-        "generation."
+        "This PDF appears to be scanned or image-only (no selectable text). "
+        "OCR is not supported in V1 — export a text PDF from your scanner/app, "
+        "or paste the text as notes, then upload again."
     ),
     POOR_EXTRACTION: (
         "The extracted text looks too short or garbled to be reliable. "
-        "Consider replacing this source with a cleaner file."
+        "It is excluded from generation until you explicitly include it. "
+        "Prefer replacing with a cleaner file."
     ),
-    FAILED: "Something went wrong while processing this file.",
+    FAILED: "Something went wrong while processing this file. Try Retry.",
     PROCESSING_FAILED: (
         "The file was uploaded, but text extraction or analysis failed. "
-        "You can retry processing without re-uploading."
+        "You can Retry processing without re-uploading."
     ),
 }

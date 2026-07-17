@@ -108,9 +108,19 @@ def _provider_health(session: Session | None, config: Settings) -> dict:
     }
 
 
+def build_public_diagnostics(config: Settings = default_settings) -> dict:
+    """Minimal unauthenticated probe — no CORS list, origins, or error text."""
+    return {
+        "ok": True,
+        "auth_enabled": config.auth_enabled,
+        "auth_secret_key_configured": bool(config.auth_secret_key),
+        "database_backend": _database_backend(config.database_url),
+        "ai_provider_ready": _ai_provider_ready(config),
+    }
+
+
 def build_diagnostics(config: Settings = default_settings, session: Session | None = None) -> dict:
-    """Build the diagnostics payload. Every value here must be safe to
-    return to an unauthenticated caller - see module docstring."""
+    """Build the full diagnostics payload (authenticated callers only)."""
     storage_dir = config.storage_dir
     try:
         storage_dir_exists = storage_dir.exists()

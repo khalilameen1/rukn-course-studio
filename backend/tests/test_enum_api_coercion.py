@@ -119,7 +119,6 @@ def test_generation_job_read_still_coerces_string_json_and_enums():
             "generation_quality_mode": "PREMIUM",
             "web_research_mode": "AUTONOMOUS_GAP_FILL",
             "waste_warnings_json": "[]",
-            "usage_by_stage_json": "{}",
             "created_at": now,
             "updated_at": now,
         }
@@ -128,4 +127,3 @@ def test_generation_job_read_still_coerces_string_json_and_enums():
     assert read.cancel_requested is False
     assert read.progress_percent == 0
     assert read.waste_warnings_json == []
-    assert read.usage_by_stage_json == {}

@@ -4,12 +4,13 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 import LogoutButton from "@/components/LogoutButton";
+import { hasScope, SCOPE_ADMIN_KNOWLEDGE, SCOPE_AI_USAGE } from "@/lib/auth";
 
 const NAV_LINKS = [
-  { href: "/", label: "Home" },
-  { href: "/admin", label: "Admin Knowledge" },
-  { href: "/courses", label: "Courses" },
-  { href: "/ai-usage", label: "AI Usage" },
+  { href: "/", label: "Home", scope: null as string | null },
+  { href: "/admin", label: "Admin Knowledge", scope: SCOPE_ADMIN_KNOWLEDGE },
+  { href: "/courses", label: "Courses", scope: null },
+  { href: "/ai-usage", label: "AI Usage", scope: SCOPE_AI_USAGE },
 ];
 
 /**
@@ -20,6 +21,9 @@ const NAV_LINKS = [
 export default function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const hideShellChrome = pathname === "/login";
+  const links = NAV_LINKS.filter(
+    (link) => !link.scope || hasScope(link.scope),
+  );
 
   return (
     <div className="flex min-h-full flex-col">
@@ -36,7 +40,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
               </span>
             </Link>
             <nav className="flex flex-wrap items-center gap-1 text-sm">
-              {NAV_LINKS.map((link) => {
+              {links.map((link) => {
                 const active =
                   link.href === "/"
                     ? pathname === "/"

@@ -291,4 +291,5 @@ def test_new_generation_after_safe_cancellation_works(tmp_path, monkeypatch):
     second = client.post(f"/courses/{course_id}/generate")
     assert second.status_code == 201
     assert second.json()["id"] != first_id
-    assert second.json()["status"] == "completed"
+    done = client.get(f"/jobs/{second.json()['id']}?course_id={course_id}")
+    assert done.json()["status"] == "completed"

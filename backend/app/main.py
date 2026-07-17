@@ -13,6 +13,7 @@ from app.auth.middleware import AuthMiddleware
 from app.config import settings
 from app.db import engine, init_db
 from app.routers import (
+    admin_audit,
     admin_knowledge,
     ai_usage,
     auth,
@@ -52,12 +53,7 @@ async def lifespan(app: FastAPI):
         directory.mkdir(parents=True, exist_ok=True)
 
     init_db()
-
-    # Safe to run on every startup: seed_admin_knowledge.seed() only ever
-    # creates a row for a key that has zero rows, so this never duplicates
-    # an item and never overwrites one a user has since edited (see
-    # app/seed_admin_knowledge.py). This is what makes the Admin Knowledge
-    # Center auto-populate instead of needing a manual command every deploy.
+    # Idempotent: only inserts keys that have zero rows (never overwrites edits).
     with Session(engine) as session:
         seed_admin_knowledge(session)
 
@@ -121,13 +117,14 @@ app.add_middleware(
     # Authorization + JSON Content-Type trigger browser preflight on
     # protected POSTs (generate) and GETs (ai-usage). Accept is listed
     # explicitly so Access-Control-Request-Headers including it succeeds.
-    allow_headers=["Authorization", "Content-Type", "Accept"],
+    allow_headers=["Authorization", "Content-Type", "Accept", "Idempotency-Key"],
 )
 
 app.include_router(health.router)
 app.include_router(build_info.router)
 app.include_router(auth.router)
 app.include_router(admin_knowledge.router)
+app.include_router(admin_audit.router)
 app.include_router(courses.router)
 app.include_router(sources.router)
 app.include_router(generation.router)

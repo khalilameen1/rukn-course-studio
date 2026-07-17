@@ -22,9 +22,8 @@ PUBLIC_ROUTES: set[tuple[str, str]] = {
     ("GET", "/health"),
     ("GET", "/build-info"),
     ("POST", "/auth/login"),
-    # Must stay public: it's the tool used to diagnose why login itself is
-    # broken (see app/auth/diagnostics.py) - it would be useless if it also
-    # required a token to reach.
+    # Minimal public probe only — full diagnostics require auth
+    # (GET /auth/diagnostics/full).
     ("GET", "/auth/diagnostics"),
 }
 
@@ -98,5 +97,45 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 status_code=401,
             )
 
+        jti = payload.get("jti")
+        if jti:
+            try:
+                from sqlmodel import Session
+
+                from app.auth.token_denylist import is_jti_revoked
+                from app.db import engine
+
+                with Session(engine) as session:
+                    if is_jti_revoked(session, jti):
+                        return JSONResponse(
+                            {"detail": "Invalid or expired token"},
+                            status_code=401,
+                        )
+            except Exception:
+                # Denylist check must not take the API down if the table is
+                # mid-migration; fail open only for the denylist lookup.
+                pass
+
+        from app.auth.scopes import has_scope, required_scope_for_path
+
+        scopes = payload.get("scopes") or []
         request.state.username = payload["sub"]
+        request.state.scopes = scopes
+        request.state.token_jti = jti
+        request.state.token_exp = payload.get("exp")
+
+        needed = required_scope_for_path(request.method, normalized_path)
+        if needed and not has_scope(scopes, needed):
+            return JSONResponse(
+                {
+                    "detail": (
+                        f"Missing scope {needed!r} for this route. "
+                        "Sign in with an account that has Admin Knowledge access."
+                        if needed.endswith("admin_knowledge:*")
+                        else f"Missing scope {needed!r} for this route."
+                    )
+                },
+                status_code=403,
+            )
+
         return await call_next(request)

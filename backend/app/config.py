@@ -139,14 +139,14 @@ class Settings(BaseSettings):
     # hanging the generation run indefinitely.
     anthropic_request_timeout_seconds: float = 120.0
 
-    # Single-admin-user auth for this internal MVP (see app/auth/). No
-    # multi-user accounts, registration, roles, or OAuth - one username/
-    # password pair from the environment, guarding every route except
-    # GET /health and POST /auth/login (see app/auth/middleware.py).
+    # Auth for this internal MVP (see app/auth/). Admin gets full scopes;
+    # optional OPERATOR_* credentials get courses:* only (no Admin Knowledge).
     auth_enabled: bool = True
     admin_username: str | None = None
     admin_password: str | None = None
     auth_secret_key: str | None = None
+    operator_username: str | None = None
+    operator_password: str | None = None
 
     # Budget Guard (see app/generation/budget_guard.py) - observational
     # only, never blocks/aborts a run. Both budgets default to `None`
@@ -171,6 +171,14 @@ class Settings(BaseSettings):
     # When True (default), only one generation job may be active globally
     # across all courses. Env: GENERATION_GLOBAL_LOCK
     generation_global_lock: bool = True
+
+    # Generation runs off the HTTP request via BackgroundTasks (single
+    # Uvicorn worker expected). Multi-worker: keep generation_global_lock
+    # and Postgres advisory locks; do not rely on in-process map/throttle
+    # maps alone. Env: documented in app/generation/job_runner.py
+
+    # Orphan upload file retention (days). 0 disables purge. Env: SOURCE_RETENTION_DAYS
+    source_retention_days: int = 90
 
 
 settings = Settings()

@@ -4,6 +4,7 @@ call (see app/generation/orchestrator.py `_local_review_single_reel`).
 No AI, no embeddings, no vector search anywhere in this package.
 """
 
+from app.validators.anti_patterns_checker import check_anti_patterns_script
 from app.validators.anti_template_checker import check_anti_template
 from app.validators.creator_persona_checker import check_creator_persona_script
 from app.validators.forbidden_phrase_checker import check_forbidden_phrases
@@ -17,6 +18,7 @@ from app.validators.teaching_curve_checker import (
 )
 
 __all__ = [
+    "check_anti_patterns_script",
     "check_anti_template",
     "check_anti_flatness",
     "check_anti_overperformance",

@@ -18,6 +18,7 @@ from app.security.secret_redaction import REDACTED, redact_secrets
 from app.security.url_safety import UnsafeURLError, assert_safe_public_https_url
 from app.services.upload_safety import (
     assert_content_matches_extension,
+    assert_course_output_file,
     assert_path_under_root,
     sanitize_filename,
 )
@@ -425,3 +426,137 @@ def test_invalid_token_detail_is_generic(auth_on):
     )
     assert res.status_code == 401
     assert res.json()["detail"] == "Invalid or expired token"
+
+
+def test_course_output_path_rejects_cross_course_idor(tmp_path):
+    """assert_path_under_root alone is not enough — scope to outputs/{course_id}/."""
+    from fastapi import HTTPException
+
+    root = tmp_path / "outputs"
+    own = root / "1"
+    other = root / "2"
+    own.mkdir(parents=True)
+    other.mkdir(parents=True)
+    victim = other / "course_v1.docx"
+    victim.write_bytes(b"secret")
+    allowed = own / "course_v1.docx"
+    allowed.write_bytes(b"ok")
+
+    assert assert_course_output_file(allowed, course_id=1, outputs_root=root) == allowed.resolve()
+    with pytest.raises(HTTPException) as exc:
+        assert_course_output_file(victim, course_id=1, outputs_root=root)
+    assert exc.value.status_code == 400
+
+    # Flat file in outputs/ (legacy) — must not be served for a course.
+    flat = root / "course_1_v1.docx"
+    flat.write_bytes(b"flat")
+    with pytest.raises(HTTPException):
+        assert_course_output_file(flat, course_id=1, outputs_root=root)
+
+
+def test_course_version_unique_and_orphan_docx_cleanup(tmp_path, monkeypatch):
+    """Unique (course_id, version_number) + unlink DOCX if version row insert fails."""
+    import app.db as db_module
+    from app.crud import course_versions, courses
+    from app.models.enums import ExplanationLevel, StructureMode
+    from sqlalchemy.exc import IntegrityError
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'ver.db'}")
+    SQLModel.metadata.create_all(engine)
+    monkeypatch.setattr(db_module, "engine", engine)
+
+    outputs = tmp_path / "outputs" / "1"
+    outputs.mkdir(parents=True)
+    docx = outputs / "course_v1.docx"
+    docx.write_bytes(b"PK fake")
+
+    with Session(engine) as session:
+        course = courses.create(
+            session,
+            title="T",
+            audience="a",
+            outcome="o",
+            structure_mode=StructureMode.CONNECTED_NO_MODULES,
+            explanation_level=ExplanationLevel.FINAL_ONLY,
+        )
+        course_versions.create(
+            session,
+            course_id=course.id,
+            version_number=1,
+            output_docx_path=str(docx),
+            summary_text="s",
+            report_text=None,
+        )
+        with pytest.raises(IntegrityError):
+            course_versions.create(
+                session,
+                course_id=course.id,
+                version_number=1,
+                output_docx_path=str(docx),
+                summary_text="dup",
+                report_text=None,
+            )
+        session.rollback()
+
+    # Simulate orchestrator orphan cleanup on create failure.
+    orphan = outputs / "course_v2.docx"
+    orphan.write_bytes(b"orphan")
+    try:
+        raise RuntimeError("simulated db failure")
+    except Exception:
+        try:
+            orphan.unlink(missing_ok=True)
+        except OSError:
+            pass
+    assert not orphan.exists()
+
+
+def test_stale_job_release_uses_last_saved_heartbeat(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    import app.db as db_module
+    from app.crud import courses, generation_jobs
+    from app.models.enums import ExplanationLevel, JobStatus, StructureMode
+    from app.services.generation_maintenance import release_stale_active_jobs
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'stale.db'}")
+    SQLModel.metadata.create_all(engine)
+    monkeypatch.setattr(db_module, "engine", engine)
+
+    with Session(engine) as session:
+        course = courses.create(
+            session,
+            title="T",
+            audience="a",
+            outcome="o",
+            structure_mode=StructureMode.CONNECTED_NO_MODULES,
+            explanation_level=ExplanationLevel.FINAL_ONLY,
+        )
+        old = datetime.now(timezone.utc) - timedelta(hours=3)
+        recent = datetime.now(timezone.utc) - timedelta(minutes=5)
+        live = generation_jobs.create(
+            session,
+            course_id=course.id,
+            status=JobStatus.RUNNING,
+            current_stage="generating",
+            progress_percent=40,
+        )
+        live.updated_at = old
+        live.last_saved_at = recent
+        session.add(live)
+        dead = generation_jobs.create(
+            session,
+            course_id=course.id,
+            status=JobStatus.RUNNING,
+            current_stage="generating",
+            progress_percent=10,
+        )
+        dead.updated_at = old
+        dead.last_saved_at = old
+        session.add(dead)
+        session.commit()
+
+        released = release_stale_active_jobs(session, max_age_minutes=90)
+        assert released == 1
+        assert generation_jobs.get(session, live.id).status == JobStatus.RUNNING
+        assert generation_jobs.get(session, dead.id).status == JobStatus.FAILED

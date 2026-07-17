@@ -26,6 +26,12 @@ export default function NotesSourceForm({
     setSubmitting(true);
     setError(null);
     try {
+      if (category === "flow_reference") {
+        const ok = confirm(
+          "Natural spoken language sample is for colloquial flow only — not facts, hooks, structure, or examples. Continue?",
+        );
+        if (!ok) return;
+      }
       await onAdd(text, category, priority);
       setText("");
     } catch (err) {

@@ -19,13 +19,15 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
+from collections.abc import Callable
+from typing import Optional
 
 from pydantic import BaseModel, Field
 
 from app.models.enums import WebResearchMode
 
-PROGRESS_READING_UPLOADS = "Building course map"
-PROGRESS_FILLING_FACTS = "Building course map"
+PROGRESS_READING_UPLOADS = "Reading sources"
+PROGRESS_FILLING_FACTS = "Filling knowledge gaps"
 PROGRESS_BUILDING_MEMORY = "Building course map"
 
 # Forbidden in spoken transcript / DOCX (research & confirmation leaks).
@@ -48,6 +50,44 @@ RESEARCH_LEAK_SUBSTRINGS: tuple[str, ...] = (
     "research note",
     "ask the user",
     "confirm with the user",
+    # Arabic / colloquial citation cues
+    "حسب المصدر",
+    "وفقاً للمصدر",
+    "وفقا للمصدر",
+    "كما جاء في ويكيبيديا",
+    "انظر الرابط",
+    "المرجع:",
+    "مصدر:",
+)
+
+# Cap autonomous Wikipedia/docs fetches per run (cost + latency).
+MAX_WEB_SEARCHES_PER_RUN = 5
+UPLOAD_THICK_CHARS = 2000
+_FETCH_WORKERS = 3
+
+# Allowlisted official help hosts (SSRF-safe) for tool-platform gaps.
+OFFICIAL_TOOL_DOC_URLS: dict[str, str] = {
+    "Meta Ads": "https://www.facebook.com/business/help",
+    "Google Ads": "https://support.google.com/google-ads",
+    "TikTok Ads": "https://ads.tiktok.com/help",
+    "Shopify": "https://help.shopify.com",
+    "Canva": "https://www.canva.com/help",
+    "WordPress": "https://wordpress.org/documentation",
+    "ChatGPT": "https://help.openai.com",
+    "Claude": "https://support.anthropic.com",
+}
+OFFICIAL_DOC_HOSTS: frozenset[str] = frozenset(
+    {
+        "www.facebook.com",
+        "facebook.com",
+        "support.google.com",
+        "ads.tiktok.com",
+        "help.shopify.com",
+        "www.canva.com",
+        "wordpress.org",
+        "help.openai.com",
+        "support.anthropic.com",
+    }
 )
 
 SENSITIVE_DOMAIN_CUES = re.compile(
@@ -141,7 +181,13 @@ def strip_research_leaks_from_script(script_text: str) -> str:
     """Remove accidental research/confirmation lines from spoken script."""
     if not script_text:
         return script_text
-    text = script_text
+    # Strip URLs before substring leaks like "https://" which would leave bare hosts.
+    text = re.sub(
+        r"https?://\S+|www\.\S+|\b[\w.-]+\.(?:com|org|net|io|edu|gov)(?:/\S*)?",
+        "",
+        script_text,
+        flags=re.IGNORECASE,
+    )
     for leak in RESEARCH_LEAK_SUBSTRINGS:
         text = re.sub(re.escape(leak), "", text, flags=re.IGNORECASE)
     lines = []
@@ -149,8 +195,22 @@ def strip_research_leaks_from_script(script_text: str) -> str:
         low = line.lower()
         if any(leak in low for leak in RESEARCH_LEAK_SUBSTRINGS):
             continue
-        if re.search(r"https?://\S+|www\.\S+", line):
-            line = re.sub(r"https?://\S+|www\.\S+", "", line).strip()
+        if re.search(
+            r"(حسب المصدر|وفقاً? للمصدر|انظر الرابط|المرجع:|مصدر:)",
+            line,
+        ):
+            continue
+        if re.search(
+            r"https?://\S+|www\.\S+|\b[\w.-]+\.(?:com|org|net|io|edu|gov)(?:/\S*)?",
+            line,
+            flags=re.IGNORECASE,
+        ):
+            line = re.sub(
+                r"https?://\S+|www\.\S+|\b[\w.-]+\.(?:com|org|net|io|edu|gov)(?:/\S*)?",
+                "",
+                line,
+                flags=re.IGNORECASE,
+            ).strip()
             if not line:
                 continue
         line = re.sub(r"\s{2,}", " ", line).strip(" ,،")
@@ -205,50 +265,25 @@ def identify_factual_gaps(
     upload_memory: SourceMemory,
     max_gaps: int = 5,
 ) -> list[ResearchGap]:
-    """Heuristic gaps when uploads are thin relative to the brief."""
-    blob = " ".join(item.summary for item in upload_memory.items)
-    brief_bits = [
-        w
-        for w in re.findall(
-            r"[\w\u0600-\u06FF]{4,}",
-            f"{course_title} {audience} {outcome} {special_notes or ''}",
-        )
-        if len(w) >= 4
-    ]
-    gaps: list[ResearchGap] = []
-    sensitive = is_sensitive_domain(
-        f"{course_title} {outcome} {special_notes or ''} {blob}"
+    """Structured brief needs (definition/tool/practice/market), not token soup."""
+    from app.generation.research_needs import build_structured_research_needs
+
+    needs = build_structured_research_needs(
+        course_title=course_title,
+        audience=audience,
+        outcome=outcome,
+        special_notes=special_notes,
+        upload_summaries=[item.summary for item in upload_memory.items],
+        max_needs=max_gaps,
     )
-
-    # If uploads are very short, treat core outcome terms as gaps.
-    thin = len(blob) < 400
-    seen: set[str] = set()
-    for term in brief_bits:
-        key = term.lower()
-        if key in seen:
-            continue
-        if not thin and key in blob.lower():
-            continue
-        seen.add(key)
-        gaps.append(
-            ResearchGap(
-                topic=term,
-                reason="missing_practical_or_factual_coverage",
-                sensitive=sensitive or is_sensitive_domain(term),
-            )
+    return [
+        ResearchGap(
+            topic=n.question,
+            reason=n.why_needed,
+            sensitive=n.sensitive,
         )
-        if len(gaps) >= max_gaps:
-            break
-
-    if not gaps and thin:
-        gaps.append(
-            ResearchGap(
-                topic=course_title or outcome or "course topic",
-                reason="insufficient_uploaded_sources",
-                sensitive=sensitive,
-            )
-        )
-    return gaps
+        for n in needs
+    ]
 
 
 class ResearchBackend:
@@ -410,6 +445,79 @@ def get_research_backend(prefer_fake: bool = False) -> ResearchBackend:
     return WikipediaResearchBackend()
 
 
+def _tool_name_from_gap(topic: str) -> str | None:
+    low = (topic or "").lower()
+    for name in OFFICIAL_TOOL_DOC_URLS:
+        if name.lower() in low:
+            return name
+    # Alias fragments
+    aliases = {
+        "meta ads": "Meta Ads",
+        "facebook ads": "Meta Ads",
+        "google ads": "Google Ads",
+        "tiktok": "TikTok Ads",
+        "shopify": "Shopify",
+        "canva": "Canva",
+        "wordpress": "WordPress",
+        "chatgpt": "ChatGPT",
+        "claude": "Claude",
+    }
+    for alias, canonical in aliases.items():
+        if alias in low:
+            return canonical
+    return None
+
+
+def fetch_official_tool_snippet(tool_name: str, *, prefer_fake: bool) -> list[WebFact]:
+    """Allowlisted official help page fetch — never arbitrary open web."""
+    url = OFFICIAL_TOOL_DOC_URLS.get(tool_name)
+    if not url:
+        return []
+    if prefer_fake:
+        return FakeResearchBackend().fetch_facts(
+            f"{tool_name} official documentation help center",
+            sensitive=True,
+        )
+    from app.security.url_safety import UnsafeURLError, assert_safe_public_https_url
+
+    try:
+        safe = assert_safe_public_https_url(url, allowed_hostnames=OFFICIAL_DOC_HOSTS)
+    except UnsafeURLError:
+        return []
+    try:
+        req = urllib.request.Request(
+            safe,
+            headers={"User-Agent": WikipediaResearchBackend.USER_AGENT},
+        )
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+    except (urllib.error.URLError, TimeoutError, OSError):
+        return []
+    # Strip tags lightly for a short summary (stdlib only).
+    text = re.sub(r"<script[\s\S]*?</script>", " ", raw, flags=re.I)
+    text = re.sub(r"<style[\s\S]*?</style>", " ", text, flags=re.I)
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    if len(text) < 80:
+        return []
+    summary = text[:900] + ("…" if len(text) > 900 else "")
+    return [
+        WebFact(
+            title=f"{tool_name} Help — current guidance",
+            summary=summary,
+            url=url,
+            authority="high",
+            query=tool_name,
+        )
+    ]
+
+
+def _query_for_gap(gap: ResearchGap) -> str:
+    if gap.reason in {"platform_current_tool_docs"} or "official" in (gap.reason or ""):
+        return f"official documentation help center {gap.topic}"
+    return gap.topic
+
+
 @dataclass
 class AutonomousResearchResult:
     upload_memory: SourceMemory
@@ -434,6 +542,7 @@ def run_autonomous_gap_fill(
     prefer_fake: bool = False,
     cached_web_memory: WebSourceMemory | dict | None = None,
     course_id: int | None = None,
+    on_progress: Callable[[str], None] | None = None,
 ) -> AutonomousResearchResult:
     """Inspect uploads, research gaps if enabled, build internal memories/ledger.
 
@@ -441,6 +550,8 @@ def run_autonomous_gap_fill(
     information need. Refreshes only when stale / low-confidence / platform-
     current freshness requires it. On research failure, continues with uploads.
     """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
     from app.generation.research_memory import (
         ResearchMemoryStore,
         build_research_need,
@@ -474,7 +585,6 @@ def run_autonomous_gap_fill(
             web_memory = WebSourceMemory()
 
     research_store = ResearchMemoryStore()
-    # Load persisted research entries from web memory blob.
     if web_memory.research_entries:
         research_store = ResearchMemoryStore.model_validate(
             {
@@ -506,9 +616,18 @@ def run_autonomous_gap_fill(
         special_notes=special_notes,
         upload_memory=upload_memory,
     )
+    upload_chars = sum(len(i.summary or "") for i in upload_memory.items)
+    # Thick libraries: only keep tool/platform needs (skip junk definition spam).
+    if upload_chars >= UPLOAD_THICK_CHARS:
+        gaps = [
+            g
+            for g in gaps
+            if g.reason in {"platform_current_tool_docs", "market_evergreen"}
+            or "tool" in (g.reason or "")
+        ][:2]
+
     backend = backend or get_research_backend(prefer_fake=prefer_fake)
     excerpts: list[tuple[str, str]] = [(i.title, i.summary) for i in web_memory.items]
-    # Seed excerpts from research memory answers already cached.
     for entry in research_store.entries:
         if entry.extracted_answer:
             excerpts.append(
@@ -518,7 +637,10 @@ def run_autonomous_gap_fill(
                 )
             )
 
+    to_fetch: list[ResearchGap] = []
     for gap in gaps:
+        if on_progress:
+            on_progress(f"{PROGRESS_FILLING_FACTS}: {gap.topic[:60]}")
         need = build_research_need(
             question=gap.topic,
             why_needed=gap.reason,
@@ -560,22 +682,56 @@ def run_autonomous_gap_fill(
             continue
 
         key = normalize_gap_key(gap.topic)
-        # Legacy gaps_researched list — still skip identical topics unless stale refresh.
         if (
             reuse_reason not in {"stale_or_low_confidence"}
-            and (key in cached_keys
-            or any(
-                key in normalize_gap_key(g) or normalize_gap_key(g) in key
-                for g in web_memory.gaps_researched
-            ))
+            and (
+                key in cached_keys
+                or any(
+                    key in normalize_gap_key(g) or normalize_gap_key(g) in key
+                    for g in web_memory.gaps_researched
+                )
+            )
         ):
             cache_hits += 1
             continue
 
-        facts = backend.fetch_facts(gap.topic, sensitive=gap.sensitive)
-        searches += 1
+        to_fetch.append(gap)
 
-        # Filter to trusted factual sources only.
+    to_fetch = to_fetch[:MAX_WEB_SEARCHES_PER_RUN]
+
+    def _fetch_one(gap: ResearchGap) -> tuple[ResearchGap, list[WebFact]]:
+        tool = _tool_name_from_gap(gap.topic)
+        facts: list[WebFact] = []
+        if tool and (
+            gap.reason == "platform_current_tool_docs" or gap.sensitive
+        ):
+            facts = fetch_official_tool_snippet(tool, prefer_fake=prefer_fake)
+        if not facts:
+            facts = backend.fetch_facts(
+                _query_for_gap(gap), sensitive=gap.sensitive
+            )
+        return gap, facts
+
+    fetched: list[tuple[ResearchGap, list[WebFact]]] = []
+    if to_fetch:
+        with ThreadPoolExecutor(max_workers=min(_FETCH_WORKERS, len(to_fetch))) as pool:
+            futs = [pool.submit(_fetch_one, g) for g in to_fetch]
+            for fut in as_completed(futs):
+                try:
+                    fetched.append(fut.result())
+                    searches += 1
+                except Exception:
+                    continue
+
+    for gap, facts in fetched:
+        need = build_research_need(
+            question=gap.topic,
+            why_needed=gap.reason,
+            course_id=course_id,
+            existing_memory_checked=True,
+            required_source_quality="highest" if gap.sensitive else "strong",
+        )
+        key = normalize_gap_key(gap.topic)
         scored = [
             ScoredWebHit(
                 title=f.title,
@@ -643,10 +799,13 @@ def run_autonomous_gap_fill(
         web_memory.gaps_researched.append(gap.topic)
         cached_keys.add(key)
 
+    from app.generation.research_synthesis import merge_specialist_excerpts
+
+    excerpts = merge_specialist_excerpts(excerpts)
+
     web_memory.research_entries = [
         e.model_dump(mode="json") for e in research_store.entries
     ]
-    # Cap needs log growth (cost hygiene / storage).
     logged = list(research_store.needs_logged) + list(web_memory.needs_logged)
     web_memory.needs_logged = logged[-50:]
 

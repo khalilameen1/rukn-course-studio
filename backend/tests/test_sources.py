@@ -72,12 +72,17 @@ def test_upload_and_list_sources(client):
 
 
 def test_delete_source_removes_row_and_file(client):
-    test_client, _ = client
+    test_client, engine = client
     course_id = _create_course(test_client)
     uploaded = _upload_source(test_client, course_id)
     source_id = uploaded["id"]
 
-    file_path = Path(uploaded["file_path"])
+    from app.models.course_source import CourseSource
+
+    with Session(engine) as session:
+        row = session.get(CourseSource, source_id)
+        assert row is not None and row.file_path
+        file_path = Path(row.file_path)
     assert file_path.exists()
 
     # Default call is a dry run: nothing deleted yet.
@@ -88,6 +93,7 @@ def test_delete_source_removes_row_and_file(client):
 
     delete_response = test_client.delete(
         f"/courses/{course_id}/sources/{source_id}?confirm=true&dry_run=false"
+        f"&confirm_name={uploaded['original_filename']}"
     )
     assert delete_response.status_code == 200
     assert delete_response.json()["applied"] is True

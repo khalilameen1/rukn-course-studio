@@ -75,6 +75,15 @@ class GenerationJob(SQLModel, table=True):
     estimated_usage_summary: Optional[str] = None  # short token hint if any
     # Human review handoff (coarse — never DOCX / never critic notes).
     estimated_duration_summary: Optional[str] = None  # e.g. "~120 min"
+    # Coarse used/weak/skipped source honesty for the Generate UI (never DOCX).
+    sources_run_summary: Optional[str] = None
+    # Coarse grounding provenance one-liner (never URLs / citations).
+    provenance_summary: Optional[str] = None
+    # GENSPARK-style public run signals (never agent text / never DOCX).
+    architecture_summary: Optional[str] = None
+    grounding_confidence: Optional[str] = None  # strong | mixed | weak
+    research_synthesis_summary: Optional[str] = None
+    improve_next_tip: Optional[str] = None
     internal_risk_count: int = Field(default=0)
     # Locked architecture depth for this run (Preview | Premium).
     generation_quality_mode: GenerationQualityMode = Field(

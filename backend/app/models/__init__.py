@@ -21,6 +21,11 @@ from app.models.enums import (
 from app.models.generation_job import GenerationJob
 from app.models.source_analysis import SourceAnalysis
 
+# Side-effect imports: register auth / lock tables on SQLModel.metadata.
+from app.auth.login_throttle import LoginThrottleEvent  # noqa: F401
+from app.auth.token_denylist import RevokedToken  # noqa: F401
+from app.generation.map_lock import CourseMapLock  # noqa: F401
+
 __all__ = [
     "AdminKnowledgeItem",
     "AIUsageEvent",

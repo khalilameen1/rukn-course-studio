@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { EMPTY_COURSE_VALUES, type CourseFormValues } from "@/components/courses/CourseForm";
 import ActionError, { actionErrorFromUnknown } from "@/components/ui/ActionError";
-import { api, formatUploadErrorForDisplay } from "@/lib/api";
+import { api, ApiError, formatUploadErrorForDisplay } from "@/lib/api";
 import BriefWorkspace from "@/components/courses/new/BriefWorkspace";
 import CourseMapWorkspace from "@/components/courses/new/CourseMapWorkspace";
 import NewCourseStepBar from "@/components/courses/new/NewCourseStepBar";
@@ -66,6 +66,11 @@ export default function NewCoursePage() {
   const [busy, setBusy] = useState(false);
   const [allowLeave, setAllowLeave] = useState(false);
   const [draftSavedNotice, setDraftSavedNotice] = useState<string | null>(null);
+  const createIdempotencyKeyRef = useRef<string>(
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? `new-course-${crypto.randomUUID()}`
+      : `new-course-${Date.now()}`,
+  );
 
   useEffect(() => {
     const draft = loadNewCourseDraft();
@@ -178,19 +183,24 @@ export default function NewCoursePage() {
       });
       return courseId;
     }
-    const course = await api.createCourse({
-      title: values.title,
-      audience: values.audience,
-      outcome: values.outcome,
-      special_notes: values.special_notes || null,
-      course_domain: values.course_domain || null,
-      structure_mode: values.structure_mode,
-      manual_map_text: values.manual_map_text || null,
-      explanation_level: values.explanation_level,
-      generation_preset: values.generation_preset,
-      generation_quality_mode: values.generation_quality_mode,
-      target_market: values.target_market,
-    });
+    const course = await api.createCourse(
+      {
+        title: values.title,
+        audience: values.audience,
+        outcome: values.outcome,
+        special_notes: values.special_notes || null,
+        course_domain: values.course_domain || null,
+        structure_mode: values.structure_mode,
+        manual_map_text: values.manual_map_text || null,
+        explanation_level: values.explanation_level,
+        generation_preset: values.generation_preset,
+        generation_quality_mode: values.generation_quality_mode,
+        target_market: values.target_market,
+      },
+      {
+        idempotencyKey: createIdempotencyKeyRef.current,
+      },
+    );
     setCourseId(course.id);
     return course.id;
   }
@@ -219,10 +229,22 @@ export default function NewCoursePage() {
     setPendingPastes([]);
 
     for (const item of pendingFiles) {
-      await api.uploadSource(id, item.file, item.source_category, item.priority, {
-        title: item.title || undefined,
-        include_in_generation: item.include_in_generation,
-      });
+      try {
+        await api.uploadSource(id, item.file, item.source_category, item.priority, {
+          title: item.title || undefined,
+          include_in_generation: item.include_in_generation,
+        });
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 409) {
+          await api.uploadSource(id, item.file, item.source_category, item.priority, {
+            title: item.title || undefined,
+            include_in_generation: item.include_in_generation,
+            force: true,
+          });
+        } else {
+          throw err;
+        }
+      }
     }
     setPendingFiles([]);
   }

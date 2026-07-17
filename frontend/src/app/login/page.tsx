@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation";
 import { api, ApiError, formatApiErrorForDisplay } from "@/lib/api";
 import { setToken } from "@/lib/auth";
 import { API_BASE_URL, API_BASE_URL_CONFIGURED } from "@/lib/config";
-import type { DiagnosticsResponse } from "@/lib/types";
 import Card from "@/components/ui/Card";
 import PageHeader from "@/components/ui/PageHeader";
 
@@ -14,16 +13,22 @@ type CheckStatus =
   | { state: "ok"; detail: string }
   | { state: "error"; detail: string };
 
+type PublicDiagnostics = {
+  ok: boolean;
+  auth_enabled: boolean;
+  auth_secret_key_configured: boolean;
+  database_backend: string;
+  ai_provider_ready: boolean;
+};
+
 /**
- * Temporary diagnostics block - see the "Login problem self-diagnosing"
- * task. Safe to keep around: /health and /auth/diagnostics are both
- * public and never return secrets (see backend/app/auth/diagnostics.py).
- * Remove once Render deployments have been stable for a while.
+ * Public probe only — full CORS/model/error detail requires an authenticated
+ * call to /auth/diagnostics/full after login.
  */
 function useDiagnosticsChecks() {
   const [health, setHealth] = useState<CheckStatus>({ state: "loading" });
   const [diagnostics, setDiagnostics] = useState<CheckStatus>({ state: "loading" });
-  const [diagnosticsData, setDiagnosticsData] = useState<DiagnosticsResponse | null>(null);
+  const [diagnosticsData, setDiagnosticsData] = useState<PublicDiagnostics | null>(null);
 
   useEffect(() => {
     if (!API_BASE_URL_CONFIGURED) {
@@ -93,8 +98,8 @@ export default function LoginPage() {
 
     setSubmitting(true);
     try {
-      const { access_token } = await api.login(username, password);
-      setToken(access_token);
+      const res = await api.login(username, password);
+      setToken(res.access_token, res.scopes);
       router.replace("/");
     } catch (err) {
       setError(formatApiErrorForDisplay(err));
@@ -104,35 +109,36 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="mx-auto flex max-w-sm flex-col gap-6">
-      <PageHeader title="Sign in" description="ROKN Course Studio - internal access only." />
+    <div className="flex flex-col gap-6">
+      <PageHeader
+        title="Sign in"
+        description="Internal workspace — use your studio credentials."
+      />
 
       <Card>
         <form onSubmit={handleSubmit} className="flex flex-col gap-4">
           <label className="flex flex-col gap-1 text-sm">
             Username
             <input
-              required
-              autoFocus
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              className="field-input"
+              autoComplete="username"
+              required
+              className="rounded-md border border-border bg-transparent px-3 py-2 outline-none"
             />
           </label>
-
           <label className="flex flex-col gap-1 text-sm">
             Password
             <input
-              required
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="field-input"
+              autoComplete="current-password"
+              required
+              className="rounded-md border border-border bg-transparent px-3 py-2 outline-none"
             />
           </label>
-
-          {error ? <p className="text-sm text-red-700">{error}</p> : null}
-
+          {error ? <p className="text-sm text-red-600 dark:text-red-400">{error}</p> : null}
           <button
             type="submit"
             disabled={submitting}
@@ -156,37 +162,16 @@ export default function LoginPage() {
         {diagnosticsData ? (
           <>
             <p>
-              ai_provider: {diagnosticsData.ai_provider} · ready=
-              {String(diagnosticsData.ai_provider_ready)}
-              {diagnosticsData.ai_model_name ? ` · model=${diagnosticsData.ai_model_name}` : ""}
-            </p>
-            {diagnosticsData.provider_reachable ? (
-              <p>
-                provider_reachable: {diagnosticsData.provider_reachable}
-                {diagnosticsData.last_successful_request_at
-                  ? ` · last ok ${new Date(diagnosticsData.last_successful_request_at).toLocaleString()}`
-                  : ""}
-              </p>
-            ) : null}
-            {diagnosticsData.last_error_message ? (
-              <p>
-                last_error: {diagnosticsData.last_error_category ?? "unknown"} —{" "}
-                {diagnosticsData.last_error_message}
-              </p>
-            ) : null}
-            <p>
               auth_enabled: {String(diagnosticsData.auth_enabled)} · database:{" "}
               {diagnosticsData.database_backend}
             </p>
             <p>
-              frontend_origin_configured: {String(diagnosticsData.frontend_origin_configured)}
-              {diagnosticsData.frontend_origin_value ? ` (${diagnosticsData.frontend_origin_value})` : ""}
+              auth_secret_key_configured:{" "}
+              {String(diagnosticsData.auth_secret_key_configured)} · ai_provider_ready:{" "}
+              {String(diagnosticsData.ai_provider_ready)}
             </p>
-            <p>cors_origins: {diagnosticsData.cors_origins.join(", ") || "(none)"}</p>
-            <p>
-              storage_dir: configured={String(diagnosticsData.storage_dir_configured)}, exists=
-              {String(diagnosticsData.storage_dir_exists)}, writable=
-              {String(diagnosticsData.storage_dir_writable)}
+            <p className="text-muted">
+              Full CORS/storage/AI detail is available after sign-in via authenticated diagnostics.
             </p>
           </>
         ) : null}

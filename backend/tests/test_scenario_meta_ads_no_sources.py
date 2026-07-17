@@ -180,16 +180,17 @@ def test_download_latest_docx_via_real_api_endpoints(tmp_path, monkeypatch):
     generate_response = client.post(f"/courses/{course_id}/generate")
     assert generate_response.status_code == 201
     job_body = generate_response.json()
+    job_id = job_body["id"]
+
+    # Async claim returns immediately; BackgroundTasks finish before TestClient
+    # returns, so GET /jobs shows the completed run.
+    status_response = client.get(f"/jobs/{job_id}?course_id={course_id}")
+    assert status_response.status_code == 200
+    job_body = status_response.json()
 
     # Exactly the fields the frontend GeneratePanel relies on - nothing else
-    # reel/log related (course_map_json/completed_reels_json/log_json stay
-    # internal-only, see app/schemas/generation_job.py). `run_snapshot_json`/
-    # `output_score_json`/`budget_warning` were added by the AI-ops
-    # hardening pass (see app/generation/run_snapshot.py,
-    # app/generation/output_scoring.py, app/generation/budget_guard.py) -
-    # all three are safe-by-construction (hashes/scores/a warning string,
-    # never secrets or raw source/admin-knowledge text), so they're
-    # intentionally included here too.
+    # reel/log related. Internal snapshots/scores are stripped from the public
+    # job read schema.
     assert set(job_body.keys()) == {
         "id",
         "course_id",
@@ -199,45 +200,39 @@ def test_download_latest_docx_via_real_api_endpoints(tmp_path, monkeypatch):
         "progress_percent",
         "output_docx_path",
         "error_message",
-        "last_completed_step",
         "completed_modules_count",
         "completed_reels_count",
         "total_lessons_count",
-        "needs_review_count",
         "error_category",
         "partial_docx_path",
-        "current_module_index",
-        "current_lesson_index",
         "last_progress_message",
         "last_saved_at",
         "estimated_usage_summary",
         "estimated_duration_summary",
-        "internal_risk_count",
+        "sources_run_summary",
+        "provenance_summary",
+        "architecture_summary",
+        "grounding_confidence",
+        "research_synthesis_summary",
+        "improve_next_tip",
         "generation_quality_mode",
         "web_research_mode",
-        "run_snapshot_json",
-        "output_score_json",
         "budget_warning",
         "web_searches_count",
-        "reused_source_memory_count",
         "research_memory_reuse_count",
-        "waste_warnings_json",
-        "usage_by_stage_json",
+        "research_tips",
+        "agent_roster",
+        "live_eta_summary",
         "created_at",
         "updated_at",
         "run_status",
         "completed_lessons_count",
         "partial_docx_available",
+        "public_stage_label",
     }
     assert job_body["status"] == "completed"
     assert job_body["current_stage"] == "done"
     assert job_body["progress_percent"] == 100
-    job_id = job_body["id"]
-
-    # Job status endpoint (what the frontend polls) works the same way.
-    status_response = client.get(f"/jobs/{job_id}")
-    assert status_response.status_code == 200
-    assert status_response.json()["status"] == "completed"
 
     versions_response = client.get(f"/courses/{course_id}/versions")
     assert versions_response.status_code == 200

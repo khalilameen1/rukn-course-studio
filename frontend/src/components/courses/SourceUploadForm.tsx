@@ -4,7 +4,7 @@ import { useState } from "react";
 import type { Priority, SourceCategory } from "@/lib/types";
 import Card from "@/components/ui/Card";
 import { SOURCE_CATEGORY_HELPERS, SOURCE_CATEGORY_OPTIONS } from "@/lib/sourceCategories";
-import { formatUploadErrorForDisplay } from "@/lib/api";
+import { ApiError, formatUploadErrorForDisplay } from "@/lib/api";
 
 const PRIORITY_OPTIONS: Priority[] = ["high", "medium", "low"];
 
@@ -13,28 +13,56 @@ const FIELD_CLASS = "rounded-md border border-border bg-transparent px-2 py-1 te
 export default function SourceUploadForm({
   onUpload,
 }: {
-  onUpload: (file: File, category: SourceCategory, priority: Priority) => Promise<void>;
+  onUpload: (
+    file: File,
+    category: SourceCategory,
+    priority: Priority,
+    opts?: { password?: string; force?: boolean },
+  ) => Promise<void>;
 }) {
   const [file, setFile] = useState<File | null>(null);
   const [category, setCategory] = useState<SourceCategory>("scientific_reference");
   const [priority, setPriority] = useState<Priority>("medium");
+  const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
+  async function submit(force = false) {
     if (!file) return;
     setSubmitting(true);
     setError(null);
     try {
-      await onUpload(file, category, priority);
+      if (category === "flow_reference") {
+        const ok = confirm(
+          "Natural spoken language sample is for colloquial flow only — not facts, hooks, structure, or examples. Continue?",
+        );
+        if (!ok) return;
+      }
+      await onUpload(file, category, priority, {
+        password: password.trim() || undefined,
+        force,
+      });
       setFile(null);
-      (e.target as HTMLFormElement).reset();
+      setPassword("");
     } catch (err) {
+      if (!force && err instanceof ApiError && err.status === 409) {
+        const ok = confirm(
+          `${formatUploadErrorForDisplay(err)}\n\nUpload another copy anyway?`,
+        );
+        if (ok) {
+          await submit(true);
+          return;
+        }
+      }
       setError(formatUploadErrorForDisplay(err));
     } finally {
       setSubmitting(false);
     }
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    await submit(false);
   }
 
   return (
@@ -83,6 +111,18 @@ export default function SourceUploadForm({
             </select>
           </label>
         </div>
+
+        <label className="flex flex-col gap-1 text-sm">
+          PDF password (optional)
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder="Only if the PDF is locked"
+            className={FIELD_CLASS}
+            autoComplete="off"
+          />
+        </label>
 
         {error ? <p className="text-sm text-red-600 dark:text-red-400">{error}</p> : null}
 

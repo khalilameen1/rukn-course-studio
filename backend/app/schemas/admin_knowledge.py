@@ -18,7 +18,11 @@ class AdminKnowledgeCreate(BaseModel):
 
 
 class AdminKnowledgeUpdate(BaseModel):
-    """All fields optional: only fields the client sends are changed."""
+    """All fields optional: only fields the client sends are changed.
+
+    By default, content edits create a new version (deactivate previous active).
+    Set `in_place=true` only for emergency overwrite of the current row.
+    """
 
     title: Optional[str] = None
     item_type: Optional[ItemTypeLoose] = None
@@ -26,6 +30,7 @@ class AdminKnowledgeUpdate(BaseModel):
     file_path: Optional[str] = None
     version: Optional[int] = None
     is_active: Optional[bool] = None
+    in_place: bool = False
 
 
 class AdminKnowledgeRead(BaseModel):

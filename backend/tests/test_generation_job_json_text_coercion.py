@@ -36,17 +36,18 @@ def test_waste_warnings_json_string_array_coerces():
     assert read2.waste_warnings_json == ["dup"]
 
 
-def test_optional_json_object_strings_coerce():
+def test_optional_json_object_strings_ignored_when_not_public():
+    """Internal JSON dumps are no longer part of GenerationJobRead."""
     read = GenerationJobRead.model_validate(
         _base(
             usage_by_stage_json='{"map": 1}',
             run_snapshot_json="{}",
             output_score_json='{"score": 1}',
+            waste_warnings_json='["note"]',
         )
     )
-    assert read.usage_by_stage_json == {"map": 1}
-    assert read.run_snapshot_json == {}
-    assert read.output_score_json == {"score": 1}
+    assert read.waste_warnings_json == ["note"]
+    assert not hasattr(read, "run_snapshot_json") or "run_snapshot_json" not in read.model_fields
 
 
 def test_legacy_enum_names_still_ok():

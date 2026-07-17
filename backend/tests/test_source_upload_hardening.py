@@ -51,7 +51,7 @@ def _create_course(client: TestClient) -> int:
 
 
 def test_supported_upload_succeeds(client):
-    test_client, _, _ = client
+    test_client, _, tmp_path = client
     cid = _create_course(test_client)
     res = test_client.post(
         f"/courses/{cid}/sources/upload",
@@ -61,7 +61,9 @@ def test_supported_upload_succeeds(client):
     assert res.status_code == 201, res.text
     body = res.json()
     assert body["status"] == "ready"
-    assert Path(body["file_path"]).is_file()
+    assert body["file_path"]  # basename only in API (no absolute path leak)
+    stored = list((tmp_path / "uploads" / str(cid)).glob("*"))
+    assert len(stored) == 1 and stored[0].is_file()
 
 
 def test_arabic_filename_upload(client):
@@ -77,7 +79,7 @@ def test_arabic_filename_upload(client):
 
 
 def test_spaces_and_symbols_in_filename(client):
-    test_client, _, _ = client
+    test_client, _, tmp_path = client
     cid = _create_course(test_client)
     res = test_client.post(
         f"/courses/{cid}/sources/upload",
@@ -85,7 +87,8 @@ def test_spaces_and_symbols_in_filename(client):
         files={"file": ("my file @# name (v2).txt", SAMPLE, "text/plain")},
     )
     assert res.status_code == 201, res.text
-    assert Path(res.json()["file_path"]).is_file()
+    stored = list((tmp_path / "uploads" / str(cid)).glob("*"))
+    assert len(stored) == 1 and stored[0].is_file()
 
 
 def test_missing_extension_rejected(client):
@@ -177,10 +180,10 @@ def test_db_failure_after_storage_cleans_file(client):
 
 
 def test_analysis_failure_still_returns_uploaded_source(client):
-    test_client, engine, _ = client
+    test_client, engine, tmp_path = client
     cid = _create_course(test_client)
     with patch(
-        "app.routers.sources._create_source_analysis",
+        "app.services.source_ingestion.create_source_analysis",
         side_effect=RuntimeError("analysis boom"),
     ):
         res = test_client.post(
@@ -191,7 +194,8 @@ def test_analysis_failure_still_returns_uploaded_source(client):
     assert res.status_code == 201, res.text
     body = res.json()
     assert body["status"] == "processing_failed"
-    assert Path(body["file_path"]).is_file()
+    assert body["file_path"]
+    assert list((tmp_path / "uploads" / str(cid)).glob("*"))
     with engine.connect() as conn:
         count = conn.execute(
             text("SELECT COUNT(*) FROM course_sources WHERE course_id = :cid"),
@@ -243,7 +247,7 @@ def test_legacy_source_category_rows_list_after_normalize(client, monkeypatch):
 
 
 def test_reprocess_without_reupload(client):
-    test_client, _, _ = client
+    test_client, _, tmp_path = client
     cid = _create_course(test_client)
     uploaded = test_client.post(
         f"/courses/{cid}/sources/upload",
@@ -252,10 +256,10 @@ def test_reprocess_without_reupload(client):
     )
     assert uploaded.status_code == 201
     sid = uploaded.json()["id"]
-    path = Path(uploaded.json()["file_path"])
-    assert path.is_file()
+    stored = list((tmp_path / "uploads" / str(cid)).glob("*"))
+    assert len(stored) == 1 and stored[0].is_file()
 
     again = test_client.post(f"/courses/{cid}/sources/{sid}/reprocess")
     assert again.status_code == 200, again.text
     assert again.json()["status"] == "ready"
-    assert Path(again.json()["file_path"]).is_file()
+    assert again.json()["file_path"]

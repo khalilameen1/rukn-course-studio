@@ -1,18 +1,19 @@
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response
 from fastapi.responses import FileResponse
 from sqlmodel import Session, select
 
-from app.ai.factory import AIProviderConfigError
+from app.ai.factory import AIProviderConfigError, get_ai_provider
 from app.config import settings
+from app.constants import DOCX_MEDIA_TYPE
 from app.crud import ai_usage_events, course_versions, courses, generation_jobs
 from app.db import get_session
 from app.generation.cancellation import CANCEL_REQUESTED_MESSAGE, request_cancel
 from app.generation.generation_lock import claim_generation_job, generation_start_guard
 from app.generation.generation_state import ACTIVE_LOCK_STATUSES, is_active_lock_status
-from app.generation.orchestrator import run_generation_job
+from app.generation.job_runner import run_claimed_generation_job
+from app.generation.map_lock import end_map, is_map_busy, try_begin_map
 from app.models.enums import JobStatus
 from app.models.generation_job import GenerationJob
 from app.routers.deps import get_course_or_404
@@ -20,52 +21,14 @@ from app.schemas.ai_usage import CourseAIUsage
 from app.schemas.course import CourseRead
 from app.schemas.course_version import CourseVersionRead
 from app.schemas.generation_job import GenerateCourseRequest, GenerationJobRead
-from app.security.request_throttle import allow_generate_start, record_generate_start
-from app.services.upload_safety import assert_path_under_root
+from app.security.request_throttle import can_generate_start, record_generate_start
+from app.services.generation_maintenance import release_stale_active_jobs
+from app.services.upload_safety import assert_course_output_file
 
 router = APIRouter(prefix="/courses/{course_id}", tags=["generation"])
 
-DOCX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-
-def _as_utc(dt: datetime | None) -> datetime:
-    if dt is None:
-        return datetime.fromtimestamp(0, tz=timezone.utc)
-    if dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
-
-
-def _release_stale_active_jobs(session: Session, *, max_age_minutes: float = 15.0) -> int:
-    """Mark abandoned pending/running/paused jobs failed so Generate is not stuck.
-
-    Sync Generate cannot remain RUNNING after the HTTP worker dies (crash,
-    deploy, proxy timeout). Cancel only works while the worker is alive.
-    """
-    cutoff = datetime.now(timezone.utc) - timedelta(minutes=max_age_minutes)
-    statement = select(GenerationJob).where(
-        GenerationJob.status.in_(tuple(ACTIVE_LOCK_STATUSES)),
-    )
-    released = 0
-    for job in list(session.exec(statement)):
-        if _as_utc(job.updated_at) >= cutoff:
-            continue
-        generation_jobs.update(
-            session,
-            job.id,
-            status=JobStatus.FAILED,
-            current_stage="failed",
-            cancel_requested=False,
-            error_message=(
-                "Previous generation run was abandoned (server restart, timeout, "
-                "or crash). Start Generate again."
-            ),
-            error_category="abandoned_run",
-            last_progress_message="Previous run abandoned — ready to retry",
-        )
-        released += 1
-    return released
-
-
+# Tests historically patched this private name on the router module.
+_release_stale_active_jobs = release_stale_active_jobs
 
 
 def _get_active_job(session: Session, course_id: int) -> GenerationJob | None:
@@ -76,14 +39,66 @@ def _get_active_job(session: Session, course_id: int) -> GenerationJob | None:
     return session.exec(statement).first()
 
 
+def _actor(request: Request) -> str | None:
+    return getattr(request.state, "username", None)
+
+
 @router.post("/generate-map", response_model=CourseRead)
 def generate_course_map(course_id: int, session: Session = Depends(get_session)):
-    """Build Final Course Map via Creator→Student→Specialist→Mentor→rebuild.
+    """Build Final Course Map. Course-specific only — never Admin Knowledge.
 
-    Saves editable map text on the course (`manual_map_text`). Course-specific
-    only — never Admin Knowledge. Internal reviews are not returned.
+    Uses the same start guard as full generate so map and DOCX runs cannot
+    overlap on one course (or globally when GENERATION_GLOBAL_LOCK is on).
     """
     get_course_or_404(session, course_id)
+    _release_stale_active_jobs(session)
+
+    if is_map_busy(course_id):
+        raise HTTPException(
+            status_code=409,
+            detail="A course map build is already in progress for this course.",
+        )
+
+    try:
+        with generation_start_guard(course_id):
+            if _get_active_job(session, course_id) is not None:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "A generation run is already active for this course. "
+                        "Wait for it to finish before building the map."
+                    ),
+                )
+            if getattr(settings, "generation_global_lock", True):
+                other = session.exec(
+                    select(GenerationJob).where(
+                        GenerationJob.status.in_(tuple(ACTIVE_LOCK_STATUSES)),
+                    )
+                ).first()
+                if other is not None and other.course_id != course_id:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=(
+                            f"Another course (id={other.course_id}) already has an "
+                            "active generation run. Wait for it to finish."
+                        ),
+                    )
+            if not try_begin_map(course_id, session):
+                raise HTTPException(
+                    status_code=409,
+                    detail="A course map build is already in progress for this course.",
+                )
+    except HTTPException:
+        raise
+    except RuntimeError as exc:
+        detail = str(exc)
+        if detail.startswith("GLOBAL_LOCK:"):
+            raise HTTPException(
+                status_code=409,
+                detail=detail.removeprefix("GLOBAL_LOCK:").strip(),
+            ) from exc
+        raise
+
     from app.generation.course_map_generate import generate_and_save_course_map
 
     try:
@@ -93,57 +108,79 @@ def generate_course_map(course_id: int, session: Session = Depends(get_session))
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except AIProviderConfigError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+    finally:
+        end_map(course_id, session)
 
 
-@router.post("/generate", response_model=GenerationJobRead)
+@router.post("/generate", response_model=GenerationJobRead, status_code=201)
 def generate_course(
     course_id: int,
     response: Response,
+    background_tasks: BackgroundTasks,
+    http_request: Request,
     body: GenerateCourseRequest | None = None,
     session: Session = Depends(get_session),
 ):
-    """Kick off a generation run (or return the existing active run).
+    """Claim a generation slot and return the job immediately (async worker).
 
     Idempotent: if a pending/running/paused job already exists, return it
-    (200) instead of starting a duplicate. New runs return 201.
-
-    Also: one active generation globally (optional), soft per-course debounce
-    against double-click cost burn. Slot claim is serialized so two concurrent
-    POSTs cannot both start Anthropic runs.
+    (200) without starting another pipeline. New claims return 201 and run
+    off-request via BackgroundTasks (single-worker V1).
     """
     get_course_or_404(session, course_id)
     _release_stale_active_jobs(session)
 
+    if is_map_busy(course_id):
+        raise HTTPException(
+            status_code=409,
+            detail="A course map build is in progress. Wait for it to finish.",
+        )
+
     min_interval = float(getattr(settings, "generate_min_interval_seconds", 3.0) or 0)
-    if min_interval > 0 and not allow_generate_start(course_id, min_interval_seconds=min_interval):
-        recent = generation_jobs.list(session, course_id=course_id)
-        if recent:
+    if min_interval > 0 and not can_generate_start(
+        course_id, min_interval_seconds=min_interval
+    ):
+        active = _get_active_job(session, course_id)
+        if active is not None:
             response.status_code = 200
-            return max(recent, key=lambda j: j.id)
+            return active
         raise HTTPException(
             status_code=429,
             detail="Generation requests are temporarily throttled. Retry shortly.",
         )
 
     course = get_course_or_404(session, course_id)
-    request = body or GenerateCourseRequest()
+    request_body = body or GenerateCourseRequest()
     updates: dict = {}
-    if course.generation_quality_mode != request.generation_quality_mode:
-        updates["generation_quality_mode"] = request.generation_quality_mode
-    if getattr(course, "web_research_mode", None) != request.web_research_mode:
-        updates["web_research_mode"] = request.web_research_mode
+    if course.generation_quality_mode != request_body.generation_quality_mode:
+        updates["generation_quality_mode"] = request_body.generation_quality_mode
+    if getattr(course, "web_research_mode", None) != request_body.web_research_mode:
+        updates["web_research_mode"] = request_body.web_research_mode
     if updates:
         courses.update(session, course_id, **updates)
 
     try:
+        # Fail fast before claiming a slot if the provider cannot run.
+        get_ai_provider()
+    except AIProviderConfigError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    try:
         with generation_start_guard(course_id):
+            if is_map_busy(course_id):
+                raise HTTPException(
+                    status_code=409,
+                    detail="A course map build is in progress. Wait for it to finish.",
+                )
             claimed, created = claim_generation_job(
                 session,
                 course_id,
-                generation_quality_mode=request.generation_quality_mode,
-                web_research_mode=request.web_research_mode,
+                generation_quality_mode=request_body.generation_quality_mode,
+                web_research_mode=request_body.web_research_mode,
             )
             job_id = claimed.id
+    except HTTPException:
+        raise
     except RuntimeError as exc:
         detail = str(exc)
         if detail.startswith("GLOBAL_LOCK:"):
@@ -157,40 +194,42 @@ def generate_course(
         response.status_code = 200
         return claimed
 
-    try:
-        job = run_generation_job(
-            course_id,
-            generation_quality_mode=request.generation_quality_mode,
-            web_research_mode=request.web_research_mode,
-            existing_job_id=job_id,
-        )
-        record_generate_start(course_id)
-        response.status_code = 201
-        return job
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except AIProviderConfigError as exc:
-        generation_jobs.update(
-            session,
-            job_id,
-            status=JobStatus.FAILED,
-            current_stage="failed",
-            error_message=str(exc)[:300],
-            error_category="provider_unavailable",
-            last_progress_message="Generation could not start",
-        )
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    record_generate_start(course_id)
+    background_tasks.add_task(
+        run_claimed_generation_job,
+        course_id,
+        job_id=job_id,
+        generation_quality_mode=request_body.generation_quality_mode,
+        web_research_mode=request_body.web_research_mode,
+    )
+
+    from app.services.audit import record_audit
+
+    record_audit(
+        session,
+        action="generation_start",
+        actor=_actor(http_request),
+        affected_table="generation_jobs",
+        affected_count=1,
+        dry_run=False,
+        confirmed=True,
+        success=True,
+        details={"course_id": course_id, "job_id": job_id, "async": True},
+    )
+    response.status_code = 201
+    # Re-read so response reflects queued/pending claim (worker runs after).
+    return generation_jobs.get(session, job_id) or claimed
 
 
 @router.get("/generate/latest", response_model=GenerationJobRead)
 def latest_generation_job(course_id: int, session: Session = Depends(get_session)):
     """Most recent generation job for this course (any status).
 
-    Lets the UI restore progress/status after a page refresh without
-    POSTing /generate (which could look like a new run request). 404 when
-    the course has never been generated - a normal state, not an error.
+    Releases abandoned active jobs so the UI does not show a false Running
+    state after a crashed/timed-out worker.
     """
     get_course_or_404(session, course_id)
+    _release_stale_active_jobs(session)
     jobs = generation_jobs.list(session, course_id=course_id)
     if not jobs:
         raise HTTPException(
@@ -203,12 +242,7 @@ def latest_generation_job(course_id: int, session: Session = Depends(get_session
 def cancel_generation(
     course_id: int, job_id: int, request: Request, session: Session = Depends(get_session)
 ):
-    """Request cooperative cancel for an active job.
-
-    Does not release the generation lock until the orchestrator stops between
-    stages. While the worker is still running, status stays active and
-    `cancel_requested` is true.
-    """
+    """Request cooperative cancel for an active job."""
     from app.services.audit import record_audit
 
     get_course_or_404(session, course_id)
@@ -229,7 +263,7 @@ def cancel_generation(
     record_audit(
         session,
         action="generation_cancel",
-        actor=getattr(request.state, "username", None),
+        actor=_actor(request),
         affected_table="generation_jobs",
         affected_count=1,
         dry_run=False,
@@ -240,14 +274,9 @@ def cancel_generation(
     return updated
 
 
-
 @router.get("/ai-usage", response_model=CourseAIUsage)
 def course_ai_usage(course_id: int, session: Session = Depends(get_session)):
-    """This course's cumulative estimated AI spend across every run - see
-    app/routers/ai_usage.py's module docstring for the same "estimated app
-    usage, not a real balance" caveat."""
-    from app.crud import generation_jobs
-
+    """This course's cumulative estimated AI spend across every run."""
     get_course_or_404(session, course_id)
     events = ai_usage_events.list(session, course_id=course_id)
     total = round(sum((e.estimated_cost_usd or 0.0) for e in events), 6)
@@ -297,10 +326,9 @@ def download_latest_version(course_id: int, session: Session = Depends(get_sessi
 
     latest = max(versions, key=lambda v: v.version_number)
     path = Path(latest.output_docx_path)
-    if not path.exists():
-        raise HTTPException(status_code=404, detail="Output file is missing on disk")
-
-    safe = assert_path_under_root(path, Path(settings.storage_outputs_dir))
+    safe = assert_course_output_file(
+        path, course_id=course_id, outputs_root=Path(settings.storage_outputs_dir)
+    )
     return FileResponse(
         safe,
         media_type=DOCX_MEDIA_TYPE,

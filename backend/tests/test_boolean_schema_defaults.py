@@ -20,7 +20,10 @@ from app.db import (
 from app.models.course_source import CourseSource
 
 
-_DB_PY = Path(__file__).resolve().parents[1] / "app" / "db.py"
+_DB_SOURCES = (
+    Path(__file__).resolve().parents[1] / "app" / "db" / "engine.py",
+    Path(__file__).resolve().parents[1] / "app" / "db" / "patches.py",
+)
 
 _BAD_BOOL_DEFAULT = re.compile(
     r"BOOLEAN\s+(?:NOT\s+NULL\s+)?DEFAULT\s+[01]\b",
@@ -29,14 +32,15 @@ _BAD_BOOL_DEFAULT = re.compile(
 
 
 def test_db_py_has_no_integer_boolean_defaults():
-    source = _DB_PY.read_text(encoding="utf-8")
-    assert not _BAD_BOOL_DEFAULT.search(source), (
-        "db.py must not use BOOLEAN DEFAULT 0/1 — Postgres rejects integer "
+    sources = [p.read_text(encoding="utf-8") for p in _DB_SOURCES]
+    combined = "\n".join(sources)
+    assert not _BAD_BOOL_DEFAULT.search(combined), (
+        "db package must not use BOOLEAN DEFAULT 0/1 — Postgres rejects integer "
         "defaults on boolean columns. Use TRUE/FALSE."
     )
-    assert "BOOLEAN DEFAULT 1" not in source
-    assert "BOOLEAN DEFAULT 0" not in source
-    assert "DEFAULT TRUE" in source or "BOOLEAN_NOT_NULL_DEFAULT_TRUE" in source
+    assert "BOOLEAN DEFAULT 1" not in combined
+    assert "BOOLEAN DEFAULT 0" not in combined
+    assert "DEFAULT TRUE" in combined or "BOOLEAN_NOT_NULL_DEFAULT_TRUE" in combined
 
 
 def test_boolean_ddl_constants_use_true_false_not_integers():

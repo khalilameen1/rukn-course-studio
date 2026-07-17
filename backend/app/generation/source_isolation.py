@@ -36,7 +36,12 @@ _INJECTION_CUES = re.compile(
     r"write in (?:another|my|this) style|"
     r"copy (?:this|the following) (?:text|verbatim)|"
     r"you are now|"
-    r"new instructions?:"
+    r"new instructions?:|"
+    r"jailbreak|"
+    r"do not follow (?:rok[nu]|admin)|"
+    r"override (?:the )?(?:system|admin) (?:rules|prompt)|"
+    r"act as (?:dan|developer mode)|"
+    r"system prompt follows"
     r")\b"
 )
 

@@ -6,12 +6,12 @@ const SOURCE_STATUS_LABEL: Record<string, string> = {
   ready: "Ready",
   pending: "Processing",
   poor_extraction: "Poor extraction",
-  password_required: "Password required",
-  extraction_blocked: "Extraction blocked",
-  scanned_no_text: "Scanned / no text",
+  password_required: "Password required — Unlock",
+  extraction_blocked: "Extraction blocked — Retry",
+  scanned_no_text: "Scanned / no text — upload a text PDF",
   empty: "Empty",
-  failed: "Processing failed",
-  processing_failed: "Processing failed",
+  failed: "Processing failed — Retry",
+  processing_failed: "Processing failed — Retry",
 };
 
 export function sourceStatusLabel(source: { status: string; status_message?: string }): string {

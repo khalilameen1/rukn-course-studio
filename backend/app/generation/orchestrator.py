@@ -472,6 +472,10 @@ def run_generation(
         )
         rules_context = _load_active_rules(session)
         usable_sources, memory_telemetry = _load_usable_sources_with_memory(session, course_id)
+        from app.services.source_run_honesty import format_sources_run_summary
+
+        all_course_sources = course_sources.list(session, course_id=course_id)
+        flush(sources_run_summary=format_sources_run_summary(all_course_sources))
         logs.append(
             {
                 "step": "load_context",
@@ -517,7 +521,7 @@ def run_generation(
         try:
             if research_mode == WebResearchMode.AUTONOMOUS_GAP_FILL:
                 flush(
-                    current_stage="reading_sources",
+                    current_stage="filling_gaps",
                     progress_percent=3,
                     last_progress_message=PROGRESS_FILLING_FACTS,
                 )
@@ -531,6 +535,11 @@ def run_generation(
                 prefer_fake=prefer_fake,
                 cached_web_memory=coerce_json_dict(getattr(course, "web_source_memory_json", None)),
                 course_id=course.id,
+                on_progress=lambda msg: flush(
+                    current_stage="filling_gaps",
+                    progress_percent=3,
+                    last_progress_message=msg,
+                ),
             )
             memory_telemetry.web_searches_count = research_result.web_searches_count
             memory_telemetry.research_memory_reuses = research_result.web_cache_hits
@@ -581,6 +590,7 @@ def run_generation(
                 web_source_memory_json=research_result.web_memory.model_dump(mode="json"),
                 evidence_ledger_json=research_result.ledger.model_dump(mode="json"),
                 web_searches_count=research_result.web_searches_count,
+                research_memory_reuse_count=research_result.web_cache_hits,
                 reused_source_memory_count=memory_telemetry.reused_source_memory_count,
                 repeated_source_extraction_warnings=(
                     memory_telemetry.repeated_source_extraction_warnings
@@ -641,6 +651,41 @@ def run_generation(
 
         web_source_excerpts_all = _web_facts_as_excerpts(
             research_result.web_excerpts_text + tool_memory_excerpts(tool_store)
+        )
+
+        # GENSPARK-style synthesis gate: confirm/drop signals before map write.
+        from app.generation.research_synthesis import synthesize_research_for_write
+
+        flush(
+            current_stage="synthesizing",
+            progress_percent=4,
+            last_progress_message="Synthesizing research",
+        )
+        synthesis = synthesize_research_for_write(
+            ledger=research_result.ledger,
+            web_excerpts=research_result.web_excerpts_text,
+            upload_memory=research_result.upload_memory,
+        )
+        if synthesis.get("internal_brief"):
+            web_source_excerpts_all = (
+                _web_facts_as_excerpts(
+                    [("Research synthesis", str(synthesis["internal_brief"])[:1200])]
+                )
+                + web_source_excerpts_all
+            )
+        flush(
+            research_synthesis_summary=synthesis.get("public_note"),
+            last_progress_message=str(
+                synthesis.get("public_note") or "Synthesizing research"
+            ),
+        )
+        logs.append(
+            {
+                "step": "research_synthesis",
+                "supported": synthesis.get("supported"),
+                "omitted": synthesis.get("omitted"),
+                "weak": synthesis.get("weak"),
+            }
         )
 
         # Run snapshot metadata (§2 & §3) - immutable once written here,
@@ -749,6 +794,12 @@ def run_generation(
             }
         )
         total_reels = sum(len(m.reels) for m in course_map.modules)
+        from app.generation.research_synthesis import format_architecture_summary
+
+        architecture = format_architecture_summary(
+            module_count=len(course_map.modules),
+            lesson_count=total_reels,
+        )
         flush(
             current_stage="generating",
             progress_percent=PROGRESS_AFTER_CONTEXT_AND_MAP,
@@ -756,6 +807,7 @@ def run_generation(
             last_completed_step="build_map",
             last_progress_message=PROGRESS_START_LESSONS,
             total_lessons_count=total_reels,
+            architecture_summary=architecture,
             refresh_usage=True,
         )
 
@@ -1152,6 +1204,62 @@ def run_generation(
                 for u in usable_sources
                 if u.course_source.extracted_text
             ],
+            evidence_ledger=coerce_json_dict(getattr(job, "evidence_ledger_json", None)),
+        )
+        # Close provenance loop against Final Master scripts (internal + public one-liner).
+        from app.generation.evidence_provenance import (
+            format_provenance_summary,
+            mark_evidence_used_in_scripts,
+        )
+
+        script_texts = [
+            (r.script_text or "")
+            for m in final_course.modules
+            for r in m.reels
+        ]
+        ledger_model = mark_evidence_used_in_scripts(
+            coerce_json_dict(getattr(job, "evidence_ledger_json", None)),
+            script_texts,
+        )
+        provenance = format_provenance_summary(
+            upload_count=len(usable_sources),
+            web_gap_count=len(
+                (coerce_json_dict(getattr(job, "web_source_memory_json", None)) or {}).get(
+                    "gaps_researched"
+                )
+                or []
+            ),
+            ledger=ledger_model,
+            web_searches=int(getattr(job, "web_searches_count", 0) or 0),
+            cache_hits=int(getattr(job, "research_memory_reuse_count", 0) or 0),
+        )
+        from app.generation.research_synthesis import (
+            grounding_confidence_label,
+            improve_next_run_tip,
+        )
+        from app.generation.brief_clarity import score_brief_clarity
+
+        confidence = grounding_confidence_label(ledger_model)
+        clarity_now = score_brief_clarity(
+            title=course.title or "",
+            audience=course.audience or "",
+            outcome=course.outcome or "",
+            special_notes=course.special_notes,
+        )
+        tip = improve_next_run_tip(
+            grounding_confidence=confidence,
+            clarity_score=int(clarity_now.get("clarity_score") or 0),
+            web_searches=int(getattr(job, "web_searches_count", 0) or 0),
+            cache_hits=int(getattr(job, "research_memory_reuse_count", 0) or 0),
+        )
+        flush(
+            evidence_ledger_json=ledger_model.model_dump(mode="json"),
+            provenance_summary=provenance,
+            grounding_confidence=confidence,
+            improve_next_tip=tip,
+            research_memory_reuse_count=int(
+                getattr(job, "research_memory_reuse_count", 0) or 0
+            ),
         )
         logs.append({"step": "output_scoring", "teleprompter_clean": score_report.teleprompter_clean})
 
@@ -1160,14 +1268,24 @@ def run_generation(
         summary_text = _build_course_summary(course_map, all_reels, logs)
         report_text = None
 
-        course_versions.create(
-            session,
-            course_id=course_id,
-            version_number=version_number,
-            output_docx_path=str(docx_path),
-            summary_text=summary_text,
-            report_text=report_text,
-        )
+        try:
+            course_versions.create(
+                session,
+                course_id=course_id,
+                version_number=version_number,
+                output_docx_path=str(docx_path),
+                summary_text=summary_text,
+                report_text=report_text,
+            )
+        except Exception:
+            # Dual-write: DOCX already on disk. If the version row fails
+            # (unique violation, disk-full mid-commit, etc.), remove the
+            # orphan so downloads never serve an untracked file.
+            try:
+                Path(docx_path).unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise
         logs.append({"step": "export_docx", "version": version_number})
         flush(
             progress_percent=PROGRESS_AFTER_DOCX_EXPORT,

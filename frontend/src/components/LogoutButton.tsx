@@ -1,12 +1,20 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { clearToken } from "@/lib/auth";
+import { api } from "@/lib/api";
+import { clearToken, getToken } from "@/lib/auth";
 
 export default function LogoutButton() {
   const router = useRouter();
 
-  function handleLogout() {
+  async function handleLogout() {
+    try {
+      if (getToken()) {
+        await api.logout();
+      }
+    } catch {
+      /* still clear local session */
+    }
     clearToken();
     router.replace("/login");
   }

@@ -73,6 +73,7 @@ function normalizeApiDetail(detail: unknown): string {
       .join("; ");
   }
   if (detail && typeof detail === "object") {
+    if ("message" in detail) return String((detail as { message: unknown }).message);
     if ("msg" in detail) return String((detail as { msg: unknown }).msg);
     if ("detail" in detail) return normalizeApiDetail((detail as { detail: unknown }).detail);
     return JSON.stringify(detail);
@@ -107,6 +108,11 @@ export function formatUploadErrorForDisplay(err: unknown): string {
       return err.message?.trim()
         ? `نوع الملف غير مدعوم: ${err.message}`
         : "نوع الملف غير مدعوم. المسموح: PDF، DOCX، TXT، MD.";
+    }
+    if (err.status === 409) {
+      return err.message?.trim()
+        ? err.message
+        : "يوجد مصدر بنفس الاسم بالفعل. احذف القديم أو أكّد الرفع كنسخة إضافية.";
     }
     if (err.status === 404) {
       return "الكورس غير موجود. حدّث الصفحة أو أنشئ كورساً جديداً.";
@@ -323,7 +329,18 @@ export const api = {
   // misconfiguration instead of just showing a generic failure.
   health: () => apiFetch<HealthResponse>("/health"),
   buildInfo: () => apiFetch<BuildInfoResponse>("/build-info"),
-  diagnostics: () => apiFetch<DiagnosticsResponse>("/auth/diagnostics"),
+  /** Minimal public probe (no CORS/model/error detail). */
+  diagnostics: () =>
+    apiFetch<{
+      ok: boolean;
+      auth_enabled: boolean;
+      auth_secret_key_configured: boolean;
+      database_backend: string;
+      ai_provider_ready: boolean;
+    }>("/auth/diagnostics"),
+  /** Authenticated full diagnostics. */
+  diagnosticsFull: () => apiFetch<DiagnosticsResponse>("/auth/diagnostics/full"),
+  logout: () => apiFetch<void>("/auth/logout", { method: "POST" }),
 
   // Admin knowledge (default: active primary only)
   listKnowledgeItems: (opts?: { includeInactive?: boolean }) =>
@@ -332,6 +349,32 @@ export const api = {
         ? "/admin/knowledge?active_only=false&include_inactive=true"
         : "/admin/knowledge",
     ),
+  listKnowledgeCatalog: () =>
+    apiFetch<
+      Array<{
+        key: string;
+        title: string;
+        description: string;
+        required: boolean;
+        refreshable: boolean;
+        in_stage_packs: boolean;
+        stable: boolean;
+      }>
+    >("/admin/knowledge/catalog"),
+  listAuditLogs: (limit = 50) =>
+    apiFetch<
+      Array<{
+        id: number;
+        action: string;
+        actor: string | null;
+        affected_table: string | null;
+        dry_run: boolean;
+        confirmed: boolean;
+        success: boolean;
+        created_at: string | null;
+        details: unknown;
+      }>
+    >(`/admin/audit?limit=${limit}`),
   cleanupKnowledgeDuplicates: (opts?: { dryRun?: boolean; confirm?: boolean }) => {
     const dryRun = opts?.dryRun ?? true;
     const confirm = opts?.confirm ?? false;
@@ -351,16 +394,59 @@ export const api = {
       backup?: { path: string } | null;
     }>(`/admin/knowledge/cleanup-duplicates?${qs}`, { method: "POST" });
   },
-  createKnowledgeItem: (payload: AdminKnowledgeCreateInput) =>
-    apiFetch<AdminKnowledgeItem>("/admin/knowledge", {
+  refreshKnowledgeDefaults: (opts?: { dryRun?: boolean; confirm?: boolean }) => {
+    const dryRun = opts?.dryRun ?? true;
+    const confirm = opts?.confirm ?? false;
+    const qs = new URLSearchParams({
+      dry_run: String(dryRun),
+      confirm: String(confirm),
+    });
+    return apiFetch<{
+      applied: boolean;
+      dry_run: boolean;
+      message: string;
+      would_refresh_count?: number;
+      would_refresh?: string[];
+      refreshed_count?: number;
+      refreshed?: string[];
+    }>(`/admin/knowledge/refresh-defaults?${qs}`, { method: "POST" });
+  },
+  listKnowledgeVersions: (key: string) =>
+    apiFetch<AdminKnowledgeItem[]>(
+      `/admin/knowledge/keys/${encodeURIComponent(key)}/versions`,
+    ),
+  listKnowledgeBackups: () =>
+    apiFetch<
+      Array<{ path: string; name: string; size_bytes: number; modified_at: string }>
+    >("/admin/knowledge/backups"),
+  createKnowledgeItem: (
+    payload: AdminKnowledgeCreateInput,
+    opts?: { allowCustomKey?: boolean },
+  ) => {
+    const qs = opts?.allowCustomKey ? "?allow_custom_key=true" : "";
+    return apiFetch<AdminKnowledgeItem>(`/admin/knowledge${qs}`, {
       method: "POST",
       body: JSON.stringify(payload),
-    }),
-  updateKnowledgeItem: (id: number, payload: AdminKnowledgeUpdateInput) =>
-    apiFetch<AdminKnowledgeItem>(`/admin/knowledge/${id}`, {
-      method: "PUT",
-      body: JSON.stringify(payload),
-    }),
+    });
+  },
+  updateKnowledgeItem: (
+    id: number,
+    payload: AdminKnowledgeUpdateInput,
+    opts?: { confirm?: boolean; dryRun?: boolean; confirmKey?: string },
+  ) => {
+    const qs = new URLSearchParams({
+      confirm: String(opts?.confirm ?? true),
+      dry_run: String(opts?.dryRun ?? false),
+    });
+    if (opts?.confirmKey) qs.set("confirm_key", opts.confirmKey);
+    return apiFetch<AdminKnowledgeItem | Record<string, unknown>>(
+      `/admin/knowledge/${id}?${qs}`,
+      {
+        method: "PUT",
+        body: JSON.stringify(payload),
+      },
+    );
+  },
   deleteKnowledgeItem: (
     id: number,
     opts?: { dryRun?: boolean; confirm?: boolean; purge?: boolean },
@@ -376,16 +462,62 @@ export const api = {
     );
   },
   activateKnowledgeItem: (id: number) =>
-    apiFetch<AdminKnowledgeItem>(
-      `/admin/knowledge/${id}/activate?dry_run=false&confirm=true`,
-      { method: "POST" },
-    ),
+    apiFetch<{
+      applied: boolean;
+      dry_run: boolean;
+      message: string;
+      item?: AdminKnowledgeItem;
+    }>(`/admin/knowledge/${id}/activate?dry_run=false&confirm=true`, {
+      method: "POST",
+    }),
 
   // Courses
   listCourses: () => apiFetch<Course[]>("/courses"),
-  createCourse: (payload: CourseCreateInput) =>
-    apiFetch<Course>("/courses", { method: "POST", body: JSON.stringify(payload) }),
+  createCourse: (payload: CourseCreateInput, opts?: { idempotencyKey?: string }) =>
+    apiFetch<Course>("/courses", {
+      method: "POST",
+      body: JSON.stringify(payload),
+      headers: opts?.idempotencyKey
+        ? { "Idempotency-Key": opts.idempotencyKey }
+        : undefined,
+    }),
   getCourse: (id: number) => apiFetch<Course>(`/courses/${id}`),
+  getCourseReadiness: (id: number) =>
+    apiFetch<{
+      course_id: number;
+      active_rule_key_count: number;
+      source_count?: number;
+      included_source_count?: number;
+      included_chars?: number;
+      sources_summary?: string | null;
+      source_ranking_tips?: string[];
+      overload?: boolean;
+      brief_clarity?: {
+        clarity_score?: number;
+        premium_recommended?: boolean;
+        warnings?: string[];
+        blockers?: string[];
+        message?: string;
+      };
+      premium_recommended?: boolean;
+      mission_brief?: {
+        headline?: string;
+        promise?: string;
+        grounding?: string;
+        clarity_score?: number;
+        confidence?: string;
+        premium_recommended?: boolean;
+        tighten_brief_suggestion?: string | null;
+        one_liner?: string;
+      };
+      provider?: string;
+      provider_ready?: boolean;
+      provider_detail?: string | null;
+      can_start?: boolean;
+      blockers?: string[];
+      warnings?: string[];
+      message: string;
+    }>(`/courses/${id}/readiness`),
   updateCourse: (id: number, payload: CourseUpdateInput) =>
     apiFetch<Course>(`/courses/${id}`, { method: "PUT", body: JSON.stringify(payload) }),
 
@@ -397,7 +529,12 @@ export const api = {
     file: File,
     sourceCategory: SourceCategory,
     priority: Priority,
-    opts?: { title?: string; include_in_generation?: boolean },
+    opts?: {
+      title?: string;
+      include_in_generation?: boolean;
+      password?: string;
+      force?: boolean;
+    },
   ) => {
     const form = new FormData();
     form.append("file", file);
@@ -407,6 +544,8 @@ export const api = {
     if (opts?.include_in_generation !== undefined) {
       form.append("include_in_generation", String(opts.include_in_generation));
     }
+    if (opts?.password) form.append("password", opts.password);
+    if (opts?.force) form.append("force", "true");
     return apiFetch<CourseSource>(`/courses/${courseId}/sources/upload`, {
       method: "POST",
       body: form,
@@ -417,16 +556,42 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
-  deleteSource: (courseId: number, sourceId: number) =>
-    apiFetch<{ message: string; applied?: boolean }>(
-      `/courses/${courseId}/sources/${sourceId}?dry_run=false&confirm=true`,
+  deleteSource: (courseId: number, sourceId: number, confirmName: string) => {
+    const qs = new URLSearchParams({
+      dry_run: "false",
+      confirm: "true",
+      confirm_name: confirmName,
+    });
+    return apiFetch<{ message: string; applied?: boolean }>(
+      `/courses/${courseId}/sources/${sourceId}?${qs}`,
       { method: "DELETE" },
-    ),
+    );
+  },
   updateSourceCategory: (courseId: number, sourceId: number, sourceCategory: SourceCategory) =>
     apiFetch<CourseSource>(`/courses/${courseId}/sources/${sourceId}`, {
       method: "PATCH",
       body: JSON.stringify({ source_category: sourceCategory }),
     }),
+  patchSource: (
+    courseId: number,
+    sourceId: number,
+    payload: {
+      source_category?: SourceCategory;
+      include_in_generation?: boolean;
+      priority?: Priority;
+      title?: string;
+    },
+  ) =>
+    apiFetch<CourseSource>(`/courses/${courseId}/sources/${sourceId}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+  getSourceAnalysis: (courseId: number, sourceId: number) =>
+    apiFetch<{
+      source_id: number;
+      source_summary?: string | null;
+      key_points: string[];
+    }>(`/courses/${courseId}/sources/${sourceId}/analysis`),
   reprocessSource: (courseId: number, sourceId: number, password?: string) => {
     const form = new FormData();
     if (password) form.append("password", password);
@@ -447,7 +612,8 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body ?? { generation_quality_mode: "premium" }),
     }),
-  getJob: (jobId: number) => apiFetch<GenerationJob>(`/jobs/${jobId}`),
+  getJob: (courseId: number, jobId: number) =>
+    apiFetch<GenerationJob>(`/jobs/${jobId}?course_id=${courseId}`),
   getLatestJob: (courseId: number) =>
     apiFetch<GenerationJob>(`/courses/${courseId}/generate/latest`),
   cancelGeneration: (courseId: number, jobId: number) =>
@@ -461,8 +627,8 @@ export const api = {
   // Only meaningful once a job has a `partial_docx_path` set (status
   // "partial", occasionally "failed" if one was saved just before the
   // final failure) - see backend/app/routers/jobs.py `download_partial`.
-  downloadPartialDocx: (jobId: number, filename: string) =>
-    downloadFile(`/jobs/${jobId}/download-partial`, filename),
+  downloadPartialDocx: (courseId: number, jobId: number, filename: string) =>
+    downloadFile(`/jobs/${jobId}/download-partial?course_id=${courseId}`, filename),
 
   // AI Usage Center — estimated app usage only (backend labels it the same way)
   // Paths: GET /ai-usage/summary, GET /courses/{id}/ai-usage

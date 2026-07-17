@@ -135,18 +135,18 @@ def _signal_words(source_text: str) -> set[str]:
     }
 
 
-def _source_grounding_warning(text: str, source_texts: list[str] | None) -> str | None:
-    """Warning-only, deliberately crude heuristic: a handful of long
-    ("signal") words from each usable source, checked for a literal
-    substring match in the final text. This cannot reliably confirm real
-    content grounding - a source could be genuinely used after heavy
-    rephrasing (which is exactly what's *supposed* to happen for
-    `scientific_reference`/`flow_reference` sources, see
-    app/generation/prompt_compiler.py) and still trip this warning. It
-    exists only to catch the more obvious case of "sources were uploaded
-    but the run clearly never touched them at all" - never treat it as a
-    hard fact.
-    """
+def _source_grounding_warning(
+    text: str,
+    source_texts: list[str] | None,
+    evidence_ledger: dict | None = None,
+) -> str | None:
+    """Prefer EvidenceLedger support rollup; fall back to crude keyword check."""
+    from app.generation.evidence_provenance import ledger_support_rollup
+
+    rollup = ledger_support_rollup(evidence_ledger)
+    if rollup:
+        return rollup
+
     if not source_texts:
         return None
 
@@ -167,6 +167,7 @@ def score_final_course(
     document_text: str,
     rules_context: dict[str, str],
     source_texts: list[str] | None = None,
+    evidence_ledger: dict | None = None,
 ) -> OutputScoreReport:
     """Score `document_text` - the plain text of an already-rendered final
     or partial DOCX (see `app/services/docx_export.py extract_plain_text`).
@@ -188,7 +189,9 @@ def score_final_course(
         paragraph_readability=_paragraph_readability(document_text),
         spoken_style_score=_spoken_style(document_text),
         module_lesson_structure_present=module_lesson_structure_present(document_text),
-        source_grounding_warning=_source_grounding_warning(document_text, source_texts),
+        source_grounding_warning=_source_grounding_warning(
+            document_text, source_texts, evidence_ledger=evidence_ledger
+        ),
         repetition_warning=_repetition_warning(document_text),
         forbidden_substrings_found=forbidden_substrings_found,
         forbidden_phrases_found=[match.phrase for match in forbidden_phrase_matches],

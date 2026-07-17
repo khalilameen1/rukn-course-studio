@@ -1,9 +1,10 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, computed_field, field_serializer, field_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_serializer, field_validator
 
+from app.generation.public_progress import sanitize_progress_message
 from app.models.enums import GenerationQualityMode, JobStatus, WebResearchMode
 from app.schemas.validators import (
     GenerationQualityModeLoose,
@@ -11,7 +12,6 @@ from app.schemas.validators import (
     WebResearchModeLoose,
 )
 from app.services.enum_coerce import coerce_str_enum
-from app.services.json_coerce import coerce_json_dict, coerce_json_list
 
 
 def _public_storage_name(value: object) -> str | None:
@@ -20,6 +20,21 @@ def _public_storage_name(value: object) -> str | None:
         return None
     name = Path(str(value)).name
     return name or None
+
+
+def _sanitize_public_error(message: object, category: object) -> str | None:
+    """Coarse user-facing error — never raw exception / stack text."""
+    if message is None or message == "":
+        if category:
+            return f"Generation stopped ({category})."
+        return None
+    text = str(message).strip()
+    if len(text) > 240:
+        text = text[:237] + "..."
+    # Drop paths / secrets-looking fragments.
+    if "Traceback" in text or "File \"" in text:
+        return f"Generation stopped ({category or 'error'})."
+    return text
 
 
 class GenerateCourseRequest(BaseModel):
@@ -33,16 +48,10 @@ class GenerateCourseRequest(BaseModel):
 
 
 class GenerationJobRead(BaseModel):
-    """User-facing job status.
+    """User-facing job status (Copilot-scale public DTO).
 
-    Deliberately excludes `log_json`, `course_map_json`, and
-    `completed_reels_json`: those hold internal per-stage review log
-    entries and the persisted pipeline state used for loss-safe recovery
-    (see docs/ARCHITECTURE.md and app/generation/orchestrator.py), which
-    must never be returned to the end user - only this coarse
-    status/progress view, plus a small set of user-safe recovery signals.
-    Critic comments, student notes, mentor notes, and drafts are never
-    exposed here.
+    Excludes internal pipeline state, waste codes, lesson indices, and
+    research telemetry. Critic/student/mentor content is never exposed.
     """
 
     model_config = ConfigDict(from_attributes=True)
@@ -54,33 +63,39 @@ class GenerationJobRead(BaseModel):
     current_stage: Optional[str]
     progress_percent: int = 0
     output_docx_path: Optional[str]
-    error_message: Optional[str]
-    last_completed_step: Optional[str]
+    error_category: Optional[str] = None
+    # Sanitized in validator; raw DB value never returned as-is if stack-like.
+    error_message: Optional[str] = None
     completed_modules_count: int = 0
     completed_reels_count: int = 0
     total_lessons_count: int = 0
-    needs_review_count: int = 0
-    error_category: Optional[str]
     partial_docx_path: Optional[str]
-    current_module_index: Optional[int] = None
-    current_lesson_index: Optional[int] = None
     last_progress_message: Optional[str] = None
     last_saved_at: Optional[datetime] = None
     estimated_usage_summary: Optional[str] = None
     estimated_duration_summary: Optional[str] = None
-    internal_risk_count: int = 0
+    sources_run_summary: Optional[str] = None
+    provenance_summary: Optional[str] = None
+    architecture_summary: Optional[str] = None
+    grounding_confidence: Optional[str] = None
+    research_synthesis_summary: Optional[str] = None
+    improve_next_tip: Optional[str] = None
     generation_quality_mode: GenerationQualityModeLoose = GenerationQualityMode.PREMIUM
     web_research_mode: WebResearchModeLoose = WebResearchMode.AUTONOMOUS_GAP_FILL
-    run_snapshot_json: Optional[dict[str, Any]] = None
-    output_score_json: Optional[dict[str, Any]] = None
     budget_warning: Optional[str] = None
+    # Safe research cost hygiene (no ledger / no URLs).
     web_searches_count: int = 0
-    reused_source_memory_count: int = 0
     research_memory_reuse_count: int = 0
-    waste_warnings_json: list[str] = []
-    usage_by_stage_json: Optional[dict[str, Any]] = None
     created_at: datetime
     updated_at: datetime
+
+    # Loaded for sanitizers / aliases only — never serialized.
+    needs_review_count: int = Field(default=0, exclude=True)
+    current_module_index: Optional[int] = Field(default=None, exclude=True)
+    current_lesson_index: Optional[int] = Field(default=None, exclude=True)
+    last_completed_step: Optional[str] = Field(default=None, exclude=True)
+    waste_warnings_json: list[str] = Field(default_factory=list, exclude=True)
+    reused_source_memory_count: int = Field(default=0, exclude=True)
 
     @field_serializer("output_docx_path", "partial_docx_path")
     @classmethod
@@ -89,18 +104,30 @@ class GenerationJobRead(BaseModel):
 
     @field_validator("waste_warnings_json", mode="before")
     @classmethod
-    def _coerce_waste_warnings(cls, value: object) -> object:
-        return coerce_json_list(value)
+    def _coerce_waste(cls, value: object) -> object:
+        from app.services.json_coerce import coerce_json_list
 
-    @field_validator(
-        "run_snapshot_json",
-        "output_score_json",
-        "usage_by_stage_json",
-        mode="before",
-    )
+        return coerce_json_list(value) or []
+
+    @field_validator("last_progress_message", mode="before")
     @classmethod
-    def _coerce_optional_json_objects(cls, value: object) -> object:
-        return coerce_json_dict(value)
+    def _sanitize_progress(cls, value: object, info) -> object:
+        stage = None
+        if info.data and isinstance(info.data, dict):
+            stage = info.data.get("current_stage")
+        if value is None:
+            return value
+        return sanitize_progress_message(
+            str(value), stage=stage if isinstance(stage, str) else None
+        )
+
+    @field_validator("error_message", mode="before")
+    @classmethod
+    def _sanitize_error(cls, value: object, info) -> object:
+        category = None
+        if info.data and isinstance(info.data, dict):
+            category = info.data.get("error_category")
+        return _sanitize_public_error(value, category)
 
     @field_validator("cancel_requested", mode="before")
     @classmethod
@@ -112,10 +139,7 @@ class GenerationJobRead(BaseModel):
         "completed_modules_count",
         "completed_reels_count",
         "total_lessons_count",
-        "needs_review_count",
-        "internal_risk_count",
         "web_searches_count",
-        "reused_source_memory_count",
         "research_memory_reuse_count",
         mode="before",
     )
@@ -139,6 +163,66 @@ class GenerationJobRead(BaseModel):
 
     @computed_field  # type: ignore[prop-decorator]
     @property
+    def research_tips(self) -> list[str]:
+        """Human tips from waste codes — never raw agent telemetry."""
+        mapping = {
+            "identical_retry_blocked": "Repeated identical repair was blocked (cost hygiene).",
+            "research_cache_hit": "Research memory cache reused for matching needs.",
+            "thick_library_skipped_gaps": "Thick uploads — limited web gap fill.",
+        }
+        tips: list[str] = []
+        for code in self.waste_warnings_json or []:
+            tip = mapping.get(str(code))
+            if tip and tip not in tips:
+                tips.append(tip)
+            elif code and str(code) not in tips and len(tips) < 6:
+                tips.append(str(code).replace("_", " "))
+        if self.web_searches_count:
+            tips.insert(0, f"Web searches this run: {self.web_searches_count}")
+        if self.research_memory_reuse_count:
+            tips.insert(
+                0 if not self.web_searches_count else 1,
+                f"Research cache hits: {self.research_memory_reuse_count}",
+            )
+        return tips[:8]
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def agent_roster(self) -> list[dict[str, str]]:
+        from app.generation.agent_roster import build_agent_roster
+
+        status_val = self.status.value if hasattr(self.status, "value") else str(self.status)
+        return build_agent_roster(
+            current_stage=self.current_stage,
+            status=status_val,
+        )
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def live_eta_summary(self) -> str | None:
+        """Coarse remaining-time hint from progress % (Spark-speed honesty)."""
+        from app.generation.public_progress import estimate_live_eta
+
+        status_val = (
+            self.status.value if hasattr(self.status, "value") else str(self.status or "")
+        ).lower()
+        if status_val in {"completed", "failed", "partial", "canceled", "paused"}:
+            return None
+        stage = (self.current_stage or "").lower()
+        if stage in {"done", "failed", "partial", "canceled"}:
+            return None
+        return estimate_live_eta(
+            progress_percent=self.progress_percent,
+            quality_mode=str(
+                self.generation_quality_mode.value
+                if hasattr(self.generation_quality_mode, "value")
+                else self.generation_quality_mode
+            ),
+            total_lessons=self.total_lessons_count,
+        )
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
     def run_status(self) -> JobStatus:
         """Alias for `status` — persisted operational run state."""
         return self.status
@@ -153,3 +237,10 @@ class GenerationJobRead(BaseModel):
     @property
     def partial_docx_available(self) -> bool:
         return bool(self.partial_docx_path)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def public_stage_label(self) -> str | None:
+        from app.generation.public_progress import public_stage_label
+
+        return public_stage_label(self.current_stage)

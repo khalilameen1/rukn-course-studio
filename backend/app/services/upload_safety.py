@@ -139,3 +139,23 @@ def assert_path_under_root(path: Path, root: Path) -> Path:
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Invalid stored file path.") from exc
     return resolved
+
+
+def assert_course_output_file(path: Path, *, course_id: int, outputs_root: Path) -> Path:
+    """Serve only files under `outputs/{course_id}/` (not any file in outputs/).
+
+    Senior-engineer classic: `assert_path_under_root` alone still allows
+    IDOR if a row's path points at another course's DOCX in the same root.
+    """
+    safe = assert_path_under_root(path, outputs_root)
+    course_dir = (outputs_root / str(course_id)).resolve()
+    try:
+        safe.relative_to(course_dir)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="Output file does not belong to this course.",
+        ) from exc
+    if not safe.is_file():
+        raise HTTPException(status_code=404, detail="Output file is missing on disk")
+    return safe

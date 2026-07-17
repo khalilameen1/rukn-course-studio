@@ -1,32 +1,22 @@
-from collections.abc import Generator
-from pathlib import Path
+"""Schema ensure / promote helpers for existing databases.
 
-from sqlmodel import Session, SQLModel, create_engine
+MVP uses create_all + additive patches instead of Alembic. Keep all raw DDL
+here so app.db.__init__ stays a thin public facade.
+"""
 
-from app.config import settings
+from sqlmodel import SQLModel
 
-if settings.sqlite_db_path and settings.database_url.startswith("sqlite"):
-    # Only relevant when SQLITE_DB_PATH is actually the active backend (i.e.
-    # DATABASE_URL is unset - see app/config.py `_resolve_database_url`).
-    # Render's disk is a fresh mount - the directory containing the DB file
-    # (e.g. .../backend/storage/) doesn't exist until created. Must happen
-    # before create_engine() below, which SQLite otherwise fails against a
-    # missing parent directory.
-    Path(settings.sqlite_db_path).parent.mkdir(parents=True, exist_ok=True)
-
-# check_same_thread=False is required for SQLite when accessed from FastAPI's
-# threaded request handling; SQLite itself still serializes writes.
-connect_args = (
-    {"check_same_thread": False} if settings.database_url.startswith("sqlite") else {}
+from app.db.engine import (
+    BOOLEAN_NOT_NULL_DEFAULT_FALSE,
+    BOOLEAN_NOT_NULL_DEFAULT_TRUE,
 )
 
-engine = create_engine(settings.database_url, echo=False, connect_args=connect_args)
 
-# Postgres rejects INTEGER literals as BOOLEAN defaults (DatatypeMismatch).
-# Always use TRUE/FALSE in raw DDL — never DEFAULT 1 / DEFAULT 0 for booleans.
-# SQLite accepts TRUE/FALSE as aliases for 1/0, so this form is dual-safe.
-BOOLEAN_NOT_NULL_DEFAULT_TRUE = "BOOLEAN NOT NULL DEFAULT TRUE"
-BOOLEAN_NOT_NULL_DEFAULT_FALSE = "BOOLEAN NOT NULL DEFAULT FALSE"
+def _engine():
+    """Current process engine (honors test monkeypatches on app.db.engine)."""
+    import app.db as db_pkg
+
+    return db_pkg.engine
 
 
 def init_db() -> None:
@@ -41,12 +31,13 @@ def init_db() -> None:
     """
     from app import models  # noqa: F401  (import registers tables on metadata)
 
-    SQLModel.metadata.create_all(engine)
+    SQLModel.metadata.create_all(_engine())
     _ensure_generation_job_columns()
     _ensure_course_columns()
     _ensure_source_analysis_columns()
     _ensure_course_source_columns()
     _ensure_ai_usage_events_table()
+    _ensure_course_version_unique()
     # After ADD COLUMN helpers: promote any leftover TEXT `*_json` columns on
     # Postgres to real JSON, then fill NULL list defaults. Order matters —
     # promote before backfill so cast/`::json` paths are consistent.
@@ -54,10 +45,20 @@ def init_db() -> None:
     _backfill_generation_job_json_defaults()
     _widen_str_enum_columns()
     _normalize_str_enum_storage()
+    # Best-effort orphan upload cleanup (never blocks startup on failure).
+    try:
+        from sqlmodel import Session
+
+        from app.services.source_retention import purge_orphan_upload_files
+
+        with Session(_engine()) as session:
+            purge_orphan_upload_files(session)
+    except Exception:
+        pass
 
 
 def _is_postgres() -> bool:
-    return getattr(engine.dialect, "name", "") == "postgresql"
+    return getattr(_engine().dialect, "name", "") == "postgresql"
 
 
 def _json_safe_type(name: str, sql_type: str) -> str:
@@ -77,7 +78,7 @@ def _harden_boolean_not_null_true(conn, table: str, column: str) -> None:
     from sqlalchemy import text
 
     dialect = getattr(getattr(conn, "dialect", None), "name", None) or (
-        engine.dialect.name if hasattr(engine, "dialect") else ""
+        _engine().dialect.name if hasattr(_engine(), "dialect") else ""
     )
     if dialect == "postgresql":
         conn.execute(
@@ -109,14 +110,14 @@ def _ensure_course_source_columns() -> None:
         "source_hash": "TEXT",
     }
     try:
-        inspector = inspect(engine)
+        inspector = inspect(_engine())
         if "course_sources" not in inspector.get_table_names():
             return
         existing = {col["name"]: col for col in inspector.get_columns("course_sources")}
     except Exception:
         return
 
-    with engine.begin() as conn:
+    with _engine().begin() as conn:
         if "include_in_generation" not in existing:
             if _is_postgres():
                 conn.execute(
@@ -163,14 +164,14 @@ def _ensure_source_analysis_columns() -> None:
         "tokens_used": "INTEGER DEFAULT 0",
     }
     try:
-        inspector = inspect(engine)
+        inspector = inspect(_engine())
         if "source_analyses" not in inspector.get_table_names():
             return
         existing = {col["name"] for col in inspector.get_columns("source_analyses")}
     except Exception:
         return
 
-    with engine.begin() as conn:
+    with _engine().begin() as conn:
         for name, sql_type in additions.items():
             if name in existing:
                 continue
@@ -196,12 +197,12 @@ def _promote_json_text_columns() -> None:
     from sqlalchemy import inspect, text
 
     try:
-        inspector = inspect(engine)
+        inspector = inspect(_engine())
         tables = inspector.get_table_names()
     except Exception:
         return
 
-    with engine.begin() as conn:
+    with _engine().begin() as conn:
         for table in tables:
             try:
                 columns = inspector.get_columns(table)
@@ -261,6 +262,12 @@ def _ensure_generation_job_columns() -> None:
         "last_saved_at": "TIMESTAMP",
         "estimated_usage_summary": "TEXT",
         "estimated_duration_summary": "TEXT",
+        "sources_run_summary": "TEXT",
+        "provenance_summary": "TEXT",
+        "architecture_summary": "TEXT",
+        "grounding_confidence": "TEXT",
+        "research_synthesis_summary": "TEXT",
+        "improve_next_tip": "TEXT",
         "internal_risk_count": "INTEGER DEFAULT 0",
         "total_lessons_count": "INTEGER DEFAULT 0",
         "needs_review_count": "INTEGER DEFAULT 0",
@@ -279,14 +286,14 @@ def _ensure_generation_job_columns() -> None:
         "cancel_requested": BOOLEAN_NOT_NULL_DEFAULT_FALSE,
     }
     try:
-        inspector = inspect(engine)
+        inspector = inspect(_engine())
         if "generation_jobs" not in inspector.get_table_names():
             return
         existing = {col["name"] for col in inspector.get_columns("generation_jobs")}
     except Exception:
         return
 
-    with engine.begin() as conn:
+    with _engine().begin() as conn:
         for name, sql_type in additions.items():
             if name in existing:
                 continue
@@ -316,14 +323,14 @@ def _ensure_course_columns() -> None:
         "official_tool_memory_json": "TEXT",
     }
     try:
-        inspector = inspect(engine)
+        inspector = inspect(_engine())
         if "courses" not in inspector.get_table_names():
             return
         existing = {col["name"] for col in inspector.get_columns("courses")}
     except Exception:
         return
 
-    with engine.begin() as conn:
+    with _engine().begin() as conn:
         for name, sql_type in additions.items():
             if name in existing:
                 continue
@@ -332,6 +339,44 @@ def _ensure_course_columns() -> None:
                     f"ALTER TABLE courses ADD COLUMN {name} {_json_safe_type(name, sql_type)}"
                 )
             )
+
+
+def _ensure_course_version_unique() -> None:
+    """Unique (course_id, version_number) on existing DBs.
+
+    `create_all` does not ALTER existing tables to add UniqueConstraint.
+    Without this, two concurrent export paths can insert the same version
+    number (senior classic: read-max-then-insert without a DB constraint).
+    """
+    from sqlalchemy import inspect, text
+
+    try:
+        inspector = inspect(_engine())
+        if "course_versions" not in inspector.get_table_names():
+            return
+        # Already present via model create_all on fresh DBs, or a prior ensure.
+        for ix in inspector.get_indexes("course_versions"):
+            cols = list(ix.get("column_names") or [])
+            if ix.get("unique") and cols == ["course_id", "version_number"]:
+                return
+        for uc in inspector.get_unique_constraints("course_versions"):
+            cols = list(uc.get("column_names") or [])
+            if cols == ["course_id", "version_number"]:
+                return
+    except Exception:
+        return
+
+    with _engine().begin() as conn:
+        try:
+            conn.execute(
+                text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS uq_course_version_number "
+                    "ON course_versions (course_id, version_number)"
+                )
+            )
+        except Exception:
+            # Duplicate legacy rows would block index creation — do not crash startup.
+            pass
 
 
 def _ensure_ai_usage_events_table() -> None:
@@ -363,14 +408,14 @@ def _ensure_ai_usage_events_table() -> None:
         "created_at": "TIMESTAMP",
     }
     try:
-        inspector = inspect(engine)
+        inspector = inspect(_engine())
         tables = inspector.get_table_names()
     except Exception:
         return
 
     if "ai_usage_events" not in tables:
         try:
-            AIUsageEvent.__table__.create(engine, checkfirst=True)
+            AIUsageEvent.__table__.create(_engine(), checkfirst=True)
         except Exception:
             logger = __import__("logging").getLogger(__name__)
             logger.exception("Failed to create ai_usage_events table")
@@ -381,7 +426,7 @@ def _ensure_ai_usage_events_table() -> None:
     except Exception:
         return
 
-    with engine.begin() as conn:
+    with _engine().begin() as conn:
         for name, sql_type in additions.items():
             if name in existing:
                 continue
@@ -426,12 +471,12 @@ def _widen_str_enum_columns() -> None:
         return
 
     try:
-        inspector = inspect(engine)
+        inspector = inspect(_engine())
         tables = set(inspector.get_table_names())
     except Exception:
         return
 
-    with engine.begin() as conn:
+    with _engine().begin() as conn:
         for table, column, length in targets:
             if table not in tables:
                 continue
@@ -500,12 +545,12 @@ def _normalize_str_enum_storage() -> None:
     ]
 
     try:
-        inspector = inspect(engine)
+        inspector = inspect(_engine())
         tables = set(inspector.get_table_names())
     except Exception:
         return
 
-    with engine.begin() as conn:
+    with _engine().begin() as conn:
         if "course_sources" in tables:
             try:
                 cols = {c["name"] for c in inspector.get_columns("course_sources")}
@@ -547,7 +592,7 @@ def _backfill_generation_job_json_defaults() -> None:
     from sqlalchemy import inspect, text
 
     try:
-        inspector = inspect(engine)
+        inspector = inspect(_engine())
         if "generation_jobs" not in inspector.get_table_names():
             return
         cols = {c["name"] for c in inspector.get_columns("generation_jobs")}
@@ -557,7 +602,7 @@ def _backfill_generation_job_json_defaults() -> None:
     # SQLite TEXT and Postgres JSON/JSONB all accept a JSON array literal when
     # cast appropriately. Prefer cast on Postgres; fall back to plain '[]'.
     candidates = ["'[]'::json", "'[]'"] if _is_postgres() else ["'[]'"]
-    with engine.begin() as conn:
+    with _engine().begin() as conn:
         for column in ("waste_warnings_json", "log_json", "completed_reels_json"):
             if column not in cols:
                 continue
@@ -572,9 +617,3 @@ def _backfill_generation_job_json_defaults() -> None:
                     break
                 except Exception:
                     continue
-
-
-
-def get_session() -> Generator[Session, None, None]:
-    with Session(engine) as session:
-        yield session

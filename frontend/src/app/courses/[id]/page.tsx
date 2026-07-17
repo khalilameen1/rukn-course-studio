@@ -133,12 +133,12 @@ export default function CourseDetailPage() {
     // Lightweight Inputs/Output panel signals - failures here shouldn't
     // block the rest of the workspace from loading.
     api
-      .listKnowledgeItems()
-      .then((items) => setActiveKnowledgeCount(items.filter((item) => item.is_active).length))
+      .getCourseReadiness(courseId)
+      .then((r) => setActiveKnowledgeCount(r.active_rule_key_count))
       .catch(() => setActiveKnowledgeCount(null));
 
     api
-      .diagnostics()
+      .diagnosticsFull()
       .then(setDiagnostics)
       .catch(() => setDiagnostics(null));
 
@@ -166,8 +166,13 @@ export default function CourseDetailPage() {
     setEditingBrief(false);
   }
 
-  async function handleUpload(file: File, category: SourceCategory, priority: Priority) {
-    const created = await api.uploadSource(courseId, file, category, priority);
+  async function handleUpload(
+    file: File,
+    category: SourceCategory,
+    priority: Priority,
+    opts?: { password?: string; force?: boolean },
+  ) {
+    const created = await api.uploadSource(courseId, file, category, priority, opts);
     setSources((prev) => [...prev, created]);
   }
 
@@ -181,14 +186,37 @@ export default function CourseDetailPage() {
   }
 
   async function handleDeleteSource(source: CourseSource) {
-    if (!confirm("Delete this source?")) return;
-    await api.deleteSource(courseId, source.id);
+    const name = source.original_filename || source.display_title || source.title || `source-${source.id}`;
+    if (!confirm(`Delete source "${name}"?\n\nType confirmation is sent as the exact name.`)) return;
+    await api.deleteSource(courseId, source.id, name);
     setSources((prev) => prev.filter((s) => s.id !== source.id));
   }
 
   async function handleSourceCategoryChange(source: CourseSource, category: SourceCategory) {
-    const updated = await api.updateSourceCategory(courseId, source.id, category);
+    const updated = await api.patchSource(courseId, source.id, {
+      source_category: category,
+    });
     setSources((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
+  }
+
+  async function handleSourceIncludeChange(source: CourseSource, include: boolean) {
+    const updated = await api.patchSource(courseId, source.id, {
+      include_in_generation: include,
+    });
+    setSources((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
+  }
+
+  async function handleSourceReprocess(source: CourseSource, password?: string) {
+    const updated = await api.reprocessSource(courseId, source.id, password);
+    setSources((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
+  }
+
+  async function handleSourcePreview(source: CourseSource) {
+    const preview = await api.getSourceAnalysis(courseId, source.id);
+    return {
+      summary: preview.source_summary,
+      keyPoints: preview.key_points ?? [],
+    };
   }
 
   async function handleDownloadLatest(version: CourseVersion) {
@@ -207,7 +235,11 @@ export default function CourseDetailPage() {
     setDownloadError(null);
     setDownloadingPartial(true);
     try {
-      await api.downloadPartialDocx(jobId, `course_${courseId}_job_${jobId}_partial.docx`);
+      await api.downloadPartialDocx(
+        courseId,
+        jobId,
+        `course_${courseId}_job_${jobId}_partial.docx`,
+      );
     } catch (err) {
       setDownloadError(formatApiErrorForDisplay(err));
     } finally {
@@ -354,21 +386,68 @@ export default function CourseDetailPage() {
               onVersionCreated={loadAll}
               onJobUpdate={setCurrentJob}
             />
+            {currentJob?.provenance_summary ? (
+              <details className="rounded-md border border-border bg-surface-muted/30 px-3 py-2 text-xs text-muted">
+                <summary className="cursor-pointer font-medium text-foreground">
+                  This run used (provenance)
+                </summary>
+                <p className="mt-2 text-foreground">{currentJob.provenance_summary}</p>
+                {currentJob.sources_run_summary ? (
+                  <p className="mt-1">Sources: {currentJob.sources_run_summary}</p>
+                ) : null}
+                {currentJob.generation_quality_mode ? (
+                  <p className="mt-1">
+                    Mode: {currentJob.generation_quality_mode}
+                    {currentJob.web_research_mode
+                      ? ` · research ${currentJob.web_research_mode}`
+                      : ""}
+                  </p>
+                ) : null}
+              </details>
+            ) : null}
           </Card>
         </SectionPanel>
 
         <SectionPanel label="Output" description="Teleprompter DOCX" framed>
-          <Card className="flex flex-col gap-4">
+          <Card
+            className={`flex flex-col gap-4 ${
+              currentJob?.status === "completed" && latestVersion
+                ? "ring-1 ring-accent/40"
+                : ""
+            }`}
+          >
             {latestVersion ? (
               <>
+                {currentJob?.status === "completed" ? (
+                  <p className="text-xs uppercase tracking-wide text-muted">
+                    Presentation ready
+                  </p>
+                ) : null}
                 <StatusBadge label="DOCX ready" tone="success" />
+                {currentJob?.architecture_summary ? (
+                  <p className="text-sm text-foreground">{currentJob.architecture_summary}</p>
+                ) : null}
+                {currentJob?.grounding_confidence ? (
+                  <p className="text-xs text-muted">
+                    Grounding confidence: {currentJob.grounding_confidence}
+                    {currentJob.improve_next_tip
+                      ? ` · ${currentJob.improve_next_tip}`
+                      : ""}
+                  </p>
+                ) : null}
                 <Field label="Last generated" value={new Date(latestVersion.created_at).toLocaleString()} />
                 <button
                   onClick={() => handleDownloadLatest(latestVersion)}
-                  disabled={downloadingLatest}
-                  className="btn-primary w-fit"
+                  disabled={
+                    downloadingLatest || currentJob?.current_stage === "exporting"
+                  }
+                  className="btn-primary w-fit text-base"
                 >
-                  {downloadingLatest ? "Preparing download..." : "Download DOCX"}
+                  {currentJob?.current_stage === "exporting"
+                    ? "Exporting… download when ready"
+                    : downloadingLatest
+                      ? "Preparing download..."
+                      : "Download Teleprompter DOCX"}
                 </button>
               </>
             ) : (
@@ -383,7 +462,9 @@ export default function CourseDetailPage() {
                 <StatusBadge label="Partial draft available" tone="warning" />
                 <button
                   onClick={() => handleDownloadPartial(currentJob.id)}
-                  disabled={downloadingPartial}
+                  disabled={
+                    downloadingPartial || currentJob?.current_stage === "exporting"
+                  }
                   className="btn-secondary w-fit"
                 >
                   {downloadingPartial ? "Preparing download..." : "Download Partial DOCX"}
@@ -433,6 +514,9 @@ export default function CourseDetailPage() {
               sources={sources}
               onDelete={handleDeleteSource}
               onCategoryChange={handleSourceCategoryChange}
+              onIncludeChange={handleSourceIncludeChange}
+              onReprocess={handleSourceReprocess}
+              onPreview={handleSourcePreview}
             />
             <div className="grid gap-4 sm:grid-cols-2">
               <SourceUploadForm onUpload={handleUpload} />

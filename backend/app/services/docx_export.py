@@ -90,8 +90,15 @@ def _apply_teleprompter_formatting(document: DocxDocument) -> None:
 
 
 def _add_script_lines(document: DocxDocument, script_text: str) -> None:
-    """Write spoken transcript lines; preserve blank lines as pause spacing."""
-    for line in (script_text or "").splitlines():
+    """Write spoken transcript lines; preserve blank lines as pause spacing.
+
+    Last-chance strip of URLs/citation cues so export never ships research leaks
+    even if an earlier pipeline stage missed them.
+    """
+    from app.generation.web_research import strip_research_leaks_from_script
+
+    cleaned = strip_research_leaks_from_script(script_text or "")
+    for line in cleaned.splitlines():
         if line.strip():
             _set_rtl(document.add_paragraph(line.strip()))
         else:

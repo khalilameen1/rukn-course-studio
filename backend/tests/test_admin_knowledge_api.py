@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import Session, SQLModel, create_engine
@@ -166,3 +168,66 @@ def test_course_transcript_text_not_in_admin_knowledge(db_client, auth_headers):
     admin_items = test_client.get("/admin/knowledge", headers=auth_headers).json()
     blob = " ".join((i.get("content_text") or "") + (i.get("title") or "") for i in admin_items)
     assert unique not in blob
+
+
+def test_create_active_deactivates_sibling_primary(db_client, auth_headers):
+    test_client, engine = db_client
+    with Session(engine) as session:
+        existing = [
+            i
+            for i in admin_knowledge_items.list(session, key="rukn_forbidden_phrases")
+            if i.is_active
+        ]
+        assert len(existing) == 1
+        old_id = existing[0].id
+
+    response = test_client.post(
+        "/admin/knowledge",
+        headers=auth_headers,
+        json={
+            "key": "rukn_forbidden_phrases",
+            "title": "Replacement phrases",
+            "item_type": "json",
+            "content_text": json.dumps(
+                {
+                    "description": "test",
+                    "phrases": [
+                        {
+                            "phrase": "bad phrase",
+                            "severity": "high",
+                            "replacement_hint": "cut it",
+                        }
+                    ],
+                },
+                ensure_ascii=False,
+            ),
+            "is_active": True,
+        },
+    )
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["is_active"] is True
+    assert body["version"] >= 2
+    assert body["id"] != old_id
+
+    with Session(engine) as session:
+        assert admin_knowledge_items.get(session, old_id).is_active is False
+        actives = [
+            i
+            for i in admin_knowledge_items.list(session, key="rukn_forbidden_phrases")
+            if i.is_active
+        ]
+        assert len(actives) == 1
+        assert actives[0].id == body["id"]
+
+
+def test_catalog_endpoint_lists_system_keys(db_client, auth_headers):
+    test_client, _ = db_client
+    response = test_client.get("/admin/knowledge/catalog", headers=auth_headers)
+    assert response.status_code == 200
+    rows = response.json()
+    keys = {r["key"] for r in rows}
+    assert "rukn_cost_hygiene_trusted_knowledge" in keys
+    assert "rukn_generation_presets" in keys
+    hygiene = next(r for r in rows if r["key"] == "rukn_cost_hygiene_trusted_knowledge")
+    assert hygiene["stable"] is True

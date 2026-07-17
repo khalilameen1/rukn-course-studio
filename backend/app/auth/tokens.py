@@ -15,8 +15,10 @@ import hashlib
 import hmac
 import json
 import time
+import uuid
 
-DEFAULT_EXPIRY_DAYS = 7
+# Copilot-scale: short-lived sessions; re-login is cheap for an internal tool.
+DEFAULT_EXPIRY_DAYS = 1
 
 
 class InvalidTokenError(Exception):
@@ -40,9 +42,22 @@ def _sign(payload_b64: str, secret_key: str) -> str:
 
 
 def create_token(
-    username: str, secret_key: str, expiry_days: int = DEFAULT_EXPIRY_DAYS
+    username: str,
+    secret_key: str,
+    expiry_days: int = DEFAULT_EXPIRY_DAYS,
+    *,
+    scopes: list[str] | None = None,
 ) -> str:
-    payload = {"sub": username, "exp": int(time.time()) + expiry_days * 86400}
+    from app.auth.scopes import normalize_scopes
+
+    now = int(time.time())
+    payload = {
+        "sub": username,
+        "exp": now + max(1, expiry_days) * 86400,
+        "iat": now,
+        "jti": uuid.uuid4().hex,
+        "scopes": normalize_scopes(scopes),
+    }
     payload_b64 = _b64encode(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
     signature = _sign(payload_b64, secret_key)
     return f"{payload_b64}.{signature}"
@@ -52,7 +67,10 @@ def verify_token(token: str, secret_key: str) -> dict:
     """Verify signature and expiry, returning the decoded payload (with `sub`).
 
     Raises `InvalidTokenError` for any malformed, tampered, or expired token.
+    Caller must also check the denylist (`jti`) when sessions can be revoked.
     """
+    from app.auth.scopes import normalize_scopes
+
     try:
         payload_b64, signature = token.split(".", 1)
     except ValueError as exc:
@@ -73,4 +91,9 @@ def verify_token(token: str, secret_key: str) -> dict:
     if payload["exp"] < time.time():
         raise InvalidTokenError("Token has expired")
 
+    payload["scopes"] = normalize_scopes(payload.get("scopes"))
+    if not payload.get("jti"):
+        # Legacy tokens without jti cannot be revoked individually — still valid
+        # until expiry, but fail-closed scopes already limit them.
+        payload["jti"] = None
     return payload

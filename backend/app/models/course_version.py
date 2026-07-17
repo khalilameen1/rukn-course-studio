@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 from typing import Optional
 
+from sqlalchemy import UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 
@@ -17,6 +18,9 @@ class CourseVersion(SQLModel, table=True):
     """
 
     __tablename__ = "course_versions"
+    __table_args__ = (
+        UniqueConstraint("course_id", "version_number", name="uq_course_version_number"),
+    )
 
     id: Optional[int] = Field(default=None, primary_key=True)
     course_id: int = Field(foreign_key="courses.id", index=True)
