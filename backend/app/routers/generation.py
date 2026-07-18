@@ -56,12 +56,12 @@ def _actor(request: Request) -> str | None:
     return getattr(request.state, "username", None)
 
 
-@router.post("/generate-map", response_model=CourseRead)
+@router.post("/generate-map", response_model=CourseRead, deprecated=True)
 def generate_course_map(course_id: int, session: Session = Depends(get_session)):
-    """Build Final Course Map. Course-specific only — never Admin Knowledge.
+    """DEPRECATED: prefer POST /courses/{id}/map-preview.
 
-    Uses the same start guard as full generate so map and DOCX runs cannot
-    overlap on one course (or globally when GENERATION_GLOBAL_LOCK is on).
+    Kept for backward compatibility with the create-course map workspace.
+    New UI should use map-preview (same sources + GenerationContextSnapshot).
     """
     get_course_or_404(session, course_id)
     _release_stale_active_jobs(session)
@@ -541,11 +541,22 @@ def map_preview(
     from app.generation.errors import UnusableOutputError
 
     try:
+        from app.models.enums import AddressForm
+
+        try:
+            address = AddressForm(request_body.address_form)
+        except ValueError:
+            address = AddressForm.MASCULINE
         stats = build_map_preview(
             session,
             course_id,
             quality_mode=request_body.generation_quality_mode,
             human_override_hard_limits=request_body.human_override_hard_limits,
+            address_form=address,
+            presenter_language=request_body.presenter_language,
+            presenter_dialect=request_body.presenter_dialect,
+            delivery_pattern=request_body.delivery_pattern,
+            web_research_mode=request_body.web_research_mode,
         )
     except UnusableOutputError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

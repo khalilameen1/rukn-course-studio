@@ -517,8 +517,9 @@ def test_two_modules_review_runs_for_even_module_count(session):
 
     two_module_logs = [e for e in job.log_json if e["step"] == "review_2modules"]
     assert len(two_module_logs) == 1
-    assert "skipped" not in two_module_logs[0]
     assert two_module_logs[0]["ids"] == ["m1", "m2"]
+    # No-op AI two-module review removed — logged as disabled.
+    assert two_module_logs[0].get("status") == "disabled"
 
 
 def test_two_modules_review_skips_unpaired_trailing_module(session):
@@ -532,6 +533,7 @@ def test_two_modules_review_skips_unpaired_trailing_module(session):
     two_module_logs = [e for e in job.log_json if e["step"] == "review_2modules"]
     assert len(two_module_logs) == 2
     assert two_module_logs[0]["ids"] == ["m1", "m2"]
+    assert two_module_logs[0].get("status") == "disabled"
     assert two_module_logs[1].get("skipped") == "unpaired trailing module"
 
 
@@ -541,8 +543,9 @@ def test_five_reel_review_runs_once_for_six_reel_course(session):
     job = run_generation(session, course.id)
 
     five_reel_logs = [e for e in job.log_json if e["step"] == "review_5reels"]
-    # 2 modules x 3 reels = 6 reels total -> exactly one trigger at reel 5.
+    # 2 modules x 3 reels = 6 reels total -> one trigger at reel 5 (now disabled).
     assert len(five_reel_logs) == 1
+    assert five_reel_logs[0].get("status") == "disabled"
 
 
 def test_course_not_found_raises(session):

@@ -606,7 +606,17 @@ export const api = {
     apiFetch<Course>(`/courses/${courseId}/generate-map`, { method: "POST" }),
   generateCourse: (
     courseId: number,
-    body?: { generation_quality_mode?: "preview" | "premium" },
+    body?: {
+      generation_quality_mode?: "preview" | "premium";
+      web_research_mode?: "disabled" | "autonomous_gap_fill";
+      map_preview_confirmed?: boolean;
+      human_override_hard_limits?: boolean;
+      address_form?: "masculine" | "feminine" | "neutral";
+      presenter_language?: string;
+      presenter_dialect?: string;
+      delivery_pattern?: string;
+      approved_snapshot_fingerprint?: string;
+    },
   ) =>
     apiFetch<GenerationJob>(`/courses/${courseId}/generate`, {
       method: "POST",
@@ -640,6 +650,11 @@ export const api = {
     body?: {
       generation_quality_mode?: "preview" | "premium";
       human_override_hard_limits?: boolean;
+      web_research_mode?: "disabled" | "autonomous_gap_fill";
+      address_form?: "masculine" | "feminine" | "neutral";
+      presenter_language?: string;
+      presenter_dialect?: string;
+      delivery_pattern?: string;
     },
   ) =>
     apiFetch<import("@/lib/types").MapPreviewStats>(`/courses/${courseId}/map-preview`, {

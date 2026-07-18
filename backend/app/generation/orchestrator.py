@@ -1081,21 +1081,14 @@ def run_generation(
                 _abort_if_canceled()
 
                 if reels_done % 5 == 0:
-                    _abort_if_canceled()
-                    flush(current_stage="reviewing_repetition")
-                    window = all_reels[-5:]
-                    result = provider.review_five_reels(
-                        ReviewFiveReelsInput(
-                            reels=window,
-                            rules_context=select_packed_rules_for_stage(
-                                rules_context, PipelineStage.REVIEW_FIVE_REELS
-                            ),
-                        )
+                    # Disabled: was log-only AI cost with no script/map effect.
+                    logs.append(
+                        {
+                            "step": "review_5reels",
+                            "status": "disabled",
+                            "reason": "no_effect_ai_review_removed",
+                        }
                     )
-                    _record_usage_event(
-                        session, job, provider, PipelineStage.REVIEW_FIVE_REELS, preset_value
-                    )
-                    logs.append({"step": "review_5reels", "status": result.status.value})
                     flush()
 
             # Internal curve variation checks (logged only — never DOCX).
@@ -1117,21 +1110,30 @@ def run_generation(
 
             flush(current_stage="reviewing_repetition")
             _abort_if_canceled()
-            module_result = provider.review_module(
-                ReviewModuleInput(
-                    module=module,
-                    reels=module_reels,
-                    rules_context=select_packed_rules_for_stage(rules_context, PipelineStage.REVIEW_MODULE),
-                )
-            )
-            _record_usage_event(session, job, provider, PipelineStage.REVIEW_MODULE, preset_value)
+            # Structural module review (no no-op AI call). Failing lessons only.
+            from app.generation.quality.module_review import review_module_structure
+
+            module_result = review_module_structure(module=module, reels=module_reels)
             logs.append(
                 {
                     "step": "review_module",
                     "id": module.module_id,
                     "status": module_result.status.value,
+                    "failing_reels": [
+                        a.target_id for a in module_result.actions if a.target_id
+                    ],
+                    "mode": "structural",
                 }
             )
+            for action in module_result.actions:
+                if action.reason_code == "needs_map_revision":
+                    logs.append(
+                        {
+                            "step": "needs_map_revision",
+                            "id": module.module_id,
+                            "detail": action.instruction,
+                        }
+                    )
             modules_done += 1
             previous_module_curve = module_curve
             flush(
@@ -1143,25 +1145,13 @@ def run_generation(
                 pending_pair = (module, module_reels)
             else:
                 prev_module, prev_reels = pending_pair
-                _abort_if_canceled()
-                flush(current_stage="reviewing_repetition")
-                two_result = provider.review_two_modules(
-                    ReviewTwoModulesInput(
-                        first=ModuleWithReels(module=prev_module, reels=prev_reels),
-                        second=ModuleWithReels(module=module, reels=module_reels),
-                        rules_context=select_packed_rules_for_stage(
-                            rules_context, PipelineStage.REVIEW_TWO_MODULES
-                        ),
-                    )
-                )
-                _record_usage_event(
-                    session, job, provider, PipelineStage.REVIEW_TWO_MODULES, preset_value
-                )
+                # Disabled: two-module AI review was log-only.
                 logs.append(
                     {
                         "step": "review_2modules",
                         "ids": [prev_module.module_id, module.module_id],
-                        "status": two_result.status.value,
+                        "status": "disabled",
+                        "reason": "no_effect_ai_review_removed",
                     }
                 )
                 flush()

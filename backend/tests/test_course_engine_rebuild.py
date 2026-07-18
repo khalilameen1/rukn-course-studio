@@ -204,7 +204,9 @@ def test_needs_review_blocks_docx_export():
         ],
     )
     assert not report.ok
-    assert any(b.code == "needs_review_or_fatal" for b in report.blockers)
+    assert any(
+        b.code in {"needs_review", "needs_review_or_fatal"} for b in report.blockers
+    )
 
 
 def test_module_project_in_docx_not_as_lesson_number():

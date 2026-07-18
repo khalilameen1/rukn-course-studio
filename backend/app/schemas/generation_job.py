@@ -48,6 +48,11 @@ class GenerateCourseRequest(BaseModel):
     # When true, client confirmed the map preview and hard-limit warnings.
     map_preview_confirmed: bool = False
     human_override_hard_limits: bool = False
+    address_form: str = "masculine"
+    presenter_language: str = "ar"
+    presenter_dialect: str = "egyptian"
+    delivery_pattern: str = "teleprompter_standard"
+    approved_snapshot_fingerprint: str | None = None
 
 
 class WriterTestTopicIn(BaseModel):
@@ -70,6 +75,11 @@ class WriterTest3ReelsRequest(BaseModel):
 class MapPreviewRequest(BaseModel):
     generation_quality_mode: GenerationQualityModeLoose = GenerationQualityMode.PREMIUM
     human_override_hard_limits: bool = False
+    web_research_mode: WebResearchModeLoose = WebResearchMode.DISABLED
+    address_form: str = "masculine"
+    presenter_language: str = "ar"
+    presenter_dialect: str = "egyptian"
+    delivery_pattern: str = "teleprompter_standard"
 
 class GenerationJobRead(BaseModel):
     """User-facing job status (Copilot-scale public DTO).

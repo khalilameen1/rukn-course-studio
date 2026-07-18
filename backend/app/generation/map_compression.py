@@ -21,10 +21,11 @@ class CompressionReport:
     lesson_count_before: int = 0
     lesson_count_after: int = 0
     estimated_minutes_after: float = 0.0
+    atom_errors: list[str] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
-        return not self.errors
+        return not self.errors and not self.atom_errors
 
 
 def _tokens(text: str) -> set[str]:
@@ -174,15 +175,19 @@ def compress_course_map(
     course_map: CourseMap,
     *,
     thesis: CourseThesis | None = None,
+    hard_max_lessons: int | None = None,
+    hard_max_minutes: int | None = None,
 ) -> tuple[CourseMap, CompressionReport]:
     """Merge near-duplicate lessons; enforce thesis hard limits afterward."""
     from app.generation.course_map_quality import total_estimated_minutes
+    from app.generation.quality.content_atoms import build_ledger_from_course_map
 
     thesis = thesis or course_map.thesis
     report = CompressionReport()
     modules_out: list[ModulePlan] = []
     before = sum(len(m.reels) for m in course_map.modules)
     report.lesson_count_before = before
+    ledger_before = build_ledger_from_course_map(course_map)
 
     for module in course_map.modules:
         mod = _normalize_module(module)
@@ -206,6 +211,7 @@ def compress_course_map(
             merged_into = False
             for i, existing in enumerate(kept):
                 if _semantically_similar(existing, reel):
+                    # Preserve union of content atoms (must_cover) on merge.
                     kept[i] = _merge_reel(existing, reel)
                     report.merged_pairs.append((existing.reel_id, reel.reel_id))
                     report.removed_reel_ids.append(reel.reel_id)
@@ -237,21 +243,60 @@ def compress_course_map(
     report.lesson_count_after = after
     report.estimated_minutes_after = total_estimated_minutes(compressed)
 
+    ledger_after = build_ledger_from_course_map(compressed)
+    after_labels = {(a.label or "").strip().lower() for a in ledger_after.atoms if a.label}
+    merged_donors = {donor for _, donor in report.merged_pairs}
+    out_of_scope_removed = {
+        rid
+        for rid, note in zip(report.removed_reel_ids, report.warnings)
+        if "out-of-scope" in (note or "").lower()
+    } if report.warnings else set()
+    # Also treat removed ids that appear only in out-of-scope warnings.
+    for warning in report.warnings:
+        if "out-of-scope" in warning.lower():
+            for rid in report.removed_reel_ids:
+                if rid in warning:
+                    out_of_scope_removed.add(rid)
+    for atom in ledger_before.core_atoms():
+        lesson_id = atom.included_lesson_id or ""
+        if lesson_id in out_of_scope_removed and lesson_id not in merged_donors:
+            continue
+        label = (atom.label or "").strip().lower()
+        if not label:
+            continue
+        if label not in after_labels:
+            report.atom_errors.append(
+                f"CONTENT_ATOM_MISSING:{atom.atom_id}:{atom.label}"
+            )
+    report.atom_errors = list(dict.fromkeys(report.atom_errors))
+
+    max_lessons = hard_max_lessons
+    max_minutes = hard_max_minutes
     if thesis:
-        if after > thesis.hard_max_lessons and not thesis.human_override_hard_limits:
-            report.errors.append(
-                f"Course map has {after} lessons which exceeds hard_max_lessons="
-                f"{thesis.hard_max_lessons}. Compress further or raise the hard "
-                "limit with an explicit human override."
-            )
-        if (
-            report.estimated_minutes_after > thesis.hard_max_minutes
-            and not thesis.human_override_hard_limits
-        ):
-            report.errors.append(
-                f"Course map estimates ~{report.estimated_minutes_after:.0f} minutes "
-                f"which exceeds hard_max_minutes={thesis.hard_max_minutes}."
-            )
+        max_lessons = max_lessons if max_lessons is not None else thesis.hard_max_lessons
+        max_minutes = max_minutes if max_minutes is not None else thesis.hard_max_minutes
+        override = thesis.human_override_hard_limits
+    else:
+        override = False
+    if max_lessons is not None and after > max_lessons and not override:
+        report.errors.append(
+            f"Course map has {after} lessons which exceeds hard_max_lessons="
+            f"{max_lessons}. Compress further or raise the hard "
+            "limit with an explicit human override."
+        )
+    if (
+        max_minutes is not None
+        and report.estimated_minutes_after > max_minutes
+        and not override
+    ):
+        report.errors.append(
+            f"Course map estimates ~{report.estimated_minutes_after:.0f} minutes "
+            f"which exceeds hard_max_minutes={max_minutes}."
+        )
+    if report.atom_errors:
+        report.errors.append(
+            "Map compression dropped core content atoms — refusing to continue."
+        )
     return compressed, report
 
 

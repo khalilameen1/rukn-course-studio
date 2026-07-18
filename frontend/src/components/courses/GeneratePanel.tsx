@@ -742,6 +742,9 @@ export default function GeneratePanel({
 
       const started = await api.generateCourse(courseId, {
         generation_quality_mode: modeToUse,
+        map_preview_confirmed: true,
+        web_research_mode: "disabled",
+        approved_snapshot_fingerprint: mapPreview.snapshot_fingerprint,
       });
       updateJob(started);
       if (TERMINAL_STATUSES.has(started.status)) {
@@ -848,6 +851,14 @@ export default function GeneratePanel({
               {Math.round(mapPreview.practice_ratio_estimate * 100)}% · ≈
               {mapPreview.approx_tokens} tokens / ~${mapPreview.approx_cost_usd}
             </li>
+            {mapPreview.adapter_id ? (
+              <li>
+                Domain adapter: {mapPreview.adapter_id}
+                {mapPreview.snapshot_fingerprint
+                  ? ` · snapshot ${mapPreview.snapshot_fingerprint.slice(0, 8)}`
+                  : ""}
+              </li>
+            ) : null}
             {Object.entries(mapPreview.delivery_mode_counts || {}).map(([k, v]) => (
               <li key={k}>
                 {k}: {v}

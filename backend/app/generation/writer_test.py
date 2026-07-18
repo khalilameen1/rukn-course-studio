@@ -197,12 +197,41 @@ def run_writer_test_3_reels(
             },
         )
 
-    from app.generation.orchestrator import _build_course_brief, _write_and_review_reel
+    from app.generation.domain_adapters import build_course_quality_contract
+    from app.generation.orchestrator import (
+        _build_course_brief,
+        _load_usable_sources,
+        _map_source_excerpts,
+        _write_and_review_reel,
+    )
 
     brief = _build_course_brief(course)
+    contract = build_course_quality_contract(
+        brief,
+        course_domain=getattr(course, "course_domain", None),
+        course_type=getattr(course, "course_type", None),
+    )
+    usable = _load_usable_sources(session, course_id)
+    source_excerpts = _map_source_excerpts(usable)
+    # Prefer conceptual / applied / error-fix shaped topics when titles allow.
     plans = [
         _topic_to_reel_plan(topic, i + 1, linked=series_linked) for i, topic in enumerate(topics)
     ]
+    if len(plans) == 3:
+        plans[0] = plans[0].model_copy(
+            update={"delivery_mode": LessonDeliveryMode.CAMERA_EXPLAINER}
+        )
+        plans[1] = plans[1].model_copy(
+            update={
+                "delivery_mode": LessonDeliveryMode.SCREEN_DEMO,
+                "needs_screen_or_visual": True,
+                "internal_visual_plan": "Show one concrete screen step for the topic",
+                "required_assets": ["writer-test-screen.png"],
+            }
+        )
+        plans[2] = plans[2].model_copy(
+            update={"delivery_mode": LessonDeliveryMode.ERROR_FIX}
+        )
     module = ModulePlan(
         module_id="wt",
         title=series_context.strip() or "اختبار الكاتب",
@@ -213,6 +242,7 @@ def run_writer_test_3_reels(
         course_title=course.title,
         main_thread=series_context or "writer-test",
         modules=[module],
+        thesis=None,
     )
 
     results: list[GeneratedReel] = []
@@ -235,13 +265,13 @@ def run_writer_test_3_reels(
             reel_plan=plan,
             prior_reels=results,
             all_reels_so_far=results,
-            sources=[],
+            sources=source_excerpts,
             rules_context=rules_context,
             quality_mode=quality_mode,
             target_market=brief.target_market,
             phrase_ledger=phrase_ledger,
             voice_profile=voice_profile,
-            address_form=AddressForm.MASCULINE,
+            address_form=contract.language.address_form or AddressForm.MASCULINE,
         )
 
         text = generated.script_text or ""

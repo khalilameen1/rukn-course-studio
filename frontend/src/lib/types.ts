@@ -285,6 +285,10 @@ export interface MapPreviewStats {
   can_start_full_generation: boolean;
   thesis?: Record<string, unknown>;
   course_map?: Record<string, unknown>;
+  quality_contract?: Record<string, unknown>;
+  snapshot?: Record<string, unknown>;
+  snapshot_fingerprint?: string;
+  adapter_id?: string;
 }
 
 export interface WriterTestReelPublic {

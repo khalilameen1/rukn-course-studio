@@ -51,7 +51,17 @@ def missing_anthropic_config(config: Settings) -> list[str]:
 
 
 def get_ai_provider(config: Settings = settings) -> AIProvider:
+    import os
+
     provider_name = (config.ai_provider or "fake").strip().lower()
+
+    # Credit-safe / pytest guard — never construct a paid provider.
+    if os.environ.get("RUKN_CREDIT_SAFE_TESTS") == "1":
+        from app.generation.quality.network_guard import record_real_provider_attempt
+
+        if provider_name != "fake":
+            record_real_provider_attempt(provider_name)
+        return FakeProvider()
 
     if provider_name == "fake":
         return FakeProvider()

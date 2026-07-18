@@ -8,6 +8,8 @@ from app.generation.contracts.spoken_final_master import validate_spoken_export_
 from app.generation.duration_policy import words_outside_hard_range_reason
 from app.generation.egyptian_arabic_gate import run_egyptian_arabic_gate
 from app.generation.phrase_ledger import PhraseLedger
+from app.generation.quality.contract import CourseQualityContract
+from app.generation.quality.issue_codes import EXPORT_BLOCKING_STATUSES, IssueCode
 from app.models.enums import AddressForm, CourseMixType, LessonDeliveryMode
 from app.schemas.generation import CourseMap, CourseThesis, FinalCourse, GeneratedReel
 
@@ -55,21 +57,29 @@ def evaluate_export_blockers(
     generated_reels: list[GeneratedReel] | None = None,
     phrase_ledger: PhraseLedger | None = None,
     address_form: AddressForm = AddressForm.MASCULINE,
+    quality_contract: CourseQualityContract | None = None,
 ) -> ExportGateReport:
     report = ExportGateReport()
     thesis = thesis or (final_course.thesis if final_course else None) or (
         course_map.thesis if course_map else None
     )
     cmap = course_map
+    if quality_contract is not None:
+        address_form = quality_contract.language.address_form or address_form
 
     if cmap and thesis:
         n = _lesson_count(cmap)
-        if n > thesis.hard_max_lessons and not thesis.human_override_hard_limits:
+        hard_max = (
+            quality_contract.delivery.hard_max_lessons
+            if quality_contract is not None
+            else thesis.hard_max_lessons
+        )
+        if n > hard_max and not thesis.human_override_hard_limits:
             report.blockers.append(
                 ExportBlocker(
                     "course",
                     "map_over_hard_max_lessons",
-                    f"{n} lessons > hard_max_lessons={thesis.hard_max_lessons}",
+                    f"{n} lessons > hard_max_lessons={hard_max}",
                 )
             )
         # Detect remaining near-duplicates with the same dual-signal used by compression.
@@ -94,22 +104,39 @@ def evaluate_export_blockers(
             for m in cmap.modules
             if m.module_project is None and not (m.bridge_project or "").strip()
         ]
-        if thesis.mix_type == CourseMixType.PRACTICAL and missing_projects:
+        require_projects = thesis.mix_type == CourseMixType.PRACTICAL
+        if quality_contract is not None:
+            require_projects = (
+                quality_contract.delivery.module_checkpoint_policy
+                == "required_for_practical"
+                and quality_contract.pedagogy.mix_type == CourseMixType.PRACTICAL
+            ) or (
+                quality_contract.delivery.module_checkpoint_policy == "required"
+            )
+        if require_projects and missing_projects:
             report.blockers.append(
                 ExportBlocker(
                     "course",
-                    "missing_module_projects",
+                    IssueCode.CHECKPOINT_MISSING.value,
                     f"Modules without projects: {', '.join(missing_projects)}",
                 )
             )
-        if thesis.mix_type == CourseMixType.PRACTICAL and not (
+        if require_projects and not (
             final_course.graduation_project or (thesis.final_project or "").strip()
         ):
             report.blockers.append(
                 ExportBlocker(
                     "course",
-                    "missing_graduation_project",
-                    "Practical course missing final/graduation project",
+                    IssueCode.CHECKPOINT_MISSING.value,
+                    "Practical course missing graduation/final project",
+                )
+            )
+        if quality_contract is not None and quality_contract.evidence.require_expert_review_before_export:
+            report.blockers.append(
+                ExportBlocker(
+                    "course",
+                    IssueCode.EXPERT_REVIEW_REQUIRED.value,
+                    "Domain risk requires expert review before export",
                 )
             )
 
@@ -127,14 +154,14 @@ def evaluate_export_blockers(
             gen = reel_by_id.get(reel.reel_id)
             if gen and (gen.quality_status or "").lower() in {"needs_review", "fail"}:
                 status = gen.quality_status.lower()
-            if status in {"needs_review", "fail"} or (
+            if status in EXPORT_BLOCKING_STATUSES or (
                 gen and gen.self_check_status.value == "needs_revision"
             ):
                 report.blockers.append(
                     ExportBlocker(
                         "lesson",
-                        "needs_review_or_fatal",
-                        "Lesson flagged needs_review/fatal — export blocked",
+                        status if status in EXPORT_BLOCKING_STATUSES else "needs_review_or_fatal",
+                        f"Lesson flagged {status or 'needs_revision'} — export blocked",
                         reel_id=reel.reel_id,
                     )
                 )
@@ -159,39 +186,81 @@ def evaluate_export_blockers(
                         reel_id=reel.reel_id,
                     )
                 )
-            arabic = run_egyptian_arabic_gate(body, address_form=address_form)
-            for issue in arabic.issues:
-                if issue.severity in ("fatal", "serious"):
-                    report.blockers.append(
-                        ExportBlocker(
-                            "lesson",
-                            issue.code,
-                            issue.detail,
-                            reel_id=reel.reel_id,
+            apply_egyptian = True
+            apply_english = False
+            if quality_contract is not None:
+                apply_egyptian = quality_contract.language.apply_egyptian_spoken_qa
+                apply_english = quality_contract.language.apply_english_spoken_qa
+            if apply_egyptian:
+                arabic = run_egyptian_arabic_gate(body, address_form=address_form)
+                for issue in arabic.issues:
+                    if issue.severity in ("fatal", "serious"):
+                        report.blockers.append(
+                            ExportBlocker(
+                                "lesson",
+                                issue.code,
+                                issue.detail,
+                                reel_id=reel.reel_id,
+                            )
                         )
-                    )
+            if apply_english:
+                from app.generation.quality.english_spoken_gate import run_english_spoken_gate
+
+                eng = run_english_spoken_gate(body)
+                for issue in eng.issues:
+                    if issue.severity in ("fatal", "serious"):
+                        report.blockers.append(
+                            ExportBlocker(
+                                "lesson",
+                                issue.code,
+                                issue.detail,
+                                reel_id=reel.reel_id,
+                            )
+                        )
             mode = reel.delivery_mode
             if gen and gen.delivery_mode:
                 mode = gen.delivery_mode
-            reason = words_outside_hard_range_reason(body, delivery_mode=mode)
-            if reason and len(body.split()) < 40:
-                report.blockers.append(
-                    ExportBlocker(
-                        "lesson",
-                        "empty_teaching_or_too_short",
-                        reason,
-                        reel_id=reel.reel_id,
+            n_words = len(body.split())
+            if quality_contract is not None:
+                d = quality_contract.delivery
+                if n_words < d.minimum_reel_words:
+                    report.blockers.append(
+                        ExportBlocker(
+                            "lesson",
+                            IssueCode.WORD_RANGE.value,
+                            f"spoken_words={n_words} < minimum_reel_words={d.minimum_reel_words}",
+                            reel_id=reel.reel_id,
+                        )
                     )
-                )
-            elif reason and len(body.split()) > 600:
-                report.blockers.append(
-                    ExportBlocker(
-                        "lesson",
-                        "hard_length_overflow",
-                        reason,
-                        reel_id=reel.reel_id,
+                elif n_words > d.maximum_reel_words:
+                    report.blockers.append(
+                        ExportBlocker(
+                            "lesson",
+                            IssueCode.WORD_RANGE.value,
+                            f"spoken_words={n_words} > maximum_reel_words={d.maximum_reel_words}",
+                            reel_id=reel.reel_id,
+                        )
                     )
-                )
+            else:
+                reason = words_outside_hard_range_reason(body, delivery_mode=mode)
+                if reason and n_words < 40:
+                    report.blockers.append(
+                        ExportBlocker(
+                            "lesson",
+                            "empty_teaching_or_too_short",
+                            reason,
+                            reel_id=reel.reel_id,
+                        )
+                    )
+                elif reason and n_words > 600:
+                    report.blockers.append(
+                        ExportBlocker(
+                            "lesson",
+                            "hard_length_overflow",
+                            reason,
+                            reel_id=reel.reel_id,
+                        )
+                    )
             # Screen lessons need visual plan on the map reel.
             if cmap and mode in {
                 LessonDeliveryMode.SCREEN_DEMO,
