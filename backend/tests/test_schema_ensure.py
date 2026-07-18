@@ -66,6 +66,59 @@ def test_course_ensure_covers_every_model_column():
     assert not missing, f"add these to _ensure_course_columns: {sorted(missing)}"
 
 
+def test_ensure_course_columns_heals_missing_snapshot_column(tmp_path, monkeypatch):
+    """Reproduce Render outage: courses table predates generation_context_snapshot_json.
+
+    Without the ensure ADD, ORM SELECTs raise UndefinedColumn and /courses 500s.
+    """
+    from sqlalchemy import text
+    from sqlmodel import select
+
+    from app.db import patches as patches_mod
+    from app.models.course import Course
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'legacy_courses.db'}")
+    monkeypatch.setattr(patches_mod, "_engine", lambda: engine)
+    monkeypatch.setattr("app.db.engine", engine)
+
+    # Legacy shape: base columns only (no generation_context_snapshot_json).
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                CREATE TABLE courses (
+                    id INTEGER PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    audience TEXT NOT NULL,
+                    outcome TEXT NOT NULL,
+                    structure_mode TEXT NOT NULL,
+                    explanation_level TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    created_at TIMESTAMP,
+                    updated_at TIMESTAMP
+                )
+                """
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO courses "
+                "(id, title, audience, outcome, structure_mode, "
+                "explanation_level, status) "
+                "VALUES (1, 'Old Course', 'beginners', 'learn X', "
+                "'connected_no_modules', 'final_only', 'draft')"
+            )
+        )
+
+    _ensure_course_columns()
+
+    with Session(engine) as session:
+        rows = session.exec(select(Course)).all()
+        assert len(rows) == 1
+        assert rows[0].title == "Old Course"
+        assert rows[0].generation_context_snapshot_json is None
+
+
 def test_ai_usage_ensure_covers_every_model_column():
     covered = _covered_columns(_ensure_ai_usage_events_table)
     model_cols = {c.name for c in SQLModel.metadata.tables["ai_usage_events"].columns}

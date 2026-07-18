@@ -321,6 +321,9 @@ def _ensure_course_columns() -> None:
         "web_source_memory_json": "TEXT",
         "course_domain": "TEXT",
         "official_tool_memory_json": "TEXT",
+        # Approved map-preview snapshot (PR #6). Missing this ADD on existing
+        # Render DBs makes every Course SELECT 500 (courses list blank).
+        "generation_context_snapshot_json": "TEXT",
     }
     try:
         inspector = inspect(_engine())
