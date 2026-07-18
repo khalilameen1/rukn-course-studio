@@ -20,7 +20,14 @@ from app.routers.deps import get_course_or_404
 from app.schemas.ai_usage import CourseAIUsage
 from app.schemas.course import CourseRead
 from app.schemas.course_version import CourseVersionRead
-from app.schemas.generation_job import GenerateCourseRequest, GenerationJobRead
+from app.schemas.generation_job import (
+    GenerateCourseRequest,
+    GenerationJobRead,
+    MapPreviewRequest,
+    WriterTest3ReelsRequest,
+    WriterTestJobRead,
+    WriterTestReelPublic,
+)
 from app.security.request_throttle import can_generate_start, record_generate_start
 from app.services.finalize_saved_job import (
     finalize_job_from_saved_lessons,
@@ -49,12 +56,12 @@ def _actor(request: Request) -> str | None:
     return getattr(request.state, "username", None)
 
 
-@router.post("/generate-map", response_model=CourseRead)
+@router.post("/generate-map", response_model=CourseRead, deprecated=True)
 def generate_course_map(course_id: int, session: Session = Depends(get_session)):
-    """Build Final Course Map. Course-specific only — never Admin Knowledge.
+    """DEPRECATED: prefer POST /courses/{id}/map-preview.
 
-    Uses the same start guard as full generate so map and DOCX runs cannot
-    overlap on one course (or globally when GENERATION_GLOBAL_LOCK is on).
+    Kept for backward compatibility with the create-course map workspace.
+    New UI should use map-preview (same sources + GenerationContextSnapshot).
     """
     get_course_or_404(session, course_id)
     _release_stale_active_jobs(session)
@@ -425,3 +432,136 @@ def download_latest_version(course_id: int, session: Session = Depends(get_sessi
         media_type=DOCX_MEDIA_TYPE,
         filename=f"course_{course_id}_v{latest.version_number}.docx",
     )
+
+
+def _writer_test_job_read(job) -> WriterTestJobRead:
+    snap = job.run_snapshot_json or {}
+    raw_reels = snap.get("writer_test_results") or job.completed_reels_json or []
+    public: list[WriterTestReelPublic] = []
+    for raw in raw_reels:
+        if not isinstance(raw, dict):
+            continue
+        status = str(raw.get("quality_status") or "pass")
+        is_master = status == "pass" and bool(raw.get("script_text_final_master"))
+        report = raw.get("quality_report") or {}
+        notes = report.get("notes") if isinstance(report, dict) else None
+        summary = ""
+        if isinstance(notes, list) and notes:
+            summary = "; ".join(
+                str(n.get("violation_type") or n.get("required_repair") or "")[:80]
+                for n in notes[:4]
+                if isinstance(n, dict)
+            )
+        script = ""
+        if is_master:
+            script = str(raw.get("script_text_final_master") or raw.get("script_text") or "")
+        elif status == "pass":
+            script = str(raw.get("script_text") or "")
+        public.append(
+            WriterTestReelPublic(
+                reel_id=str(raw.get("reel_id") or ""),
+                title=str(raw.get("title") or ""),
+                script_text=script,
+                word_count=int(raw.get("word_count") or 0),
+                estimated_seconds=float(raw.get("estimated_seconds") or 0),
+                quality_status=status,
+                quality_summary=summary,
+                input_tokens=int(raw.get("input_tokens") or 0),
+                output_tokens=int(raw.get("output_tokens") or 0),
+                is_final_master=is_master or status == "pass",
+            )
+        )
+    return WriterTestJobRead(
+        job=GenerationJobRead.model_validate(job),
+        job_kind=str(snap.get("job_kind") or "writer_test_3_reels"),
+        settings_fingerprint=snap.get("settings_fingerprint"),
+        series_linked=bool(snap.get("series_linked")),
+        reels=public,
+    )
+
+
+@router.post("/writer-test-3-reels", response_model=WriterTestJobRead, status_code=201)
+def writer_test_3_reels(
+    course_id: int,
+    body: WriterTest3ReelsRequest,
+    session: Session = Depends(get_session),
+):
+    """Run production writer path for exactly three topics (no full course map)."""
+    get_course_or_404(session, course_id)
+    if len(body.topics) != 3:
+        raise HTTPException(status_code=422, detail="Exactly 3 topics are required")
+    from app.generation.writer_test import WriterTestTopic, run_writer_test_3_reels
+
+    try:
+        job = run_writer_test_3_reels(
+            session,
+            course_id,
+            topics=[
+                WriterTestTopic(title=t.title, purpose=t.purpose) for t in body.topics
+            ],
+            series_linked=body.series_linked,
+            series_context=body.series_context or "",
+            idempotency_key=body.idempotency_key,
+            quality_mode=body.generation_quality_mode,
+            retry_reel_id=body.retry_reel_id,
+            existing_job_id=body.existing_job_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except AIProviderConfigError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return _writer_test_job_read(job)
+
+
+@router.get("/writer-test-3-reels/{job_id}", response_model=WriterTestJobRead)
+def get_writer_test_job(
+    course_id: int, job_id: int, session: Session = Depends(get_session)
+):
+    """Resume a saved writer-test result without consuming new tokens."""
+    get_course_or_404(session, course_id)
+    job = generation_jobs.get(session, job_id)
+    if job is None or job.course_id != course_id:
+        raise HTTPException(status_code=404, detail="Writer test job not found")
+    snap = job.run_snapshot_json or {}
+    if snap.get("job_kind") != "writer_test_3_reels":
+        raise HTTPException(status_code=404, detail="Not a writer-test job")
+    return _writer_test_job_read(job)
+
+
+@router.post("/map-preview")
+def map_preview(
+    course_id: int,
+    body: MapPreviewRequest | None = None,
+    session: Session = Depends(get_session),
+):
+    """Build Course Thesis + compressed Course Map only; return cost/size preview."""
+    get_course_or_404(session, course_id)
+    request_body = body or MapPreviewRequest()
+    from app.generation.map_preview import build_map_preview
+    from app.generation.errors import UnusableOutputError
+
+    try:
+        from app.models.enums import AddressForm
+
+        try:
+            address = AddressForm(request_body.address_form)
+        except ValueError:
+            address = AddressForm.MASCULINE
+        stats = build_map_preview(
+            session,
+            course_id,
+            quality_mode=request_body.generation_quality_mode,
+            human_override_hard_limits=request_body.human_override_hard_limits,
+            address_form=address,
+            presenter_language=request_body.presenter_language,
+            presenter_dialect=request_body.presenter_dialect,
+            delivery_pattern=request_body.delivery_pattern,
+            web_research_mode=request_body.web_research_mode,
+        )
+    except UnusableOutputError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except AIProviderConfigError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return stats.model_dump()

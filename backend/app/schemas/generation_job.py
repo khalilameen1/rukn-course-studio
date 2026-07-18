@@ -45,7 +45,41 @@ class GenerateCourseRequest(BaseModel):
 
     generation_quality_mode: GenerationQualityModeLoose = GenerationQualityMode.PREMIUM
     web_research_mode: WebResearchModeLoose = WebResearchMode.AUTONOMOUS_GAP_FILL
+    # When true, client confirmed the map preview and hard-limit warnings.
+    map_preview_confirmed: bool = False
+    human_override_hard_limits: bool = False
+    address_form: str = "masculine"
+    presenter_language: str = "ar"
+    presenter_dialect: str = "egyptian"
+    delivery_pattern: str = "teleprompter_standard"
+    approved_snapshot_fingerprint: str | None = None
 
+
+class WriterTestTopicIn(BaseModel):
+    title: str
+    purpose: str = ""
+
+
+class WriterTest3ReelsRequest(BaseModel):
+    """Exactly three topics for the production writer-test path."""
+
+    topics: list[WriterTestTopicIn]
+    series_linked: bool = False
+    series_context: str = ""
+    idempotency_key: str | None = None
+    generation_quality_mode: GenerationQualityModeLoose = GenerationQualityMode.PREMIUM
+    retry_reel_id: str | None = None
+    existing_job_id: int | None = None
+
+
+class MapPreviewRequest(BaseModel):
+    generation_quality_mode: GenerationQualityModeLoose = GenerationQualityMode.PREMIUM
+    human_override_hard_limits: bool = False
+    web_research_mode: WebResearchModeLoose = WebResearchMode.DISABLED
+    address_form: str = "masculine"
+    presenter_language: str = "ar"
+    presenter_dialect: str = "egyptian"
+    delivery_pattern: str = "teleprompter_standard"
 
 class GenerationJobRead(BaseModel):
     """User-facing job status (Copilot-scale public DTO).
@@ -276,3 +310,24 @@ class GenerationJobRead(BaseModel):
         from app.generation.public_progress import public_stage_label
 
         return public_stage_label(self.current_stage)
+
+
+class WriterTestReelPublic(BaseModel):
+    reel_id: str
+    title: str
+    script_text: str = ""
+    word_count: int = 0
+    estimated_seconds: float = 0.0
+    quality_status: str = "pass"
+    quality_summary: str = ""
+    input_tokens: int = 0
+    output_tokens: int = 0
+    is_final_master: bool = False
+
+
+class WriterTestJobRead(BaseModel):
+    job: GenerationJobRead
+    job_kind: str = "writer_test_3_reels"
+    settings_fingerprint: str | None = None
+    series_linked: bool = False
+    reels: list[WriterTestReelPublic] = Field(default_factory=list)

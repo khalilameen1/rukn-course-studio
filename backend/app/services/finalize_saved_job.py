@@ -270,6 +270,9 @@ def _assemble_from_saved(course_map: CourseMap, reels: list[GeneratedReel]) -> F
                     reel_id=reel.reel_id,
                     title=reel.title,
                     script_text=reel.script_text,
+                    spoken_beats=list(reel.spoken_beats or []),
+                    delivery_mode=reel.delivery_mode,
+                    quality_status=reel.quality_status,
                 )
             )
         final_modules.append(
@@ -277,6 +280,7 @@ def _assemble_from_saved(course_map: CourseMap, reels: list[GeneratedReel]) -> F
                 module_id=module.module_id,
                 title=module.title,
                 bridge_project=module.bridge_project,
+                module_project=module.module_project,
                 reels=final_reels,
             )
         )
@@ -285,6 +289,8 @@ def _assemble_from_saved(course_map: CourseMap, reels: list[GeneratedReel]) -> F
         title=course_map.course_title,
         modules=final_modules,
         full_text="\n\n".join(sections),
+        graduation_project=course_map.graduation_project,
+        thesis=course_map.thesis,
     )
 
 
@@ -339,6 +345,28 @@ def finalize_job_from_saved_lessons(
         for plan in module.reels
     ]
     final_course = _assemble_from_saved(course_map, ordered)
+
+    # Recovery must never bypass quality / export blockers.
+    from app.generation.export_blockers import assert_export_allowed, evaluate_export_blockers
+    from app.models.enums import AddressForm
+
+    address_form = (
+        course_map.thesis.address_form if course_map.thesis else AddressForm.MASCULINE
+    )
+    export_report = evaluate_export_blockers(
+        final_course=final_course,
+        course_map=course_map,
+        thesis=course_map.thesis,
+        generated_reels=ordered,
+        address_form=address_form,
+    )
+    if not export_report.ok:
+        logger.warning(
+            "finalize_saved_job blocked by export gates job_id=%s blockers=%s",
+            job.id,
+            export_report.model_dump(),
+        )
+        assert_export_allowed(export_report)
 
     existing_versions = course_versions.list(session, course_id=job.course_id)
     version_number = next_version_number([v.version_number for v in existing_versions])

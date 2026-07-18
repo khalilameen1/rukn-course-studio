@@ -17,16 +17,33 @@ COURSE_BODY = {
 }
 
 
+def _spoken(i: int) -> str:
+    return "\n".join(
+        [
+            f"في الدرس {i} القرار الأساسي يظهر من أول تطبيق عملي",
+            f"نفّذ خطوة واضحة تخص درس {i} من غير حشو",
+            f"راجع الناتج وتأكد إن القرار اتحقق في حالة حقيقية",
+            f"لو النتيجة ضعيفة أعد نفس الخطوة بهدوء على مثال مختلف",
+            f"اربط درس {i} بنتيجة شغلك اليومي بشكل مباشر",
+            f"قفل درس {i} لما تقدر تعيد نفس القرار لوحدك بدون مساعدة",
+            f"علامة النجاح تظهر لما تقدر تشرح فرق قبل وبعد لنفس الحالة",
+            f"ممنوع تلخّص نفس الفكرة مرتين بعد ما اتشرحت",
+        ]
+    )
+
+
 def _map_and_reels(n: int = 2) -> tuple[dict, list[dict]]:
     reels = [
         {
             "reel_id": f"r{i}",
             "module_id": "m1",
             "title": f"Lesson {i}",
-            "script_text": f"Spoken script for lesson {i}.",
+            "script_text": _spoken(i),
             "used_ideas": [],
             "used_examples": [],
             "self_check_status": "pass",
+            "quality_status": "pass",
+            "delivery_mode": "camera_explainer",
         }
         for i in range(1, n + 1)
     ]
@@ -39,20 +56,48 @@ def _map_and_reels(n: int = 2) -> tuple[dict, list[dict]]:
                 "title": "Module 1",
                 "purpose": "learn",
                 "bridge_project": None,
+                "module_project": {
+                    "name": "مشروع موديول 1",
+                    "brief": "نفّذ تمرين تطبيقي قصير",
+                    "deliverable_shape": "ملف نهائي",
+                    "pass_criteria": ["ينفّذ المطلوب"],
+                    "skills_tested": ["skill-1"],
+                },
                 "reels": [
                     {
                         "reel_id": f"r{i}",
-                        "title": f"Lesson {i}",
-                        "purpose": "p",
-                        "must_cover": [],
+                        "title": f"Lesson {i} unique skill {i}",
+                        "purpose": f"teach skill {i} only",
+                        "distinct_teaching_outcome": f"student executes skill-{i} alone",
+                        "new_skill_or_decision": f"skill-{i}",
+                        "must_cover": [f"skill-{i}-core"],
                         "must_avoid": [],
                         "source_hints": [],
-                        "estimated_length": "short",
+                        "estimated_length": "2 minutes",
+                        "delivery_mode": "camera_explainer",
                     }
                     for i in range(1, n + 1)
                 ],
             }
         ],
+        "graduation_project": {
+            "name": "مشروع التخرج",
+            "brief": "تسليم نهائي يجمع مهارات الكورس",
+            "deliverable_shape": "مشروع كامل",
+            "pass_criteria": ["يغطي المهارات"],
+            "skills_tested": ["capstone"],
+        },
+        "thesis": {
+            "final_student_outcome": "o",
+            "audience_and_starting_level": "a",
+            "practical_deliverable": "d",
+            "in_scope": ["in"],
+            "out_of_scope": ["out"],
+            "mix_type": "practical",
+            "hard_max_lessons": 60,
+            "hard_max_minutes": 240,
+            "final_project": "final",
+        },
     }
     return course_map, reels
 

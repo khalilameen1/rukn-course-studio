@@ -270,3 +270,44 @@ export interface CourseAIUsage {
   research_memory_reuses?: number;
   warnings?: string[];
 }
+
+export interface MapPreviewStats {
+  module_count: number;
+  lesson_count: number;
+  delivery_mode_counts: Record<string, number>;
+  estimated_minutes: number;
+  project_count: number;
+  theory_ratio_estimate: number;
+  practice_ratio_estimate: number;
+  approx_tokens: number;
+  approx_cost_usd: number;
+  warnings: string[];
+  can_start_full_generation: boolean;
+  thesis?: Record<string, unknown>;
+  course_map?: Record<string, unknown>;
+  quality_contract?: Record<string, unknown>;
+  snapshot?: Record<string, unknown>;
+  snapshot_fingerprint?: string;
+  adapter_id?: string;
+}
+
+export interface WriterTestReelPublic {
+  reel_id: string;
+  title: string;
+  script_text: string;
+  word_count: number;
+  estimated_seconds: number;
+  quality_status: string;
+  quality_summary: string;
+  input_tokens: number;
+  output_tokens: number;
+  is_final_master: boolean;
+}
+
+export interface WriterTestJobRead {
+  job: GenerationJob;
+  job_kind: string;
+  settings_fingerprint?: string | null;
+  series_linked: boolean;
+  reels: WriterTestReelPublic[];
+}

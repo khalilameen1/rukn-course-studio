@@ -392,21 +392,31 @@ def test_forbidden_phrase_feeds_review_bundle_then_one_final_rewrite(session):
         def write_single_reel(self, input):  # noqa: A002
             self.phases.append(input.write_phase)
             if input.write_phase == "final_master":
-                # Final rewrite removes the forbidden phrase.
+                # Final rewrite removes the forbidden phrase with real teaching length.
                 return GeneratedReel(
                     reel_id=input.reel.reel_id,
                     module_id=input.module.module_id,
                     title=input.reel.title,
-                    script_text="خلّينا نثبت فرق عملي من غير حشو في أول جملة.",
+                    script_text=(
+                        "المشكلة إن الناس بتبدأ من غير ما تحدد القرار\n"
+                        "ثبّت فرق عملي من أول تطبيق\n"
+                        "اختبر النتيجة على حالة حقيقية صغيرة\n"
+                        "لو القرار مش واضح أعد الخطوة بهدوء\n"
+                        "قفل الدرس لما تقدر تعيد نفس القرار لوحدك"
+                    ),
                     used_ideas=["idea"],
                     used_examples=["example"],
                     self_check_status=ReviewStatus.PASS,
+                    quality_status="pass",
                 )
             return GeneratedReel(
                 reel_id=input.reel.reel_id,
                 module_id=input.module.module_id,
                 title=input.reel.title,
-                script_text="في الريل ده هنشرح حاجة مهمة جدا اليوم عن الموضوع ده وهنكمل كلامنا",
+                script_text=(
+                    "في الريل ده هنشرح حاجة مهمة جدا اليوم عن الموضوع ده وهنكمل كلامنا "
+                    "ونزيد كلام من غير قيمة حقيقية للطالب"
+                ),
                 used_ideas=["idea"],
                 used_examples=["example"],
                 self_check_status=ReviewStatus.PASS,
@@ -507,8 +517,9 @@ def test_two_modules_review_runs_for_even_module_count(session):
 
     two_module_logs = [e for e in job.log_json if e["step"] == "review_2modules"]
     assert len(two_module_logs) == 1
-    assert "skipped" not in two_module_logs[0]
     assert two_module_logs[0]["ids"] == ["m1", "m2"]
+    # No-op AI two-module review removed — logged as disabled.
+    assert two_module_logs[0].get("status") == "disabled"
 
 
 def test_two_modules_review_skips_unpaired_trailing_module(session):
@@ -522,6 +533,7 @@ def test_two_modules_review_skips_unpaired_trailing_module(session):
     two_module_logs = [e for e in job.log_json if e["step"] == "review_2modules"]
     assert len(two_module_logs) == 2
     assert two_module_logs[0]["ids"] == ["m1", "m2"]
+    assert two_module_logs[0].get("status") == "disabled"
     assert two_module_logs[1].get("skipped") == "unpaired trailing module"
 
 
@@ -531,8 +543,9 @@ def test_five_reel_review_runs_once_for_six_reel_course(session):
     job = run_generation(session, course.id)
 
     five_reel_logs = [e for e in job.log_json if e["step"] == "review_5reels"]
-    # 2 modules x 3 reels = 6 reels total -> exactly one trigger at reel 5.
+    # 2 modules x 3 reels = 6 reels total -> one trigger at reel 5 (now disabled).
     assert len(five_reel_logs) == 1
+    assert five_reel_logs[0].get("status") == "disabled"
 
 
 def test_course_not_found_raises(session):

@@ -1,7 +1,10 @@
-"""Course map quality: duration floors, shallow detection, local review hints.
+"""Course map quality: hard max caps, shallow detection, local review hints.
 
 Used between first-draft map and Final Course Map rebuild. Never appears in
 DOCX. No padding instruction — depth must come from real educational content.
+
+Quality is NOT more minutes or more lessons. There is no Premium minimum
+duration floor that inflates maps.
 """
 
 from __future__ import annotations
@@ -10,14 +13,13 @@ import re
 from dataclasses import dataclass
 
 from app.models.enums import GenerationQualityMode, TargetMarket
-from app.schemas.generation import CourseMap, ReelPlan
+from app.schemas.generation import CourseMap, CourseThesis, ReelPlan
 from app.generation.market_evergreen import map_market_evergreen_feedback
 
-# Premium seriousness floor (spoken estimate from estimated_length fields).
-PREMIUM_MIN_TOTAL_MINUTES = 120.0
 # Educational reel norms (estimates on the plan, not padded scripts).
-LESSON_MIN_MINUTES = 2.0
-LESSON_SOFT_MAX_MINUTES = 5.0
+# Soft guidance only — MICRO_CONCEPT may be under 2 minutes when complete.
+LESSON_SOFT_MIN_MINUTES = 0.7
+LESSON_SOFT_MAX_MINUTES = 6.0
 
 PROGRESS_MAP_FIRST_DRAFT = "Building course map"
 PROGRESS_MAP_STUDENT = "Building course map"
@@ -35,6 +37,10 @@ MAP_LEAK_SUBSTRINGS: tuple[str, ...] = (
     "estimated duration table",
 )
 
+# Backward-compat alias — must NEVER be used to inflate maps.
+# Kept so older imports don't crash; value unused for floors.
+PREMIUM_MIN_TOTAL_MINUTES = 0.0
+
 
 @dataclass
 class MapDurationReport:
@@ -42,7 +48,9 @@ class MapDurationReport:
     lesson_count: int
     under_two_minute_lessons: int
     over_five_minute_lessons: int
-    too_short_for_premium: bool
+    too_short_for_premium: bool  # always False — inflation floor removed
+    over_hard_max_lessons: bool
+    over_hard_max_minutes: bool
     shallow_signals: list[str]
 
 
@@ -50,7 +58,7 @@ def parse_estimated_minutes(estimated_length: str) -> float:
     """Best-effort parse of free-form estimated_length → minutes."""
     text = (estimated_length or "").strip().lower()
     if not text:
-        return 3.0  # neutral default when missing
+        return 2.0  # neutral default when missing (camera explainer mid)
 
     # Ranges like "2-5 minutes" / "45-60 seconds"
     range_match = re.search(
@@ -87,13 +95,16 @@ def parse_estimated_minutes(estimated_length: str) -> float:
         return value
 
     if "short" in text:
-        return 1.5
+        return 1.2
     if "long" in text or "extended" in text:
-        return 6.0
-    return 3.0
+        return 5.0
+    return 2.0
 
 
 def reel_estimated_minutes(reel: ReelPlan) -> float:
+    if reel.target_spoken_words_min and reel.target_spoken_words_max:
+        mid = (reel.target_spoken_words_min + reel.target_spoken_words_max) / 2.0
+        return mid / 135.0
     return parse_estimated_minutes(reel.estimated_length)
 
 
@@ -110,42 +121,49 @@ def analyze_map_duration(
     *,
     quality_mode: GenerationQualityMode,
     relax_floor: bool,
+    thesis: CourseThesis | None = None,
 ) -> MapDurationReport:
+    del quality_mode  # no premium minute floor
     lessons = [r for m in course_map.modules for r in m.reels]
     mins = [reel_estimated_minutes(r) for r in lessons]
     total = sum(mins) if mins else 0.0
-    under_two = sum(1 for m in mins if m < LESSON_MIN_MINUTES)
+    under_two = sum(1 for m in mins if m < 1.0)
     over_five = sum(1 for m in mins if m > LESSON_SOFT_MAX_MINUTES)
     shallow: list[str] = []
-    too_short = (
-        quality_mode == GenerationQualityMode.PREMIUM
-        and not relax_floor
-        and total < PREMIUM_MIN_TOTAL_MINUTES
+    thesis = thesis or course_map.thesis
+    over_lessons = bool(
+        thesis
+        and not thesis.human_override_hard_limits
+        and len(lessons) > thesis.hard_max_lessons
     )
-    if too_short:
+    over_minutes = bool(
+        thesis
+        and not thesis.human_override_hard_limits
+        and total > thesis.hard_max_minutes
+    )
+    if over_lessons:
         shallow.append(
-            f"Total estimated spoken time ~{total:.0f} min is under the "
-            f"{PREMIUM_MIN_TOTAL_MINUTES:.0f}-minute Premium seriousness floor — "
-            "rebuild with real depth, bridges, examples, and practical steps "
-            "(no motivational padding)."
+            f"Map has {len(lessons)} lessons over hard_max_lessons="
+            f"{thesis.hard_max_lessons} — compress/merge before generation."
         )
-    if under_two and len(lessons) > 1:
+    if over_minutes:
         shallow.append(
-            f"{under_two} lesson(s) estimated under {LESSON_MIN_MINUTES:.0f} minutes — "
-            "merge tiny related lessons or expand only with real value "
-            "(never pad)."
+            f"Map estimates ~{total:.0f} min over hard_max_minutes="
+            f"{thesis.hard_max_minutes} — compress before generation."
         )
-    if len(lessons) < 4 and not relax_floor:
+    if under_two and len(lessons) > 8 and not relax_floor:
         shallow.append(
-            "Course plan has very few lessons for a serious outcome — "
-            "check missing concepts, bridges, and application steps."
+            f"{under_two} lesson(s) look thinner than a complete micro-concept — "
+            "merge only when they lack a distinct teaching outcome (never pad)."
         )
     return MapDurationReport(
         total_minutes=total,
         lesson_count=len(lessons),
         under_two_minute_lessons=under_two,
         over_five_minute_lessons=over_five,
-        too_short_for_premium=too_short,
+        too_short_for_premium=False,
+        over_hard_max_lessons=over_lessons,
+        over_hard_max_minutes=over_minutes,
         shallow_signals=shallow,
     )
 
@@ -172,6 +190,7 @@ def local_map_review_feedback(
     relax_floor: bool,
     target_market: TargetMarket = TargetMarket.EGYPT,
     official_tool_store: object | None = None,
+    thesis: CourseThesis | None = None,
 ) -> list[str]:
     """Compact Student / Critic / Mentor shaped map feedback (no essays)."""
     from app.generation.official_tool_docs import (
@@ -181,7 +200,10 @@ def local_map_review_feedback(
 
     feedback: list[str] = []
     report = analyze_map_duration(
-        course_map, quality_mode=quality_mode, relax_floor=relax_floor
+        course_map,
+        quality_mode=quality_mode,
+        relax_floor=relax_floor,
+        thesis=thesis or course_map.thesis,
     )
     feedback.extend(report.shallow_signals)
     feedback.extend(
@@ -193,15 +215,14 @@ def local_map_review_feedback(
     if isinstance(store, OfficialToolMemoryStore):
         feedback.extend(map_official_tool_feedback(course_map, store))
 
-    # Student Confusion Layer — progression / prerequisites.
-    if len(course_map.modules) >= 2:
-        for i, module in enumerate(course_map.modules[:-1]):
-            if not (module.bridge_project or "").strip():
+    # Student Confusion Layer — progression / projects.
+    if len(course_map.modules) >= 1:
+        for module in course_map.modules:
+            if module.module_project is None and not (module.bridge_project or "").strip():
                 feedback.append(
                     "Student: module "
-                    f"'{module.title}' needs a practical bridge before "
-                    f"'{course_map.modules[i + 1].title}' so 80% of learners "
-                    "do not jump blindly."
+                    f"'{module.title}' needs a practical Module Project so "
+                    "learners apply what they learned (not a numbered lesson)."
                 )
                 break
 
@@ -211,7 +232,7 @@ def local_map_review_feedback(
             "rebuild so reels feel connected, not a chopped book."
         )
 
-    # Specialist — shallow titles / empty must_cover.
+    # Specialist — shallow titles / empty must_cover / missing outcomes.
     empty_cover = sum(
         1 for m in course_map.modules for r in m.reels if not r.must_cover
     )
@@ -220,8 +241,19 @@ def local_map_review_feedback(
             f"Specialist: {empty_cover} lesson(s) have empty must_cover — "
             "add core teaching points or delete weak shells."
         )
+    missing_outcome = sum(
+        1
+        for m in course_map.modules
+        for r in m.reels
+        if not (r.distinct_teaching_outcome or "").strip()
+    )
+    if missing_outcome:
+        feedback.append(
+            f"Specialist: {missing_outcome} lesson(s) lack distinctTeachingOutcome — "
+            "merge or give each lesson a unique skill/decision."
+        )
 
-    # Mentor — variety / energy.
+    # Mentor — variety / energy from content roles, not index curves.
     if len(course_map.modules) >= 2:
         purposes = [m.purpose[:40] for m in course_map.modules]
         if len(set(purposes)) < len(purposes):
@@ -233,8 +265,7 @@ def local_map_review_feedback(
     if not feedback:
         feedback.append(
             "Preserve the strongest spine; rebuild Final Course Map with clear "
-            "module roles, learnable progression, and realistic "
-            f"{LESSON_MIN_MINUTES:.0f}–{LESSON_SOFT_MAX_MINUTES:.0f} minute lesson "
-            "estimates (longer only when a connected idea needs it). No padding."
+            "module projects, distinct teaching outcomes, and content-based "
+            "lesson lengths. Never inflate lesson count for 'premium' feel."
         )
     return feedback

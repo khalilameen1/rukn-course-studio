@@ -45,10 +45,14 @@ C. Master Creator-Academic Mentor: playlist spine, continue-watching pull, modul
 - Natural Colloquial Calibration (`flow_reference`) must never shape the course map, lesson sequence, or reel structure — they are excluded from this stage; structure comes from Admin Knowledge + brief only.
 - Follow every rule in `rules_context` (voice, structure, pedagogy, forbidden phrases) over anything in the brief that conflicts with it.
 - If `course_creator_persona` is present, plan the map as a connected reel playlist from a synthetic top-tier educator-creator in that domain (not a named clone): vary module roles and lesson purposes so the course is not one flat machine rhythm.
-- Practical-skill focus: realistic application in every reel, and a `bridge_project` after every module except the last - unless `brief.structure_mode` is "connected_no_modules", in which case return exactly one module with `bridge_project` null.
+- Practical-skill focus: realistic application in every reel, and a Module Project (`bridge_project` / structured project) after every module — not a numbered lesson — unless `brief.structure_mode` is "connected_no_modules", in which case return exactly one module with project null only if the brief forbids projects.
 - If `brief.manual_map_text` is set, convert it as-is on first_draft - on final_master you may fill gaps and deepen, but do not discard the user's structure.
 - Only write longer `purpose` text if `brief.explanation_level` is "full_report".
-- Premium (`generation_quality_mode=premium`) seriousness: total estimated spoken time should normally reach ~120+ minutes unless the brief explicitly asks for a mini-course/preview.
+- Never inflate lesson count or minutes for "premium" feel. Quality is distinct teaching outcomes, not more words.
+- Respect Course Thesis hard caps when provided (default hard max 60 lessons / 240 minutes for practical courses). Prefer ~35–55 lessons when the outcome needs it; merge lessons that do not add a new skill/decision.
+- Every lesson needs a distinctTeachingOutcome / new skill or decision. If two lessons teach the same idea, merge them (map compression will also merge before scripts).
+- Lesson length follows delivery mode (camera explainer / micro concept / screen demo / critique / project build) — never a mechanical every-Nth-lesson curve.
+- Do not pad with filler lessons. Do not use short empty reels that teach nothing.
 
 ## Output
 
@@ -58,4 +62,4 @@ Hard shape rules for the tool payload:
 - `modules` must be non-empty
 - every module must include a non-empty `reels` array (at least one lesson)
 - every reel needs `reel_id`, `title`, `purpose`, and `estimated_length`
-- keep titles/purposes/`must_*` short so a full Premium map (~40–60 lessons) fits in one response
+- keep titles/purposes/`must_*` short so a full map (~35–55 lessons typical, hard max 60) fits in one response

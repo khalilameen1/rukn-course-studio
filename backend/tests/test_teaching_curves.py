@@ -320,6 +320,9 @@ def test_long_and_short_lessons_are_allowed():
 
 
 def test_fake_provider_follows_lesson_curve_length_without_leaking_labels():
+    """Length follows delivery_mode content policy — not mechanical lesson curves."""
+    from app.models.enums import LessonDeliveryMode
+
     provider = FakeProvider()
     brief = CourseBrief(
         title="T",
@@ -337,22 +340,22 @@ def test_fake_provider_follows_lesson_curve_length_without_leaking_labels():
     planned = plan_lesson_curve(
         reel=reel, reel_index=0, reels_in_module=3, module_curve=module_curve
     )
-    short = planned.model_copy(
+    micro = reel.model_copy(update={"delivery_mode": LessonDeliveryMode.MICRO_CONCEPT})
+    screen = reel.model_copy(
         update={
-            "natural_length": "short",
-            "hook_strength": "quiet",
-            "ending_motion": "no_loop_needed",
+            "delivery_mode": LessonDeliveryMode.SCREEN_DEMO,
+            "internal_visual_plan": "Show export panel",
+            "required_assets": ["export.png"],
         }
     )
-    long = short.model_copy(update={"natural_length": "extended", "hook_strength": "medium"})
 
     short_out = provider.write_single_reel(
         WriteSingleReelInput(
             course_title=course_map.course_title,
             main_thread=course_map.main_thread,
             module=module,
-            reel=reel,
-            **format_curves_for_prompt(module_curve, short),
+            reel=micro,
+            **format_curves_for_prompt(module_curve, planned),
         )
     )
     long_out = provider.write_single_reel(
@@ -360,11 +363,11 @@ def test_fake_provider_follows_lesson_curve_length_without_leaking_labels():
             course_title=course_map.course_title,
             main_thread=course_map.main_thread,
             module=module,
-            reel=reel,
-            **format_curves_for_prompt(module_curve, long),
+            reel=screen,
+            **format_curves_for_prompt(module_curve, planned),
         )
     )
-    assert len(long_out.script_text) > len(short_out.script_text)
+    assert len(long_out.script_text.split()) > len(short_out.script_text.split())
     for text in (short_out.script_text, long_out.script_text):
         assert "lesson_curve" not in text
         assert "hook_strength" not in text

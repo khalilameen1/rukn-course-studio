@@ -108,5 +108,9 @@ class Course(SQLModel, table=True):
     active_rules_snapshot_json: Optional[dict[str, Any]] = Field(
         default=None, sa_column=Column(sa_json_object(), nullable=True)
     )
+    # Approved map-preview GenerationContextSnapshot (additive; nullable).
+    generation_context_snapshot_json: Optional[dict[str, Any]] = Field(
+        default=None, sa_column=Column(sa_json_object(), nullable=True)
+    )
     created_at: datetime = Field(default_factory=_utcnow)
     updated_at: datetime = Field(default_factory=_utcnow)

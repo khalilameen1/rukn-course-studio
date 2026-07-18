@@ -285,10 +285,16 @@ def test_usage_panel_and_waste_warning():
     assert panel["source_memories_reused"] == 3
 
 
-def test_stage_pack_builder_caps_size():
+def test_stage_pack_builder_keeps_mandatory_core_intact():
+    from app.generation.knowledge_packs import mandatory_core_intact
+
     selected = {
-        "rukn_core_rules": "x" * 5000,
-        "rukn_writing_style": "y" * 5000,
+        "rukn_core_rules": "CORE_RULE_BODY_MUST_SURVIVE " + ("x" * 200),
+        "rukn_writing_style": "STYLE_BODY_MUST_SURVIVE " + ("y" * 200),
+        "rukn_optional_noise": "z" * 8000,
     }
     pack = build_stage_rules_pack(selected, PipelineStage.WRITE_SINGLE_REEL)
-    assert sum(len(v) for v in pack.values()) <= 4200
+    body = "\n".join(pack.values())
+    assert "CORE_RULE_BODY_MUST_SURVIVE" in body
+    assert "STYLE_BODY_MUST_SURVIVE" in body
+    assert mandatory_core_intact(pack, selected)

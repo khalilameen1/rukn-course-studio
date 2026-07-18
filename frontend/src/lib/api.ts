@@ -606,7 +606,17 @@ export const api = {
     apiFetch<Course>(`/courses/${courseId}/generate-map`, { method: "POST" }),
   generateCourse: (
     courseId: number,
-    body?: { generation_quality_mode?: "preview" | "premium" },
+    body?: {
+      generation_quality_mode?: "preview" | "premium";
+      web_research_mode?: "disabled" | "autonomous_gap_fill";
+      map_preview_confirmed?: boolean;
+      human_override_hard_limits?: boolean;
+      address_form?: "masculine" | "feminine" | "neutral";
+      presenter_language?: string;
+      presenter_dialect?: string;
+      delivery_pattern?: string;
+      approved_snapshot_fingerprint?: string;
+    },
   ) =>
     apiFetch<GenerationJob>(`/courses/${courseId}/generate`, {
       method: "POST",
@@ -634,6 +644,48 @@ export const api = {
   // final failure) - see backend/app/routers/jobs.py `download_partial`.
   downloadPartialDocx: (courseId: number, jobId: number, filename: string) =>
     downloadFile(`/jobs/${jobId}/download-partial?course_id=${courseId}`, filename),
+
+  mapPreview: (
+    courseId: number,
+    body?: {
+      generation_quality_mode?: "preview" | "premium";
+      human_override_hard_limits?: boolean;
+      web_research_mode?: "disabled" | "autonomous_gap_fill";
+      address_form?: "masculine" | "feminine" | "neutral";
+      presenter_language?: string;
+      presenter_dialect?: string;
+      delivery_pattern?: string;
+    },
+  ) =>
+    apiFetch<import("@/lib/types").MapPreviewStats>(`/courses/${courseId}/map-preview`, {
+      method: "POST",
+      body: JSON.stringify(body ?? { generation_quality_mode: "premium" }),
+    }),
+
+  writerTest3Reels: (
+    courseId: number,
+    body: {
+      topics: { title: string; purpose?: string }[];
+      series_linked?: boolean;
+      series_context?: string;
+      idempotency_key?: string;
+      generation_quality_mode?: "preview" | "premium";
+      retry_reel_id?: string | null;
+      existing_job_id?: number | null;
+    },
+  ) =>
+    apiFetch<import("@/lib/types").WriterTestJobRead>(
+      `/courses/${courseId}/writer-test-3-reels`,
+      {
+        method: "POST",
+        body: JSON.stringify(body),
+      },
+    ),
+
+  getWriterTestJob: (courseId: number, jobId: number) =>
+    apiFetch<import("@/lib/types").WriterTestJobRead>(
+      `/courses/${courseId}/writer-test-3-reels/${jobId}`,
+    ),
 
   // AI Usage Center — estimated app usage only (backend labels it the same way)
   // Paths: GET /ai-usage/summary, GET /courses/{id}/ai-usage
