@@ -173,6 +173,11 @@ class Settings(BaseSettings):
     # When true, skip free-space preflight (tests / special hosts).
     generation_skip_disk_check: bool = False
 
+    # Final DOCX delivery requires actual page rendering in production. Local
+    # unit tests keep this off and exercise the renderer explicitly with a fake
+    # or installed office binary. Render deployment sets it to true.
+    docx_visual_qa_required: bool = False
+
     # When True (default), only one generation job may be active globally
     # across all courses. Env: GENERATION_GLOBAL_LOCK
     generation_global_lock: bool = True

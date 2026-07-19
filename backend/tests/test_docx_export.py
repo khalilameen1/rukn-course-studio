@@ -51,8 +51,8 @@ def _sample_final_course() -> FinalCourse:
                     skills_tested=["excel-basics"],
                 ),
                 reels=[
-                    FinalReel(reel_id="m1-r1", title="Opening Excel", script_text="Line one.\nLine two."),
-                    FinalReel(reel_id="m1-r2", title="Basic Formulas", script_text="Type an equals sign."),
+                    FinalReel(reel_id="m1-r1", title="Opening Excel", script_text="Line one\nLine two"),
+                    FinalReel(reel_id="m1-r2", title="Basic Formulas", script_text="Type an equals sign"),
                 ],
             ),
             FinalModule(
@@ -67,7 +67,7 @@ def _sample_final_course() -> FinalCourse:
                     skills_tested=["sum"],
                 ),
                 reels=[
-                    FinalReel(reel_id="m2-r1", title="Totals", script_text="Use SUM to add a column."),
+                    FinalReel(reel_id="m2-r1", title="Totals", script_text="Use SUM to add a column"),
                 ],
             ),
         ],

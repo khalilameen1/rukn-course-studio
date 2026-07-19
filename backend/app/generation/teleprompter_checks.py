@@ -165,11 +165,14 @@ TELEPROMPTER_FORBIDDEN_SUBSTRINGS: tuple[str, ...] = (
     "include_mode",
 )
 
-# Matches exactly the numbering docx_export.py's render functions produce
-# ("Module {n} — {title}" / "Lesson {n} — {title}") - the em dash (U+2014),
-# not a hyphen.
-_MODULE_HEADING_PATTERN = re.compile(r"Module\s+\d+\s+\u2014\s+\S")
-_LESSON_HEADING_PATTERN = re.compile(r"Lesson\s+\d+\s+\u2014\s+\S")
+# Match exactly the localized numbering emitted by docx_export.py. English
+# uses an em dash; Arabic deliberately does not, so it reads naturally aloud.
+_MODULE_HEADING_PATTERN = re.compile(
+    r"(?:Module\s+\d+\s+\u2014\s+\S|الموديول\s+\d+\s+\S)"
+)
+_LESSON_HEADING_PATTERN = re.compile(
+    r"(?:Lesson\s+\d+\s+\u2014\s+\S|الريل\s+\d+\s+\S)"
+)
 
 
 def find_forbidden_substrings(text: str) -> list[str]:
@@ -232,8 +235,6 @@ def strip_meta_instruction_lines(script_text: str) -> str:
 
 
 def module_lesson_structure_present(text: str) -> bool:
-    """True only if `text` contains at least one numbered "Module N — "
-    heading AND at least one numbered "Lesson N — " heading - the expected
-    shape of a rendered teleprompter DOCX (see app/services/docx_export.py)."""
+    """Return whether localized numbered module and lesson headings exist."""
     body = text or ""
     return bool(_MODULE_HEADING_PATTERN.search(body)) and bool(_LESSON_HEADING_PATTERN.search(body))
