@@ -126,6 +126,10 @@ def build_lesson_semantic_contract(
         return reel.lesson_semantic_contract
 
     capability = _capability(reel)
+    direct_arabic = bool(
+        course_map.thesis is not None
+        and str(course_map.thesis.student_language or "").lower().startswith("ar")
+    )
     cover = [item.strip() for item in reel.must_cover if item.strip()]
     avoid = [item.strip() for item in reel.must_avoid if item.strip()]
     core = cover[0] if cover else capability
@@ -136,23 +140,35 @@ def build_lesson_semantic_contract(
         else (
             course_map.thesis.learner_starting_state
             if course_map.thesis is not None
-            else "the declared learner starting state"
+            else (
+                "حالة المتعلم المعلنة في البريف"
+                if direct_arabic
+                else "the declared learner starting state"
+            )
         )
     )
     if not _specific(prior_after, allow_state_label=True):
         prior_after = (
-            "the explicitly declared learner starting state: "
-            f"{prior_after or 'not specified'}"
+            f"حالة المتعلم المعلنة بوضوح {prior_after or 'غير محددة'}"
+            if direct_arabic
+            else (
+                "the explicitly declared learner starting state: "
+                f"{prior_after or 'not specified'}"
+            )
         )
     learner_after = reel.student_can_do_after or reel.distinct_teaching_outcome or capability
-    failure = (
-        avoid[0]
-        if avoid
+    failure = avoid[0] if avoid else (
+        f"تطبّق {capability} من غير شرط {core}"
+        if direct_arabic
         else f"Applying {capability} while ignoring the condition {core}"
     )
     visual = (reel.internal_visual_plan or "").strip()
     if visual:
-        proof = f"{visual}; demonstrate {core} while performing {capability}"
+        proof = (
+            f"{visual} وبيّن أثر {core} وانت بتنفذ {capability}"
+            if direct_arabic
+            else f"{visual}; demonstrate {core} while performing {capability}"
+        )
     elif reel.delivery_mode in {
         LessonDeliveryMode.SCREEN_DEMO,
         LessonDeliveryMode.PROJECT_BUILD,
@@ -160,19 +176,36 @@ def build_lesson_semantic_contract(
         LessonDeliveryMode.DESIGN_CRITIQUE,
         LessonDeliveryMode.CRITIQUE,
     }:
-        proof = f"Demonstrate {core} and compare the observable result before and after"
+        proof = (
+            f"اعرض {core} وقارن النتيجة الظاهرة قبل وبعد"
+            if direct_arabic
+            else f"Demonstrate {core} and compare the observable result before and after"
+        )
     else:
-        proof = f"Use one concrete case where {core} changes the decision {capability}"
+        proof = (
+            f"استخدم حالة عملية يتغير فيها قرار {capability} بسبب {core}"
+            if direct_arabic
+            else f"Use one concrete case where {core} changes the decision {capability}"
+        )
     if next_reel is not None:
         next_capability = _capability(next_reel)
         earned_next = (
-            f"Once {capability} is complete, its result becomes the input needed "
-            f"for {next_capability}"
+            f"لما يكمّل {capability} تبقى نتيجته مدخل مطلوب عشان {next_capability}"
+            if direct_arabic
+            else (
+                f"Once {capability} is complete, its result becomes the input needed "
+                f"for {next_capability}"
+            )
         )
     else:
         earned_next = (
-            f"Once {capability} is complete, the learner can use it in "
-            f"{reel.project_contribution or 'the module project'}"
+            f"بعد إتقان {capability} يقدر المتعلم يستخدمه في "
+            f"{reel.project_contribution or 'مشروع الموديول'}"
+            if direct_arabic
+            else (
+                f"Once {capability} is complete, the learner can use it in "
+                f"{reel.project_contribution or 'the module project'}"
+            )
         )
     module_reels = list(module.reels)
     index = next(
@@ -180,18 +213,75 @@ def build_lesson_semantic_contract(
         0,
     )
     if index == 0:
-        escalation = f"establish the module decision foundation through {capability}"
+        escalation = (
+            f"يثبت أساس قرار الموديول من خلال {capability}"
+            if direct_arabic
+            else f"establish the module decision foundation through {capability}"
+        )
     elif index == len(module_reels) - 1:
-        escalation = f"integrate {capability} into the module deliverable"
+        escalation = (
+            f"يدمج {capability} في تسليم الموديول"
+            if direct_arabic
+            else f"integrate {capability} into the module deliverable"
+        )
     else:
-        escalation = f"increase independence by applying {capability} under a new condition"
+        escalation = (
+            f"يزود استقلال المتعلم بتطبيق {capability} تحت شرط جديد"
+            if direct_arabic
+            else f"increase independence by applying {capability} under a new condition"
+        )
     prerequisite = list(reel.prerequisite_lesson_ids)
     if prerequisite:
-        dependency = f"Requires the result of {', '.join(prerequisite)} before {capability}"
+        dependency = (
+            f"يحتاج نتيجة {', '.join(prerequisite)} قبل {capability}"
+            if direct_arabic
+            else f"Requires the result of {', '.join(prerequisite)} before {capability}"
+        )
     elif previous_reel is not None:
-        dependency = f"Uses {previous_reel.reel_id} as the prior state for {capability}"
+        dependency = (
+            f"يستخدم ناتج {previous_reel.reel_id} كحالة سابقة قبل {capability}"
+            if direct_arabic
+            else f"Uses {previous_reel.reel_id} as the prior state for {capability}"
+        )
     else:
-        dependency = f"Starts from {prior_after} and introduces {capability}"
+        dependency = (
+            f"يبدأ من {prior_after} ويدخل {capability}"
+            if direct_arabic
+            else f"Starts from {prior_after} and introduces {capability}"
+        )
+
+    if direct_arabic:
+        return LessonSemanticContract(
+            learner_before=prior_after,
+            learner_after=learner_after,
+            exact_capability_change=(
+                f"ينقل المتعلم من {prior_after} لتنفيذ {capability} لوحده"
+            ),
+            strongest_non_obvious_meaning=(
+                f"قيمة {core} بتبان لما تغيّر {support} جوه {capability}"
+            ),
+            misconception_or_failure=failure,
+            causal_explanation=(
+                f"{core} بتغيّر النتيجة لأنها بتتحكم في {support} أثناء {capability}"
+            ),
+            proof_example_or_demonstration=proof,
+            learner_test_or_action=(
+                f"نفّذ {capability} وراجع {core} واشرح الفرق اللي ظهر"
+            ),
+            boundary_or_exception=(
+                f"متعممش {capability} في الحالة دي {failure}"
+            ),
+            real_tension=(
+                f"تحافظ على {core} وانت بتنفذ {capability}"
+            ),
+            complete_payoff=(
+                f"المتعلم يكمّل {capability} ويطلع "
+                f"{reel.project_contribution or learner_after}"
+            ),
+            earned_next_need=earned_next,
+            escalation_role=escalation,
+            sequence_dependency=dependency,
+        )
 
     return LessonSemanticContract(
         learner_before=prior_after,

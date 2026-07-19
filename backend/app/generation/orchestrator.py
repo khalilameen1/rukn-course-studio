@@ -127,6 +127,11 @@ from app.generation.contracts.lesson_semantic import (
 from app.generation.contracts.spoken_final_master import (
     ensure_spoken_beats,
     strip_punctuation_from_spoken_body,
+    validate_spoken_export_text,
+)
+from app.generation.egyptian_arabic_gate import (
+    compile_language_profile_guidance,
+    run_spoken_variety_integrity_gate,
 )
 from app.generation.course_quality_gates import (
     format_handoff_status,
@@ -211,6 +216,10 @@ from app.generation.teaching_curves import (
     format_curves_for_prompt,
     plan_lesson_curve,
     plan_module_curve,
+)
+from app.generation.terminology_map import (
+    build_term_ledger,
+    compile_term_ledger_guidance,
 )
 from app.models.course import Course
 from app.models.course_source import CourseSource
@@ -1192,6 +1201,7 @@ def run_generation(
                     phrase_ledger=phrase_ledger,
                     voice_profile=voice_profile,
                     address_form=address_form,
+                    language_profile=quality_contract.language.model_dump(mode="json"),
                 )
                 # Final script only — strip accidental research / meta leaks before persist.
                 cleaned = strip_research_leaks_from_script(generated.script_text)
@@ -2820,6 +2830,7 @@ def _write_and_review_reel(
     phrase_ledger: PhraseLedger | None = None,
     voice_profile: VoiceProfile | None = None,
     address_form: AddressForm = AddressForm.MASCULINE,
+    language_profile: dict[str, object] | None = None,
 ) -> tuple[GeneratedReel, int, bool, bool]:
     """Lesson path: First Draft → checks → Integrated Editorial → Rewrite(s) → Final Master.
 
@@ -2876,6 +2887,30 @@ def _write_and_review_reel(
         realistic_student_budget=realistic_student_budget,
         available_tools=available_tools,
     )
+    thesis = course_map.thesis
+    active_language_profile = dict(language_profile or {})
+    if not active_language_profile:
+        fallback_variety = getattr(thesis, "spoken_variety", "none")
+        active_language_profile = {
+            "presenter_language": getattr(thesis, "student_language", "ar"),
+            "presenter_dialect": fallback_variety,
+            "address_form": address_form.value,
+            "bilingual_policy": "presenter_primary",
+            "apply_egyptian_spoken_qa": bool(
+                thesis is not None
+                and str(fallback_variety).lower()
+                in {"egyptian", "egyptian_colloquial", "ar-eg", "arz"}
+            ),
+        }
+    term_ledger = build_term_ledger(
+        language_profile=active_language_profile,
+        course_domain=getattr(thesis, "course_domain", "") or "generic",
+        target_market=(target_market.value if hasattr(target_market, "value") else str(target_market)),
+        available_tools=available_tools
+        or list(getattr(thesis, "available_tools", []) or []),
+    )
+    language_guidance = compile_language_profile_guidance(active_language_profile)
+    term_guidance = compile_term_ledger_guidance(term_ledger)
     write_rules = select_packed_rules_for_stage(rules_context, PipelineStage.WRITE_SINGLE_REEL)
     review_rules = select_packed_rules_for_stage(rules_context, PipelineStage.REVIEW_SINGLE_REEL)
     review_rules_full = select_rules_for_stage(rules_context, PipelineStage.REVIEW_SINGLE_REEL)
@@ -2885,6 +2920,8 @@ def _write_and_review_reel(
         "rukn_originality_runtime": compile_originality_guidance(),
         "rukn_educational_transform_runtime": compile_educational_transform_guidance(),
         "rukn_knowledge_priority_runtime": compile_knowledge_priority_guidance(),
+        "rukn_language_profile_runtime": language_guidance,
+        "rukn_term_ledger_runtime": term_guidance,
     }
     if phrase_ledger is not None:
         write_rules["rukn_phrase_ledger_runtime"] = phrase_ledger.compact_summary_for_writer()
@@ -2896,11 +2933,15 @@ def _write_and_review_reel(
         "rukn_originality_runtime": compile_originality_guidance(),
         "rukn_educational_transform_runtime": compile_educational_transform_guidance(),
         "rukn_knowledge_priority_runtime": compile_knowledge_priority_guidance(),
+        "rukn_language_profile_runtime": language_guidance,
+        "rukn_term_ledger_runtime": term_guidance,
     }
     review_rules_local = {
         **review_rules_full,
         "rukn_target_market_runtime": market_guidance,
         "rukn_originality_runtime": compile_originality_guidance(),
+        "rukn_language_profile_runtime": language_guidance,
+        "rukn_term_ledger_runtime": term_guidance,
     }
 
     prior_summaries = [
@@ -2978,6 +3019,8 @@ def _write_and_review_reel(
         address_form=address_form,
         quality_mode=quality_mode,
         provider_review=provider_review,
+        language_profile=active_language_profile,
+        course_domain=getattr(thesis, "course_domain", "") or "generic",
     )
     local_result = _local_review_single_reel(
         draft,
@@ -3024,6 +3067,8 @@ def _write_and_review_reel(
             address_form=address_form,
             quality_mode=quality_mode,
             provider_review=None,
+            language_profile=active_language_profile,
+            course_domain=getattr(thesis, "course_domain", "") or "generic",
         )
         sanity = _local_review_single_reel(
             master,
@@ -3078,6 +3123,8 @@ def _write_and_review_reel(
         prior_scripts=[r.script_text for r in all_reels_so_far],
         address_form=address_form,
         quality_mode=quality_mode,
+        language_profile=active_language_profile,
+        course_domain=getattr(thesis, "course_domain", "") or "generic",
     )
     final_sanity = _local_review_single_reel(
         master,
@@ -3131,15 +3178,48 @@ def _write_and_review_reel(
     )
     if semantic_post.missing_fields or semantic_post.filler_lines:
         needs_review = True
+    if bool(active_language_profile.get("apply_egyptian_spoken_qa", True)):
+        spoken_variety_post = run_spoken_variety_integrity_gate(
+            cleaned,
+            address_form=address_form,
+            spoken_variety=str(
+                active_language_profile.get("presenter_dialect") or "egyptian"
+            ),
+            course_domain=getattr(thesis, "course_domain", "") or "generic",
+        )
+    else:
+        from app.generation.egyptian_arabic_gate import ArabicGateReport
+
+        spoken_variety_post = ArabicGateReport()
+    teleprompter_post = validate_spoken_export_text(cleaned)
+    if not spoken_variety_post.ok or not teleprompter_post.ok:
+        needs_review = True
     quality_report = dict(master.quality_report or {})
     quality_report["semantic_contract"] = {
         "missing_fields": list(semantic_post.missing_fields),
         "removed_filler_count": len(removed_filler),
         "remaining_filler_count": len(semantic_post.filler_lines),
     }
+    quality_report["spoken_variety_integrity"] = {
+        "passed_after_final_semantic_rewrite": spoken_variety_post.ok,
+        "issues": [
+            {
+                "code": issue.code,
+                "severity": issue.severity,
+                "detail": issue.detail,
+            }
+            for issue in spoken_variety_post.issues
+        ],
+        "teleprompter_recheck_passed": teleprompter_post.ok,
+        "semantic_recheck_passed": not semantic_post.missing_fields,
+    }
     master = master.model_copy(
         update={
             "script_text": cleaned,
+            # Deterministic language/meaning cleanup changed the body. Drop
+            # stale provider beats so ensure_spoken_beats derives them from the
+            # exact text that just passed semantic + language + teleprompter QA.
+            "spoken_beats": [],
             "quality_status": "needs_review" if needs_review else "pass",
             "self_check_status": (
                 ReviewStatus.NEEDS_REVISION if needs_review else ReviewStatus.PASS

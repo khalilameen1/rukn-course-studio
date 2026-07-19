@@ -309,6 +309,7 @@ def run_writer_test_3_reels(
             phrase_ledger=phrase_ledger,
             voice_profile=voice_profile,
             address_form=contract.language.address_form or AddressForm.MASCULINE,
+            language_profile=contract.language.model_dump(mode="json"),
         )
 
         text = generated.script_text or ""

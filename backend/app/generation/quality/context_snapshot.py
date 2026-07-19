@@ -27,6 +27,7 @@ from app.generation.prompt_compiler import (
 )
 from app.generation.presets import GenerationPreset, resolve_generation_settings
 from app.generation.quality.contract import CourseQualityContract
+from app.generation.terminology_map import build_term_ledger
 from app.prompts.prompt_registry import PROMPT_SPECS, load_prompt
 from app.schemas.generation import CourseMap, CourseThesis
 from app.version import get_app_commit
@@ -36,6 +37,7 @@ REQUIRED_STATE_KEYS: tuple[str, ...] = (
     "COURSE_THESIS",
     "AUDIENCE_MODEL",
     "INSTRUCTOR_PROFILE",
+    "LANGUAGE_PROFILE",
     "CAPABILITY_GRAPH",
     "COVERAGE_MATRIX",
     "BENCHMARK_MATRIX",
@@ -220,6 +222,7 @@ class GenerationContextSnapshot(BaseModel):
     COURSE_THESIS: dict[str, Any] = Field(default_factory=dict)
     AUDIENCE_MODEL: dict[str, Any] = Field(default_factory=dict)
     INSTRUCTOR_PROFILE: dict[str, Any] = Field(default_factory=dict)
+    LANGUAGE_PROFILE: dict[str, Any] = Field(default_factory=dict)
     CAPABILITY_GRAPH: dict[str, Any] = Field(default_factory=dict)
     COVERAGE_MATRIX: dict[str, Any] = Field(default_factory=dict)
     BENCHMARK_MATRIX: dict[str, Any] = Field(default_factory=dict)
@@ -378,6 +381,17 @@ def build_generation_context_snapshot(
         realistic_student_budget=brief_data.get("realistic_student_budget"),
         available_tools=brief_data.get("available_tools") or [],
     )
+    language_profile = contract.language.model_dump(mode="json")
+    frozen_term_ledger = dict(term_ledger or {}) or build_term_ledger(
+        language_profile=language_profile,
+        course_domain=str(
+            thesis_data.get("course_domain")
+            or brief_data.get("course_domain")
+            or "generic"
+        ),
+        target_market=str(brief_data.get("target_market") or "egypt"),
+        available_tools=list(brief_data.get("available_tools") or []),
+    )
     active_rule_pack = build_active_rule_pack(admin_rules)
     source_ledger = source_ledger_from_fingerprints(
         source_ids,
@@ -450,6 +464,7 @@ def build_generation_context_snapshot(
             "desired_outcome": brief_data.get("outcome", ""),
         },
         INSTRUCTOR_PROFILE=dict(instructor_profile or {}),
+        LANGUAGE_PROFILE=language_profile,
         CAPABILITY_GRAPH=_capability_graph(course_map),
         COVERAGE_MATRIX=coverage,
         BENCHMARK_MATRIX=dict(benchmark_matrix or {}),
@@ -458,7 +473,7 @@ def build_generation_context_snapshot(
             "market_guidance_sha256": fingerprint_value(market_pack),
         },
         SOURCE_LEDGER=source_ledger,
-        TERM_LEDGER=dict(term_ledger or {}),
+        TERM_LEDGER=frozen_term_ledger,
         CLAIM_LEDGER=dict(claim_ledger or {}),
         LESSON_LEDGER=lessons,
         PHRASE_LEDGER=dict(phrase_ledger or {}),

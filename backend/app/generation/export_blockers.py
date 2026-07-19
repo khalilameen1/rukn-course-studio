@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 from app.generation.contracts.spoken_final_master import validate_spoken_export_text
 from app.generation.duration_policy import words_outside_hard_range_reason
-from app.generation.egyptian_arabic_gate import run_egyptian_arabic_gate
+from app.generation.egyptian_arabic_gate import run_spoken_variety_integrity_gate
 from app.generation.phrase_ledger import PhraseLedger
 from app.generation.quality.contract import CourseQualityContract
 from app.generation.quality.issue_codes import EXPORT_BLOCKING_STATUSES, IssueCode
@@ -214,7 +214,23 @@ def evaluate_export_blockers(
                 apply_egyptian = quality_contract.language.apply_egyptian_spoken_qa
                 apply_english = quality_contract.language.apply_english_spoken_qa
             if apply_egyptian:
-                arabic = run_egyptian_arabic_gate(body, address_form=address_form)
+                language = (
+                    quality_contract.language.model_dump(mode="json")
+                    if quality_contract is not None
+                    else {}
+                )
+                arabic = run_spoken_variety_integrity_gate(
+                    body,
+                    address_form=address_form,
+                    spoken_variety=str(
+                        language.get("presenter_dialect") or "egyptian"
+                    ),
+                    course_domain=(
+                        quality_contract.pedagogy.course_domain
+                        if quality_contract is not None
+                        else ""
+                    ),
+                )
                 for issue in arabic.issues:
                     if issue.severity in ("fatal", "serious"):
                         report.blockers.append(
