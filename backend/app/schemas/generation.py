@@ -114,6 +114,25 @@ class ModuleProject(BaseModel):
         )
 
 
+class LessonSemanticContract(BaseModel):
+    """Meaning that must exist before prose is written for one lesson."""
+
+    learner_before: str
+    learner_after: str
+    exact_capability_change: str
+    strongest_non_obvious_meaning: str
+    misconception_or_failure: str
+    causal_explanation: str
+    proof_example_or_demonstration: str
+    learner_test_or_action: str
+    boundary_or_exception: str
+    real_tension: str
+    complete_payoff: str
+    earned_next_need: str
+    escalation_role: str
+    sequence_dependency: str
+
+
 class ReelPlan(BaseModel):
     """One reel's plan, produced while building the CourseMap (Stage 1).
 
@@ -146,6 +165,7 @@ class ReelPlan(BaseModel):
     already_taught_forbid_repeat: list[str] = Field(default_factory=list)
     # True → may open a natural need for the next lesson; False → clean close.
     needs_natural_bridge: bool = False
+    lesson_semantic_contract: LessonSemanticContract | None = None
 
 
 class ModulePlan(BaseModel):

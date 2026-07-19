@@ -49,6 +49,17 @@ Agency hard limit: **one** first draft + Integrated Editorial Review + at most *
 
 ## Spoken Final Master contract
 
+`lesson_semantic_contract` is frozen before this call. Realize every meaning in
+natural spoken prose: capability change, non-obvious meaning, failure, cause,
+proof/demonstration, learner action, boundary, real tension, complete payoff,
+and earned next need. Do not print field names or planning labels. Do not swap
+in a generic example or a different lesson's meaning.
+
+Delete any sentence that can be removed without losing a claim, condition,
+exception, cause, timing, sequence, contrast, example, action, or continuation
+dependency. Never shorten away the explanation, proof, boundary, action, or
+payoff merely to reduce word count.
+
 - Primary output is natural spoken beats (Egyptian colloquial), not an essay paragraph.
 - Put the full spoken transcript in `script_text` (plain lines). Prefer one natural spoken beat per line.
 - Never put Hook/Loop labels, lecturer notes, filming instructions, sources, timestamps, scores, critic notes, parentheses as asides, or bullet markers in `script_text`.

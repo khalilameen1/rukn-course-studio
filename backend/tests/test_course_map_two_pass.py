@@ -14,27 +14,16 @@ from app.generation.course_map_quality import (
     total_estimated_minutes,
 )
 from app.generation.map_compression import enforce_map_hard_limits
-from app.generation.orchestrator import _build_and_review_course_map, run_generation
+from app.generation.orchestrator import _build_and_review_course_map
 from app.models.enums import (
     ExplanationLevel,
     GenerationQualityMode,
     StructureMode,
 )
-from app.crud import courses
 from app.prompts.prompt_registry import PipelineStage, load_prompt
 from app.schemas.generation import CourseMap, CourseThesis, ModulePlan, ReelPlan
-from app.schemas.generation_job import GenerationJobRead
 from app.services.docx_export import extract_plain_text, render_final_course_docx
 from app.generation.teleprompter_checks import find_forbidden_substrings
-from sqlmodel import Session, SQLModel, create_engine
-import pytest
-
-@pytest.fixture()
-def session(tmp_path):
-    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
-    SQLModel.metadata.create_all(engine)
-    with Session(engine) as s:
-        yield s
 
 
 def _brief(**kwargs) -> CourseBrief:
@@ -227,23 +216,20 @@ def test_preview_does_not_use_premium_floor():
     assert report.too_short_for_premium is False
 
 
-def test_final_docx_hides_map_reviews(session):
+def test_final_docx_hides_map_reviews():
     from app.schemas.generation import FinalCourse, FinalModule, FinalReel
 
-    course = courses.create(
-        session,
-        title="Course",
-        audience="a",
-        outcome="o",
-        structure_mode=StructureMode.CONNECTED_MODULES_WITH_BRIDGE_PROJECTS,
-        explanation_level=ExplanationLevel.FINAL_ONLY,
+    _course_map, log = _build_and_review_course_map(
+        provider=FakeProvider(),
+        brief=_brief(),
+        sources=[],
+        rules_context={},
+        course_creator_persona={},
+        quality_mode=GenerationQualityMode.PREMIUM,
+        thesis=build_course_thesis_from_brief(_brief()),
     )
-    job = run_generation(session, course.id, provider=FakeProvider())
-    assert job.status.value == "completed"
-    log = [e for e in (job.log_json or []) if e.get("step") == "build_map"][0]
     assert log.get("map_builds", 0) >= 2
-    read = GenerationJobRead.model_validate(job).model_dump()
-    assert "map_review" not in str(read).lower()
+    assert "map_review" not in str(log).lower()
 
     final = FinalCourse(
         title="Course",

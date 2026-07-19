@@ -28,6 +28,7 @@ from app.schemas.generation import (
     CourseMap,
     FinalCourse,
     GeneratedReel,
+    LessonSemanticContract,
     ModulePlan,
     ReelPlan,
     ReviewResult,
@@ -155,6 +156,9 @@ class WriteSingleReelInput(BaseModel):
     lesson_persona_state: dict[str, str] = Field(default_factory=dict)
     # Market realism for examples / client scenarios (prompt + local gates).
     target_market: TargetMarket = TargetMarket.EGYPT
+    # Frozen before prose. The writer must realize this meaning, not invent a
+    # generic lesson shape or silently swap in another lesson's content.
+    lesson_semantic_contract: LessonSemanticContract | None = None
 
 
 class ReviewSingleReelInput(BaseModel):

@@ -54,6 +54,20 @@ C. Master Creator-Academic Mentor: playlist spine, continue-watching pull, modul
 - Lesson length follows delivery mode (camera explainer / micro concept / screen demo / critique / project build) — never a mechanical every-Nth-lesson curve.
 - Do not pad with filler lessons. Do not use short empty reels that teach nothing.
 
+## Lesson semantic contract (required before prose)
+
+Every reel must include a `lesson_semantic_contract` with specific, non-interchangeable values for:
+`learner_before`, `learner_after`, `exact_capability_change`,
+`strongest_non_obvious_meaning`, `misconception_or_failure`,
+`causal_explanation`, `proof_example_or_demonstration`,
+`learner_test_or_action`, `boundary_or_exception`, `real_tension`,
+`complete_payoff`, `earned_next_need`, `escalation_role`, and
+`sequence_dependency`.
+
+Reject the reel shell if any field could be pasted unchanged into another
+lesson. The proof must match the delivery mode; the payoff must be complete;
+the next need must be earned by the completed learning, never a withheld loop.
+
 ## Output
 
 Call the `course_map` tool. Nothing else - no text outside the tool call. Return only the map skeleton for this phase (Final Course Map when `map_phase=final_master`).

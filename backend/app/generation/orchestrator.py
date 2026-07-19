@@ -125,6 +125,13 @@ from app.generation.contracts.course_thesis import (
     validate_course_thesis,
 )
 from app.generation.contracts.lesson_blueprint import ensure_reel_blueprint_defaults
+from app.generation.contracts.lesson_semantic import (
+    attach_lesson_semantic_contracts,
+    build_lesson_semantic_contract,
+    inspect_script_against_semantic_contract,
+    remove_safe_semantic_filler,
+    validate_lesson_semantic_contract,
+)
 from app.generation.contracts.spoken_final_master import (
     ensure_spoken_beats,
     strip_punctuation_from_spoken_body,
@@ -235,6 +242,7 @@ from app.schemas.generation import (
     FinalModule,
     FinalReel,
     GeneratedReel,
+    LessonSemanticContract,
     ModulePlan,
     ModuleProject,
     ReelPlan,
@@ -286,6 +294,7 @@ _FATAL_REASON_CODES = frozenset(
         "critic_fatal",
         "empty_script",
         "empty_teaching",
+        "semantic_contract_missing",
         "review_leak",
         "msa_article_tone",
         "literal_translation",
@@ -852,6 +861,19 @@ def run_generation(
                             approved_snapshot.COURSE_THESIS
                         )
                     }
+                )
+            try:
+                semantic_map = attach_lesson_semantic_contracts(course_map)
+            except ValueError as exc:
+                raise SnapshotMismatchError(
+                    f"Approved map has an invalid lesson semantic contract: {exc}"
+                ) from exc
+            if semantic_map.model_dump(mode="json") != course_map.model_dump(
+                mode="json"
+            ):
+                raise SnapshotMismatchError(
+                    "Approved map is missing frozen lesson semantic contracts; "
+                    "build a new preview"
                 )
             compressed_map, compression = enforce_map_hard_limits(
                 course_map,
@@ -2328,6 +2350,7 @@ def _local_review_single_reel(
     lesson_persona: LessonPersonaState | None = None,
     target_market: TargetMarket = TargetMarket.EGYPT,
     source_texts: list[str] | None = None,
+    semantic_contract: LessonSemanticContract | None = None,
 ) -> ReviewResult | None:
     """Collect local validator / student / mentor signals for a completed draft.
 
@@ -2507,6 +2530,38 @@ def _local_review_single_reel(
             )
         )
 
+    if semantic_contract is not None:
+        semantic_report = inspect_script_against_semantic_contract(
+            generated.script_text,
+            semantic_contract,
+        )
+        for field_name in semantic_report.missing_fields:
+            actions.append(
+                ReviewAction(
+                    action=ReviewActionType.REWRITE,
+                    target_id=generated.reel_id,
+                    reason_code="semantic_contract_missing",
+                    instruction=(
+                        f"Restore the lesson-specific meaning for {field_name}: "
+                        f"{getattr(semantic_contract, field_name)}"
+                    ),
+                )
+            )
+        if semantic_report.filler_lines:
+            actions.append(
+                ReviewAction(
+                    action=ReviewActionType.REWRITE,
+                    target_id=generated.reel_id,
+                    reason_code="removable_filler",
+                    instruction=(
+                        "Delete removable lines that carry no claim, condition, "
+                        "exception, cause, sequence, contrast, example, action, "
+                        "or continuation dependency: "
+                        + " | ".join(semantic_report.filler_lines[:3])
+                    ),
+                )
+            )
+
     if not actions:
         return None
     return ReviewResult(scope=ReviewScope.REEL, status=ReviewStatus.NEEDS_REVISION, actions=actions)
@@ -2654,6 +2709,13 @@ def _build_and_review_course_map(
         }
     )
 
+    try:
+        final_map = attach_lesson_semantic_contracts(final_map)
+    except ValueError as exc:
+        raise UnusableOutputError(
+            f"Lesson semantic contract rejected before writing: {exc}"
+        ) from exc
+
     compressed, creport = enforce_map_hard_limits(final_map, thesis=thesis)
     if not creport.ok:
         raise UnusableOutputError(
@@ -2661,6 +2723,17 @@ def _build_and_review_course_map(
             or "Course map exceeds hard limits after compression"
         )
     final_map = compressed
+    try:
+        # Compression can merge lessons and change their capability/coverage.
+        # Rebuild every contract against the exact map that will be frozen.
+        final_map = attach_lesson_semantic_contracts(
+            final_map,
+            force_rebuild=True,
+        )
+    except ValueError as exc:
+        raise UnusableOutputError(
+            f"Compressed lesson semantic contract rejected before writing: {exc}"
+        ) from exc
 
     report = analyze_map_duration(
         final_map, quality_mode=quality_mode, relax_floor=relax, thesis=thesis
@@ -2719,6 +2792,45 @@ def _write_and_review_reel(
     premium = quality_mode == GenerationQualityMode.PREMIUM
     source_texts = [s.text for s in sources if (s.text or "").strip()]
     reel_plan = ensure_reel_blueprint_defaults(reel_plan)
+    flat_plans = [reel for item in course_map.modules for reel in item.reels]
+    current_index = next(
+        (
+            index
+            for index, candidate in enumerate(flat_plans)
+            if candidate.reel_id == reel_plan.reel_id
+        ),
+        0,
+    )
+    semantic_contract = build_lesson_semantic_contract(
+        course_map,
+        module,
+        reel_plan,
+        previous_reel=(
+            flat_plans[current_index - 1] if current_index > 0 else None
+        ),
+        next_reel=(
+            flat_plans[current_index + 1]
+            if current_index + 1 < len(flat_plans)
+            else None
+        ),
+    )
+    semantic_validation = validate_lesson_semantic_contract(
+        semantic_contract,
+        reel_plan,
+        peer_contracts=[
+            peer.lesson_semantic_contract
+            for peer in flat_plans[:current_index]
+            if peer.lesson_semantic_contract is not None
+        ],
+    )
+    if not semantic_validation.ok:
+        raise UnusableOutputError(
+            "Lesson semantic contract rejected before prose: "
+            + "; ".join(semantic_validation.errors)
+        )
+    reel_plan = reel_plan.model_copy(
+        update={"lesson_semantic_contract": semantic_contract}
+    )
 
     write_rules = select_packed_rules_for_stage(rules_context, PipelineStage.WRITE_SINGLE_REEL)
     review_rules = select_packed_rules_for_stage(rules_context, PipelineStage.REVIEW_SINGLE_REEL)
@@ -2781,6 +2893,7 @@ def _write_and_review_reel(
             module_persona_adjustment=module_persona_adjustment or {},
             lesson_persona_state=lesson_persona_state or {},
             target_market=target_market,
+            lesson_semantic_contract=semantic_contract,
         )
         generated = provider.write_single_reel(write_input)
         generated = ensure_spoken_beats(generated)
@@ -2829,6 +2942,7 @@ def _write_and_review_reel(
         lesson_persona=lesson_persona_model,
         target_market=target_market,
         source_texts=source_texts,
+        semantic_contract=semantic_contract,
     )
     feedback: list[str] = [n.required_repair for n in editorial.notes if n.requires_rewrite]
     if local_result is not None:
@@ -2874,6 +2988,7 @@ def _write_and_review_reel(
             lesson_persona=lesson_persona_model,
             target_market=target_market,
             source_texts=source_texts,
+            semantic_contract=semantic_contract,
         )
         if sanity is not None:
             caught_locally = True
@@ -2927,6 +3042,7 @@ def _write_and_review_reel(
         lesson_persona=lesson_persona_model,
         target_market=target_market,
         source_texts=source_texts,
+        semantic_contract=semantic_contract,
     )
     if unresolved_fatal_or_serious(final_editorial) or final_sanity is not None:
         needs_review = True
@@ -2961,7 +3077,32 @@ def _write_and_review_reel(
     cleaned = strip_conflict_notes_from_script(cleaned)
     cleaned = strip_meta_instruction_lines(cleaned)
     cleaned = strip_punctuation_from_spoken_body(cleaned)
-    master = master.model_copy(update={"script_text": cleaned})
+    cleaned, removed_filler = remove_safe_semantic_filler(
+        cleaned,
+        semantic_contract,
+    )
+    semantic_post = inspect_script_against_semantic_contract(
+        cleaned,
+        semantic_contract,
+    )
+    if semantic_post.missing_fields or semantic_post.filler_lines:
+        needs_review = True
+    quality_report = dict(master.quality_report or {})
+    quality_report["semantic_contract"] = {
+        "missing_fields": list(semantic_post.missing_fields),
+        "removed_filler_count": len(removed_filler),
+        "remaining_filler_count": len(semantic_post.filler_lines),
+    }
+    master = master.model_copy(
+        update={
+            "script_text": cleaned,
+            "quality_status": "needs_review" if needs_review else "pass",
+            "self_check_status": (
+                ReviewStatus.NEEDS_REVISION if needs_review else ReviewStatus.PASS
+            ),
+            "quality_report": quality_report,
+        }
+    )
     master = ensure_spoken_beats(master)
 
     if not (master.script_text or "").strip():
