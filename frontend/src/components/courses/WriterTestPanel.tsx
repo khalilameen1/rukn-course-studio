@@ -45,7 +45,7 @@ export default function WriterTestPanel({ courseId, courseFingerprintHint }: Pro
       STORAGE_KEY(courseId),
       JSON.stringify({
         jobId: job.job.id,
-        fingerprint: job.settings_fingerprint,
+        fingerprint: job.config_fingerprint,
       }),
     );
   }
@@ -105,9 +105,9 @@ export default function WriterTestPanel({ courseId, courseFingerprintHint }: Pro
   }
 
   const fingerprintMismatch =
-    result?.settings_fingerprint &&
+    result?.config_fingerprint &&
     courseFingerprintHint &&
-    result.settings_fingerprint !== courseFingerprintHint;
+    result.config_fingerprint !== courseFingerprintHint;
 
   return (
     <section className="space-y-3 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4">

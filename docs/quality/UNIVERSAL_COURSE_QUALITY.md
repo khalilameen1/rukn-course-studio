@@ -23,7 +23,23 @@ Adapters **add** rules; they do not replace global spoken/export rules. Domain l
 
 `app/generation/quality/context_snapshot.py`
 
-Shared by map-preview, full generation intent, writer-test fingerprinting, finalize. Stored on `Course.generation_context_snapshot_json` after preview. Fingerprint drift invalidates an approved preview.
+One v2 contract is shared by map preview, full generation, Writer Test, resume,
+finalize, and export. Preview stores its candidate on
+`Course.generation_context_snapshot_json`; a real run freezes the same contract
+once on `GenerationJob.run_snapshot_json`, after thesis/map approval and before
+the first lesson write. Later stages never rewrite it.
+
+`CONFIG_FINGERPRINT` is a full SHA-256 over the canonical standard package,
+brief, thesis, selected source hashes, research result hash, market, course type,
+language/address profile, quality mode, provider/model, generation settings, and
+approved map. Resume and every DOCX export fail closed when the embedded inputs
+have been altered or the current output-affecting configuration differs.
+
+The snapshot contains the complete state-key contract (`COURSE_THESIS`, audience
+and instructor profiles, capability/coverage/benchmark matrices, all ledgers,
+quality findings, active rule pack, stage state, pedagogy adapter, episodic map,
+and language rewrite record). Raw standard Markdown, source text, secrets, and
+mutable writer results are never copied into it.
 
 ## Content Atom Ledger
 

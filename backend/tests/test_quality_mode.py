@@ -129,7 +129,7 @@ def test_no_infinite_rebuild_loop_when_fatal_remains():
                 reel_id=input.reel.reel_id,
                 module_id=input.module.module_id,
                 title=input.reel.title,
-                script_text="في الريل ده هنشرح حاجة",
+                script_text="كلمة",
                 used_ideas=["x"],
                 used_examples=["y"],
                 self_check_status=ReviewStatus.PASS,
@@ -139,9 +139,7 @@ def test_no_infinite_rebuild_loop_when_fatal_remains():
     reel = ReelPlan(reel_id="m1-r1", title="R", purpose="p", estimated_length="30s")
     cmap = CourseMap(course_title="C", main_thread="t", modules=[module])
     provider = AlwaysFatal()
-    rules = {
-        "rukn_forbidden_phrases": '{"phrases": [{"phrase": "في الريل ده", "severity": "high"}]}'
-    }
+    rules = {}
 
     master, attempts, _, needs_review = _write_and_review_reel(
         provider=provider,
@@ -188,4 +186,4 @@ def test_preview_run_persists_quality_mode(session):
     assert job.status == JobStatus.COMPLETED
     assert job.generation_quality_mode == GenerationQualityMode.PREVIEW
     assert job.run_snapshot_json
-    assert job.run_snapshot_json.get("generation_quality_mode") == "preview"
+    assert job.run_snapshot_json["CONFIG_INPUTS"]["QUALITY_MODE"] == "preview"

@@ -13,7 +13,7 @@ from sqlmodel import Session
 from app.ai.factory import get_ai_provider
 from app.ai.provider import AIProvider
 from app.config import settings
-from app.crud import admin_knowledge_items, courses
+from app.crud import courses
 from app.generation.contracts.course_thesis import build_course_thesis_from_brief
 from app.generation.course_map_quality import total_estimated_minutes
 from app.generation.domain_adapters import build_course_quality_contract
@@ -21,10 +21,14 @@ from app.generation.duration_policy import DEFAULT_SPOKEN_WPM
 from app.generation.orchestrator import (
     _build_and_review_course_map,
     _build_course_brief,
+    _load_active_rules,
     _load_usable_sources,
     _map_source_excerpts,
 )
-from app.generation.quality.context_snapshot import build_generation_context_snapshot
+from app.generation.quality.context_snapshot import (
+    build_generation_context_snapshot,
+    fingerprint_value,
+)
 from app.generation.quality.coverage_matrix import evaluate_coverage_matrix
 from app.models.enums import AddressForm, GenerationQualityMode, LessonDeliveryMode, WebResearchMode
 from app.schemas.generation import CourseMap, CourseThesis
@@ -117,10 +121,7 @@ def build_map_preview(
         target_theory_ratio=contract.pedagogy.target_theory_ratio,
         target_practice_ratio=contract.pedagogy.target_practice_ratio,
     )
-    rules_context = {
-        item.key: item.content_text or ""
-        for item in admin_knowledge_items.list(session, is_active=True)
-    }
+    rules_context = _load_active_rules(session)
     usable = _load_usable_sources(session, course_id)
     sources = _map_source_excerpts(usable)
     # Preview does not call live web research (credit-safe). Fingerprint mode only.
@@ -140,10 +141,10 @@ def build_map_preview(
     from app.generation.course_map_generate import format_course_map_text
 
     source_fps = {
-        str(s.source_id): __import__("hashlib")
-        .sha256((s.text or "").encode("utf-8"))
-        .hexdigest()[:16]
-        for s in sources
+        str(item.course_source.id): fingerprint_value(
+            item.course_source.extracted_text or ""
+        )
+        for item in usable
     }
     snapshot = build_generation_context_snapshot(
         course_id=course_id,
@@ -151,8 +152,16 @@ def build_map_preview(
         contract=contract,
         thesis=thesis,
         course_map=course_map,
-        source_ids=[s.source_id for s in sources],
+        source_ids=[item.course_source.id for item in usable],
         source_fingerprints=source_fps,
+        source_metadata={
+            str(item.course_source.id): {
+                "category": item.course_source.source_category.value,
+                "priority": item.course_source.priority.value,
+                "include_in_generation": item.course_source.include_in_generation,
+            }
+            for item in usable
+        },
         research_blob=research_blob,
         admin_rules=rules_context,
         provider_name=(settings.ai_provider or "fake"),
@@ -163,6 +172,13 @@ def build_map_preview(
         else str(web_research_mode),
         map_preview_confirmed=False,
         human_override_hard_limits=human_override_hard_limits,
+        coverage_matrix=coverage.model_dump(mode="json"),
+        generation_settings={
+            "generation_preset": brief.generation_preset.value,
+            "structure_mode": brief.structure_mode.value,
+            "explanation_level": brief.explanation_level.value,
+            "delivery_pattern": delivery_pattern,
+        },
     )
 
     # Persist approved preview map + snapshot on the course row (JSON text fields).

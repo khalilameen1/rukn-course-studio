@@ -25,7 +25,8 @@ from app.generation.knowledge_packs import (
     mandatory_core_intact,
 )
 from app.generation.map_compression import enforce_map_hard_limits
-from app.generation.writer_test import WriterTestTopic, run_writer_test_3_reels, settings_fingerprint
+from app.generation.quality.context_snapshot import fingerprint_value
+from app.generation.writer_test import WriterTestTopic, run_writer_test_3_reels
 from app.models.enums import (
     AddressForm,
     ExplanationLevel,
@@ -391,22 +392,8 @@ def test_independent_topics_reject_next_reel_bait():
 
 
 def test_fingerprint_changes_with_model():
-    a = settings_fingerprint(
-        model="fake",
-        quality_mode="premium",
-        prompt_version="write_single_reel",
-        voice_profile_version="1",
-        source_ids=[],
-        knowledge_version="abc",
-    )
-    b = settings_fingerprint(
-        model="claude",
-        quality_mode="premium",
-        prompt_version="write_single_reel",
-        voice_profile_version="1",
-        source_ids=[],
-        knowledge_version="abc",
-    )
+    a = fingerprint_value({"MODEL": "fake"})
+    b = fingerprint_value({"MODEL": "different-model"})
     assert a != b
 
 

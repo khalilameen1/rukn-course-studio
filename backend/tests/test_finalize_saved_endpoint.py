@@ -3,8 +3,12 @@
 from fastapi.testclient import TestClient
 from sqlmodel import Session, SQLModel, create_engine
 
-from app.crud import generation_jobs
+from app.crud import courses, generation_jobs
+from app.generation.domain_adapters import build_course_quality_contract
+from app.generation.orchestrator import _build_course_brief
+from app.generation.quality.context_snapshot import build_generation_context_snapshot
 from app.models.enums import JobStatus, StructureMode
+from app.schemas.generation import CourseMap
 from app.security.request_throttle import reset_for_tests
 
 COURSE_BODY = {
@@ -102,6 +106,31 @@ def _map_and_reels(n: int = 2) -> tuple[dict, list[dict]]:
     return course_map, reels
 
 
+def _run_snapshot(course, course_map: dict) -> dict:
+    brief = _build_course_brief(course)
+    parsed_map = CourseMap.model_validate(course_map)
+    contract = build_course_quality_contract(
+        brief,
+        course_type=getattr(course, "course_type", None) or "practical_skill",
+        address_form=parsed_map.thesis.address_form,
+    )
+    return build_generation_context_snapshot(
+        course_id=course.id,
+        brief=brief,
+        contract=contract,
+        thesis=parsed_map.thesis,
+        course_map=parsed_map,
+        research_blob={"upload_memory": {}, "web_memory": {}, "evidence_ledger": {}},
+        quality_mode="premium",
+        web_research_mode="autonomous_gap_fill",
+        generation_settings={
+            "generation_preset": brief.generation_preset.value,
+            "structure_mode": brief.structure_mode.value,
+            "explanation_level": brief.explanation_level.value,
+        },
+    ).model_dump(mode="json")
+
+
 def _client(tmp_path, monkeypatch):
     import app.db as db_module
     import app.generation.orchestrator as orchestrator_module
@@ -133,6 +162,7 @@ def test_finalize_saved_endpoint_completes_partial_timeout_job(tmp_path, monkeyp
     course_map, reels = _map_and_reels(2)
 
     with Session(engine) as session:
+        course = courses.get(session, course_id)
         job = generation_jobs.create(
             session,
             course_id=course_id,
@@ -147,6 +177,7 @@ def test_finalize_saved_endpoint_completes_partial_timeout_job(tmp_path, monkeyp
             error_category="timeout",
             error_message="Generation stopped after saving completed sections.",
             partial_docx_path=str(tmp_path / "partial.docx"),
+            run_snapshot_json=_run_snapshot(course, course_map),
         )
         job_id = job.id
 
@@ -168,6 +199,7 @@ def test_finalize_saved_rejects_incomplete_lessons(tmp_path, monkeypatch):
     course_map, reels = _map_and_reels(2)
 
     with Session(engine) as session:
+        course = courses.get(session, course_id)
         job = generation_jobs.create(
             session,
             course_id=course_id,
@@ -184,12 +216,41 @@ def test_finalize_saved_rejects_incomplete_lessons(tmp_path, monkeypatch):
     assert response.status_code == 409
 
 
+def test_finalize_saved_rejects_config_fingerprint_drift(tmp_path, monkeypatch):
+    client, engine = _client(tmp_path, monkeypatch)
+    course_id = client.post("/courses", json=COURSE_BODY).json()["id"]
+    course_map, reels = _map_and_reels(2)
+
+    with Session(engine) as session:
+        course = courses.get(session, course_id)
+        job = generation_jobs.create(
+            session,
+            course_id=course_id,
+            status=JobStatus.PARTIAL,
+            current_stage="failed",
+            course_map_json=course_map,
+            completed_reels_json=reels,
+            completed_reels_count=2,
+            total_lessons_count=2,
+            run_snapshot_json=_run_snapshot(course, course_map),
+        )
+        course.title = "Changed after snapshot freeze"
+        session.add(course)
+        session.commit()
+        job_id = job.id
+
+    response = client.post(f"/courses/{course_id}/generate/{job_id}/finalize-saved")
+    assert response.status_code == 409
+    assert "configuration changed" in response.json()["detail"].lower()
+
+
 def test_job_read_exposes_recovery_flags(tmp_path, monkeypatch):
     client, engine = _client(tmp_path, monkeypatch)
     course_id = client.post("/courses", json=COURSE_BODY).json()["id"]
     course_map, reels = _map_and_reels(2)
 
     with Session(engine) as session:
+        course = courses.get(session, course_id)
         job = generation_jobs.create(
             session,
             course_id=course_id,
@@ -201,6 +262,7 @@ def test_job_read_exposes_recovery_flags(tmp_path, monkeypatch):
             total_lessons_count=2,
             partial_docx_path="/tmp/p.docx",
             last_completed_step="final_review",
+            run_snapshot_json=_run_snapshot(course, course_map),
         )
         job_id = job.id
 

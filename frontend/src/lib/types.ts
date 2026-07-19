@@ -183,6 +183,8 @@ export interface GenerationJob {
   agent_roster?: { id: string; label: string; state: string }[];
   live_eta_summary?: string | null;
   public_stage_label?: string | null;
+  config_fingerprint?: string | null;
+  snapshot_version?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -310,7 +312,7 @@ export interface WriterTestReelPublic {
 export interface WriterTestJobRead {
   job: GenerationJob;
   job_kind: string;
-  settings_fingerprint?: string | null;
+  config_fingerprint?: string | null;
   series_linked: boolean;
   reels: WriterTestReelPublic[];
 }

@@ -14,7 +14,12 @@ from typing import Any
 from sqlmodel import Session, select
 
 from app.config import settings
-from app.data.course_standard import STANDARD_FILE_NAMES, standard_seed_items
+from app.data.course_standard import (
+    STANDARD_FILE_NAMES,
+    STANDARD_VERSION,
+    standard_fingerprint,
+    standard_seed_items,
+)
 from app.db import engine, init_db
 from app.models.admin_knowledge import AdminKnowledgeItem
 from app.models.course import Course
@@ -54,20 +59,33 @@ def _purge_legacy_backup_files() -> int:
 
 
 def _purge_retired_snapshots(session: Session) -> tuple[int, int]:
+    def uses_retired_contract(snapshot: object) -> bool:
+        if not isinstance(snapshot, dict) or snapshot.get("version") != "2.0":
+            return True
+        rule_pack = snapshot.get("ACTIVE_RULE_PACK")
+        return not isinstance(rule_pack, dict) or (
+            rule_pack.get("standard_version") != STANDARD_VERSION
+            or rule_pack.get("fingerprint") != standard_fingerprint()
+        )
+
     cleared_courses = 0
     for course in session.exec(select(Course)):
-        if (
-            course.active_rules_snapshot_json is not None
-            or course.generation_context_snapshot_json is not None
-        ):
+        changed = False
+        if course.active_rules_snapshot_json is not None:
             course.active_rules_snapshot_json = None
+            changed = True
+        if course.generation_context_snapshot_json is not None and uses_retired_contract(
+            course.generation_context_snapshot_json
+        ):
             course.generation_context_snapshot_json = None
+            changed = True
+        if changed:
             session.add(course)
             cleared_courses += 1
 
     cleared_jobs = 0
     for job in session.exec(select(GenerationJob)):
-        if job.run_snapshot_json is not None:
+        if job.run_snapshot_json is not None and uses_retired_contract(job.run_snapshot_json):
             job.run_snapshot_json = None
             session.add(job)
             cleared_jobs += 1

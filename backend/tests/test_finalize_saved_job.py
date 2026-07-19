@@ -8,7 +8,11 @@ from sqlmodel import Session, SQLModel
 
 import app.db as db_module
 from app.crud import course_versions, courses, generation_jobs
+from app.generation.domain_adapters import build_course_quality_contract
+from app.generation.orchestrator import _build_course_brief
+from app.generation.quality.context_snapshot import build_generation_context_snapshot
 from app.models.enums import ExplanationLevel, JobStatus, StructureMode
+from app.schemas.generation import CourseMap
 from app.services.finalize_saved_job import (
     finalize_job_from_saved_lessons,
     format_stopped_after_label,
@@ -105,6 +109,31 @@ def _map_and_reels(n: int = 2) -> tuple[dict, list[dict]]:
     return course_map, reels
 
 
+def _run_snapshot(course, course_map: dict) -> dict:
+    brief = _build_course_brief(course)
+    parsed_map = CourseMap.model_validate(course_map)
+    contract = build_course_quality_contract(
+        brief,
+        course_type=getattr(course, "course_type", None) or "practical_skill",
+        address_form=parsed_map.thesis.address_form,
+    )
+    return build_generation_context_snapshot(
+        course_id=course.id,
+        brief=brief,
+        contract=contract,
+        thesis=parsed_map.thesis,
+        course_map=parsed_map,
+        research_blob={"upload_memory": {}, "web_memory": {}, "evidence_ledger": {}},
+        quality_mode="premium",
+        web_research_mode="autonomous_gap_fill",
+        generation_settings={
+            "generation_preset": brief.generation_preset.value,
+            "structure_mode": brief.structure_mode.value,
+            "explanation_level": brief.explanation_level.value,
+        },
+    ).model_dump(mode="json")
+
+
 def _make_session(tmp_path, monkeypatch):
     engine = create_engine(f"sqlite:///{tmp_path / 'finalize.db'}")
     SQLModel.metadata.create_all(engine)
@@ -183,6 +212,7 @@ def test_finalize_from_saved_exports_docx_and_completes(tmp_path, monkeypatch):
             completed_reels_count=2,
             total_lessons_count=2,
             last_progress_message="Saving lesson 2/2",
+            run_snapshot_json=_run_snapshot(course, course_map),
         )
         assert job_eligible_for_saved_finalize(job)
 
@@ -243,6 +273,7 @@ def test_stale_release_finalizes_complete_lessons_instead_of_failing(tmp_path, m
             completed_reels_json=reels,
             completed_reels_count=2,
             total_lessons_count=2,
+            run_snapshot_json=_run_snapshot(course, course_map),
         )
         job.updated_at = old
         job.last_saved_at = old
@@ -351,6 +382,7 @@ def test_partial_timeout_job_recovers_on_try_recover(tmp_path, monkeypatch):
                 "the AI provider took too long to respond."
             ),
             partial_docx_path="/tmp/partial_job_1.docx",
+            run_snapshot_json=_run_snapshot(course, course_map),
         )
         assert job_eligible_for_saved_finalize(job)
 

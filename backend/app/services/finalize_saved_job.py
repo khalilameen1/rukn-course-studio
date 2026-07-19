@@ -17,8 +17,20 @@ from typing import Any
 from sqlmodel import Session
 
 from app.config import settings
-from app.crud import course_versions, generation_jobs
+from app.crud import course_sources, course_versions, courses, generation_jobs
 from app.generation.course_quality_gates import format_handoff_status
+from app.generation.domain_adapters import build_course_quality_contract
+from app.generation.quality.context_snapshot import (
+    SnapshotMismatchError,
+    active_prompt_versions,
+    assert_snapshot_compatible,
+    build_active_rule_pack,
+    fingerprint_value,
+    snapshot_with_config_overrides,
+    source_ledger_from_fingerprints,
+)
+from app.generation.presets import resolve_generation_settings
+from app.version import get_app_commit
 from app.models.enums import JobStatus
 from app.models.generation_job import GenerationJob
 from app.schemas.generation import (
@@ -213,7 +225,15 @@ def try_recover_job_from_saved_lessons(
         return job
     if not job_eligible_for_saved_finalize(job):
         return job
-    recovered = finalize_job_from_saved_lessons(session, job)
+    try:
+        recovered = finalize_job_from_saved_lessons(session, job)
+    except SnapshotMismatchError as exc:
+        logger.warning(
+            "saved-finalize blocked by snapshot mismatch job_id=%s reason=%s",
+            job.id,
+            str(exc),
+        )
+        return job
     return recovered if recovered is not None else job
 
 
@@ -294,6 +314,96 @@ def _assemble_from_saved(course_map: CourseMap, reels: list[GeneratedReel]) -> F
     )
 
 
+def assert_job_snapshot_current(
+    session: Session,
+    job: GenerationJob,
+    *,
+    action: str,
+) -> None:
+    """Validate a persisted job against all current output-affecting inputs."""
+    course_map = CourseMap.model_validate(coerce_json_dict(job.course_map_json) or {})
+    thesis = course_map.thesis
+    if thesis is None:
+        raise SnapshotMismatchError(f"Cannot {action}: Course Thesis is missing")
+    frozen_snapshot = assert_snapshot_compatible(job.run_snapshot_json, action=action)
+    course = courses.get(session, job.course_id)
+    if course is None:
+        raise SnapshotMismatchError(f"Cannot {action}: course {job.course_id} is missing")
+    from app.generation.orchestrator import USABLE_SOURCE_STATUSES, _build_course_brief
+
+    brief = _build_course_brief(course)
+    contract = build_course_quality_contract(
+        brief,
+        course_domain=getattr(course, "course_domain", None),
+        course_type=getattr(course, "course_type", None) or "practical_skill",
+        address_form=thesis.address_form,
+    )
+    selected_sources = [
+        source
+        for source in course_sources.list(session, course_id=job.course_id)
+        if source.include_in_generation and source.status in USABLE_SOURCE_STATUSES
+    ]
+    source_ledger = source_ledger_from_fingerprints(
+        [source.id for source in selected_sources],
+        {
+            str(source.id): fingerprint_value(source.extracted_text or "")
+            for source in selected_sources
+        },
+        {
+            str(source.id): {
+                "category": source.source_category.value,
+                "priority": source.priority.value,
+                "include_in_generation": source.include_in_generation,
+            }
+            for source in selected_sources
+        },
+    )
+    generation_settings = dict(
+        frozen_snapshot.CONFIG_INPUTS.get("GENERATION_SETTINGS") or {}
+    )
+    generation_settings.update(
+        {
+            "generation_preset": brief.generation_preset.value,
+            "resolved_generation_settings": resolve_generation_settings(
+                brief.generation_preset
+            ),
+            "structure_mode": brief.structure_mode.value,
+            "explanation_level": brief.explanation_level.value,
+            "web_research_mode": job.web_research_mode.value,
+            "prompt_versions": active_prompt_versions(),
+            "app_commit": get_app_commit(),
+        }
+    )
+    research_identity = {
+        "upload_memory": coerce_json_dict(job.source_memory_json) or {},
+        "web_memory": coerce_json_dict(job.web_source_memory_json) or {},
+        "evidence_ledger": coerce_json_dict(job.evidence_ledger_json) or {},
+    }
+    provider_name = (settings.ai_provider or "fake").strip().lower()
+    current_inputs = snapshot_with_config_overrides(
+        frozen_snapshot,
+        STANDARD_PACKAGE=build_active_rule_pack(),
+        BRIEF=brief.model_dump(mode="json"),
+        COURSE_THESIS=thesis.model_dump(mode="json"),
+        SELECTED_SOURCES=source_ledger,
+        RESEARCH_RESULT_SHA256=fingerprint_value(research_identity),
+        MARKET=brief.target_market.value,
+        COURSE_TYPE=contract.pedagogy.course_type,
+        LANGUAGE_PROFILE=contract.language.model_dump(mode="json"),
+        ADDRESS_FORM=thesis.address_form.value,
+        QUALITY_MODE=job.generation_quality_mode.value,
+        PROVIDER=provider_name,
+        MODEL="fake" if provider_name == "fake" else (settings.ai_model_name or ""),
+        GENERATION_SETTINGS=generation_settings,
+        APPROVED_MAP=course_map.model_dump(mode="json"),
+    )
+    assert_snapshot_compatible(
+        frozen_snapshot,
+        current_config_inputs=current_inputs,
+        action=action,
+    )
+
+
 def finalize_job_from_saved_lessons(
     session: Session,
     job: GenerationJob,
@@ -321,6 +431,13 @@ def finalize_job_from_saved_lessons(
         )
         return None
 
+    course_map = CourseMap.model_validate(coerce_json_dict(job.course_map_json) or {})
+    assert_job_snapshot_current(
+        session,
+        job,
+        action="resume/finalize saved lessons",
+    )
+
     backup_path = backup_job_snapshot(job)
     logger.info(
         "finalize_saved_job backup job_id=%s path=%s lessons=%s",
@@ -329,7 +446,6 @@ def finalize_job_from_saved_lessons(
         inspection.planned_count,
     )
 
-    course_map = CourseMap.model_validate(coerce_json_dict(job.course_map_json) or {})
     reels = [
         GeneratedReel.model_validate(raw)
         for raw in coerce_json_list(job.completed_reels_json)

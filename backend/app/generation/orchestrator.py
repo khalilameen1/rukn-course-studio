@@ -97,7 +97,19 @@ from app.generation.prompt_compiler import (
     select_packed_rules_for_stage,
     select_rules_for_stage,
 )
-from app.generation.run_snapshot import build_run_snapshot
+from app.generation.quality.context_snapshot import (
+    SnapshotMismatchError,
+    active_prompt_versions,
+    assert_snapshot_compatible,
+    build_active_rule_pack,
+    build_config_inputs,
+    build_generation_context_snapshot,
+    fingerprint_value,
+    snapshot_with_config_overrides,
+    source_ledger_from_fingerprints,
+)
+from app.generation.domain_adapters import build_course_quality_contract
+from app.generation.quality.coverage_matrix import evaluate_coverage_matrix
 from app.generation.course_map_quality import (
     PROGRESS_MAP_CRITIC,
     PROGRESS_MAP_FIRST_DRAFT,
@@ -130,6 +142,8 @@ from app.generation.integrated_editorial_review import (
 )
 from app.generation.map_compression import enforce_map_hard_limits
 from app.generation.phrase_ledger import PhraseLedger
+from app.generation.presets import resolve_generation_settings
+from app.version import get_app_commit
 from app.generation.voice_profile import (
     VoiceProfile,
     build_voice_profile_from_calibration_texts,
@@ -426,6 +440,11 @@ def run_generation(
         if job is None or job.course_id != course_id:
             raise ValueError(
                 f"Generation job {existing_job_id} not found for course {course_id}"
+            )
+        if job.run_snapshot_json:
+            assert_snapshot_compatible(
+                job.run_snapshot_json,
+                action="resume generation",
             )
         job = generation_jobs.update(
             session,
@@ -745,14 +764,6 @@ def run_generation(
         # app/generation/run_snapshot.py for exactly what's stored (hashes
         # only, never raw admin-knowledge/source text) and why this lives
         # on GenerationJob rather than Course.
-        run_snapshot = build_run_snapshot(
-            rules_context=rules_context,
-            generation_preset=preset_value,
-            source_ids_used=[u.course_source.id for u in usable_sources],
-            generation_quality_mode=quality_mode.value,
-            web_research_mode=research_mode.value,
-        )
-        flush(run_snapshot_json=run_snapshot)
         flush(
             current_stage="building_map",
             progress_percent=5,
@@ -865,6 +876,76 @@ def run_generation(
                     "Retry; try Preview if Premium keeps failing."
                 ),
             )
+
+        # Freeze exactly one context snapshot after thesis/map approval and
+        # before the first lesson write. Later stages never mutate this value.
+        thesis = course_map.thesis
+        if thesis is None:
+            raise UnusableOutputError("Course Thesis missing before snapshot freeze")
+        quality_contract = build_course_quality_contract(
+            brief,
+            course_domain=getattr(course, "course_domain", None),
+            course_type=getattr(course, "course_type", None) or "practical_skill",
+            address_form=thesis.address_form,
+        )
+        coverage_report = evaluate_coverage_matrix(
+            course_map,
+            thesis=thesis,
+            contract=quality_contract,
+        )
+        source_fingerprints = {
+            str(item.course_source.id): fingerprint_value(
+                item.course_source.extracted_text or ""
+            )
+            for item in usable_sources
+        }
+        research_identity = {
+            "upload_memory": coerce_json_dict(job.source_memory_json),
+            "web_memory": coerce_json_dict(job.web_source_memory_json),
+            "evidence_ledger": coerce_json_dict(job.evidence_ledger_json),
+        }
+        provider_name = (settings.ai_provider or "fake").strip().lower()
+        model_name = "fake" if provider_name == "fake" else (settings.ai_model_name or "")
+        run_snapshot_model = build_generation_context_snapshot(
+            course_id=course_id,
+            brief=brief,
+            contract=quality_contract,
+            thesis=thesis,
+            course_map=course_map,
+            source_ids=[item.course_source.id for item in usable_sources],
+            source_fingerprints=source_fingerprints,
+            source_metadata={
+                str(item.course_source.id): {
+                    "category": item.course_source.source_category.value,
+                    "priority": item.course_source.priority.value,
+                    "include_in_generation": item.course_source.include_in_generation,
+                }
+                for item in usable_sources
+            },
+            research_blob=research_identity,
+            admin_rules=rules_context,
+            provider_name=provider_name,
+            model_name=model_name,
+            quality_mode=quality_mode.value,
+            web_research_mode=research_mode.value,
+            instructor_profile=course_persona.model_dump(mode="json"),
+            coverage_matrix=coverage_report.model_dump(mode="json"),
+            benchmark_matrix={"map_review": map_meta},
+            claim_ledger=coerce_json_dict(job.evidence_ledger_json),
+            generation_settings={
+                "generation_preset": preset_value,
+                "structure_mode": brief.structure_mode.value,
+                "explanation_level": brief.explanation_level.value,
+            },
+        )
+        if job.run_snapshot_json:
+            assert_snapshot_compatible(
+                job.run_snapshot_json,
+                current_config_inputs=run_snapshot_model.CONFIG_INPUTS,
+                action="resume lesson generation",
+            )
+        else:
+            flush(run_snapshot_json=run_snapshot_model.model_dump(mode="json"))
         from app.generation.research_synthesis import format_architecture_summary
 
         architecture = format_architecture_summary(
@@ -1323,6 +1404,88 @@ def run_generation(
         if not export_report.ok:
             assert_export_allowed(export_report)
 
+        # Export is a hard identity boundary. Recompute only the compact
+        # output-affecting inputs; never rebuild or mutate the frozen snapshot.
+        frozen_snapshot = assert_snapshot_compatible(
+            job.run_snapshot_json,
+            action="export course",
+        )
+        session.refresh(course)
+        current_brief = _build_course_brief(course)
+        current_contract = build_course_quality_contract(
+            current_brief,
+            course_domain=getattr(course, "course_domain", None),
+            course_type=getattr(course, "course_type", None) or "practical_skill",
+            address_form=thesis.address_form,
+        )
+        current_sources = [
+            source
+            for source in course_sources.list(session, course_id=course_id)
+            if source.include_in_generation and source.status in USABLE_SOURCE_STATUSES
+        ]
+        current_source_ledger = source_ledger_from_fingerprints(
+            [source.id for source in current_sources],
+            {
+                str(source.id): fingerprint_value(source.extracted_text or "")
+                for source in current_sources
+            },
+            {
+                str(source.id): {
+                    "category": source.source_category.value,
+                    "priority": source.priority.value,
+                    "include_in_generation": source.include_in_generation,
+                }
+                for source in current_sources
+            },
+        )
+        current_generation_settings = dict(
+            frozen_snapshot.CONFIG_INPUTS.get("GENERATION_SETTINGS") or {}
+        )
+        current_generation_settings.update(
+            {
+                "generation_preset": current_brief.generation_preset.value,
+                "resolved_generation_settings": resolve_generation_settings(
+                    current_brief.generation_preset
+                ),
+                "structure_mode": current_brief.structure_mode.value,
+                "explanation_level": current_brief.explanation_level.value,
+                "web_research_mode": research_mode.value,
+                "prompt_versions": active_prompt_versions(),
+                "app_commit": get_app_commit(),
+            }
+        )
+        current_research_identity = {
+            "upload_memory": coerce_json_dict(job.source_memory_json),
+            "web_memory": coerce_json_dict(job.web_source_memory_json),
+            "evidence_ledger": coerce_json_dict(job.evidence_ledger_json),
+        }
+        current_config_inputs = snapshot_with_config_overrides(
+            frozen_snapshot,
+            STANDARD_PACKAGE=build_active_rule_pack(),
+            BRIEF=current_brief.model_dump(mode="json"),
+            COURSE_THESIS=thesis.model_dump(mode="json"),
+            SELECTED_SOURCES=current_source_ledger,
+            RESEARCH_RESULT_SHA256=fingerprint_value(current_research_identity),
+            MARKET=current_brief.target_market.value,
+            COURSE_TYPE=current_contract.pedagogy.course_type,
+            LANGUAGE_PROFILE=current_contract.language.model_dump(mode="json"),
+            ADDRESS_FORM=thesis.address_form.value,
+            QUALITY_MODE=quality_mode.value,
+            PROVIDER=(settings.ai_provider or "fake").strip().lower(),
+            MODEL=(
+                "fake"
+                if (settings.ai_provider or "fake").strip().lower() == "fake"
+                else (settings.ai_model_name or "")
+            ),
+            GENERATION_SETTINGS=current_generation_settings,
+            APPROVED_MAP=coerce_json_dict(job.course_map_json),
+        )
+        assert_snapshot_compatible(
+            frozen_snapshot,
+            current_config_inputs=current_config_inputs,
+            action="export course",
+        )
+
         # --- Step 14: save the final internal course JSON ---------------
         json_path = _save_internal_course_json(course_id, job.id, final_course)
         logs.append({"step": "save_internal_json", "path": str(json_path)})
@@ -1548,8 +1711,15 @@ def run_generation(
 
         partial_docx_path: str | None = None
         partial_score_report: OutputScoreReport | None = None
-        if has_saved_work:
+        if has_saved_work and not isinstance(exc, SnapshotMismatchError):
             try:
+                from app.services.finalize_saved_job import assert_job_snapshot_current
+
+                assert_job_snapshot_current(
+                    session,
+                    job,
+                    action="export partial course",
+                )
                 partial_course = build_partial_course_from_job(
                     job.course_map_json, job.completed_reels_json
                 )
@@ -1598,7 +1768,11 @@ def run_generation(
             inspect_saved_lessons,
         )
 
-        if inspect_saved_lessons(job).ok and not job.output_docx_path:
+        if (
+            not isinstance(exc, SnapshotMismatchError)
+            and inspect_saved_lessons(job).ok
+            and not job.output_docx_path
+        ):
             recovered = finalize_job_from_saved_lessons(session, job, force=True)
             if recovered is not None and recovered.status == JobStatus.COMPLETED:
                 return recovered

@@ -6,8 +6,6 @@ project generation, and broad course-wide web research.
 
 from __future__ import annotations
 
-import hashlib
-import json
 from dataclasses import dataclass
 from typing import Any
 
@@ -16,19 +14,25 @@ from sqlmodel import Session
 from app.ai.factory import get_ai_provider
 from app.ai.provider import AIProvider
 from app.crud import (
-    admin_knowledge_items,
     course_sources,
     course_versions,
     courses,
     generation_jobs,
 )
 from app.generation.contracts.spoken_final_master import ensure_spoken_beats
+from app.generation.contracts.course_thesis import build_course_thesis_from_brief
 from app.generation.duration_policy import (
     count_spoken_words,
     estimate_spoken_minutes,
     word_range_for,
 )
 from app.generation.phrase_ledger import PhraseLedger
+from app.generation.quality.context_snapshot import (
+    assert_snapshot_compatible,
+    build_generation_context_snapshot,
+    fingerprint_value,
+)
+from app.generation.quality.coverage_matrix import evaluate_coverage_matrix
 from app.generation.voice_profile import build_voice_profile_from_calibration_texts
 from app.models.enums import (
     AddressForm,
@@ -38,7 +42,6 @@ from app.models.enums import (
     LessonDeliveryMode,
 )
 from app.models.generation_job import GenerationJob
-from app.prompts.prompt_registry import PipelineStage
 from app.schemas.generation import (
     CourseMap,
     FinalCourse,
@@ -56,27 +59,6 @@ from app.services.docx_export import export_final_course_to_docx, next_version_n
 class WriterTestTopic:
     title: str
     purpose: str = ""
-
-
-def settings_fingerprint(
-    *,
-    model: str,
-    quality_mode: str,
-    prompt_version: str,
-    voice_profile_version: str,
-    source_ids: list[int],
-    knowledge_version: str,
-) -> str:
-    payload = {
-        "model": model,
-        "quality_mode": quality_mode,
-        "prompt_version": prompt_version,
-        "voice_profile_version": voice_profile_version,
-        "source_ids": sorted(source_ids),
-        "knowledge_version": knowledge_version,
-    }
-    raw = json.dumps(payload, sort_keys=True, ensure_ascii=False)
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
 
 
 def _topic_to_reel_plan(topic: WriterTestTopic, index: int, *, linked: bool) -> ReelPlan:
@@ -125,9 +107,12 @@ def run_writer_test_3_reels(
     if idempotency_key and existing_job_id is None:
         for job in generation_jobs.list(session, course_id=course_id):
             snap = job.run_snapshot_json or {}
-            if snap.get("idempotency_key") != idempotency_key:
+            generation_settings = (
+                (snap.get("CONFIG_INPUTS") or {}).get("GENERATION_SETTINGS") or {}
+            )
+            if generation_settings.get("idempotency_key") != idempotency_key:
                 continue
-            if snap.get("job_kind") != GenerationJobKind.WRITER_TEST_3_REELS.value:
+            if generation_settings.get("job_kind") != GenerationJobKind.WRITER_TEST_3_REELS.value:
                 continue
             if job.status in {JobStatus.COMPLETED, JobStatus.PARTIAL, JobStatus.RUNNING}:
                 return job
@@ -137,35 +122,23 @@ def run_writer_test_3_reels(
         course, "generation_quality_mode", GenerationQualityMode.PREMIUM
     )
 
-    rules_context = {
-        item.key: item.content_text or ""
-        for item in admin_knowledge_items.list(session, is_active=True)
-    }
-    knowledge_version = hashlib.sha256(
-        json.dumps(sorted(rules_context.keys())).encode()
-    ).hexdigest()[:12]
+    from app.generation.orchestrator import _load_active_rules
 
+    rules_context = _load_active_rules(session)
     sources = [
         s
         for s in course_sources.list(session, course_id=course_id)
         if (s.extracted_text or "").strip()
+        and s.include_in_generation
+        and s.status in {"ready", "poor_extraction"}
     ]
     flow_texts = [
         s.extracted_text or ""
         for s in sources
-        if str(getattr(s, "category", "")) == "flow_reference"
+        if str(getattr(s.source_category, "value", s.source_category)) == "flow_reference"
     ]
     voice_profile = build_voice_profile_from_calibration_texts(flow_texts)
     phrase_ledger = PhraseLedger()
-
-    fingerprint = settings_fingerprint(
-        model=getattr(provider, "model", None) or "fake",
-        quality_mode=quality_mode.value if hasattr(quality_mode, "value") else str(quality_mode),
-        prompt_version=PipelineStage.WRITE_SINGLE_REEL.value,
-        voice_profile_version=voice_profile.version,
-        source_ids=[s.id for s in sources if s.id is not None],
-        knowledge_version=knowledge_version,
-    )
 
     prior_results: dict[str, dict] = {}
     if existing_job_id is not None:
@@ -187,14 +160,6 @@ def run_writer_test_3_reels(
             current_stage="generating",
             progress_percent=5,
             generation_quality_mode=quality_mode,
-            run_snapshot_json={
-                "job_kind": GenerationJobKind.WRITER_TEST_3_REELS.value,
-                "idempotency_key": idempotency_key,
-                "settings_fingerprint": fingerprint,
-                "series_linked": series_linked,
-                "series_context": series_context,
-                "topics": [{"title": t.title, "purpose": t.purpose} for t in topics],
-            },
         )
 
     from app.generation.domain_adapters import build_course_quality_contract
@@ -210,6 +175,13 @@ def run_writer_test_3_reels(
         brief,
         course_domain=getattr(course, "course_domain", None),
         course_type=getattr(course, "course_type", None),
+    )
+    thesis = build_course_thesis_from_brief(
+        brief,
+        course_type=getattr(course, "course_type", None) or "practical_skill",
+        address_form=contract.language.address_form,
+        hard_max_lessons=contract.delivery.hard_max_lessons,
+        hard_max_minutes=contract.delivery.hard_max_minutes,
     )
     usable = _load_usable_sources(session, course_id)
     source_excerpts = _map_source_excerpts(usable)
@@ -242,8 +214,66 @@ def run_writer_test_3_reels(
         course_title=course.title,
         main_thread=series_context or "writer-test",
         modules=[module],
-        thesis=None,
+        thesis=thesis,
     )
+
+    coverage = evaluate_coverage_matrix(course_map, thesis=thesis, contract=contract)
+    provider_name = "fake" if provider.__class__.__name__ == "FakeProvider" else provider.__class__.__name__
+    model_name = getattr(provider, "model", None) or "fake"
+    run_snapshot_model = build_generation_context_snapshot(
+        course_id=course_id,
+        brief=brief,
+        contract=contract,
+        thesis=thesis,
+        course_map=course_map,
+        source_ids=[source.id for source in sources if source.id is not None],
+        source_fingerprints={
+            str(source.id): fingerprint_value(source.extracted_text or "")
+            for source in sources
+            if source.id is not None
+        },
+        source_metadata={
+            str(source.id): {
+                "category": source.source_category.value,
+                "priority": source.priority.value,
+                "include_in_generation": source.include_in_generation,
+            }
+            for source in sources
+            if source.id is not None
+        },
+        research_blob={},
+        admin_rules=rules_context,
+        provider_name=provider_name,
+        model_name=model_name,
+        quality_mode=quality_mode.value,
+        web_research_mode="disabled",
+        coverage_matrix=coverage.model_dump(mode="json"),
+        generation_settings={
+            "generation_preset": brief.generation_preset.value,
+            "structure_mode": brief.structure_mode.value,
+            "explanation_level": brief.explanation_level.value,
+            "job_kind": GenerationJobKind.WRITER_TEST_3_REELS.value,
+            "idempotency_key": idempotency_key,
+            "series_linked": series_linked,
+            "series_context": series_context,
+            "topics": [{"title": topic.title, "purpose": topic.purpose} for topic in topics],
+            "voice_profile_version": voice_profile.version,
+        },
+    )
+    if job.run_snapshot_json:
+        assert_snapshot_compatible(
+            job.run_snapshot_json,
+            current_config_inputs=run_snapshot_model.CONFIG_INPUTS,
+            action="resume writer test",
+        )
+    else:
+        generation_jobs.update(
+            session,
+            job.id,
+            run_snapshot_json=run_snapshot_model.model_dump(mode="json"),
+            course_map_json=course_map.model_dump(mode="json"),
+        )
+        session.refresh(job)
 
     results: list[GeneratedReel] = []
     usage_total_in = 0
@@ -368,14 +398,13 @@ def run_writer_test_3_reels(
         "needs_review_count": sum(
             1 for r in reel_results if (r.get("quality_status") or "") != "pass"
         ),
-        "run_snapshot_json": {
-            **(job.run_snapshot_json or {}),
-            "settings_fingerprint": fingerprint,
-            "writer_test_results": reel_results,
-            "job_kind": GenerationJobKind.WRITER_TEST_3_REELS.value,
-        },
     }
     if pass_reels:
+        assert_snapshot_compatible(
+            job.run_snapshot_json,
+            current_config_inputs=run_snapshot_model.CONFIG_INPUTS,
+            action="export writer test",
+        )
         docx_path = export_final_course_to_docx(final_course, course_id, version_number)
         if any_fail:
             update_fields["partial_docx_path"] = str(docx_path)

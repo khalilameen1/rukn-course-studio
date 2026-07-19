@@ -97,5 +97,7 @@ def test_scientific_reference_excerpt_is_extracted_not_copied_verbatim(session):
     assert len(reel_sci[0].text) < len(SCIENTIFIC_SOURCE_TEXT)
 
     # The run snapshot (§2/§3) must record this source as actually used.
-    used_source_ids = job.run_snapshot_json["source_ids_used"]
+    used_source_ids = [
+        row["source_id"] for row in job.run_snapshot_json["SOURCE_LEDGER"]
+    ]
     assert len(used_source_ids) == 1

@@ -346,7 +346,17 @@ def finalize_saved_generation(
             ),
         )
 
-    updated = finalize_job_from_saved_lessons(session, job, force=True)
+    try:
+        updated = finalize_job_from_saved_lessons(session, job, force=True)
+    except Exception as exc:
+        from app.generation.quality.context_snapshot import SnapshotMismatchError
+
+        if isinstance(exc, SnapshotMismatchError):
+            raise HTTPException(
+                status_code=409,
+                detail="Run configuration changed; saved lessons cannot be resumed or exported.",
+            ) from exc
+        raise
     if updated is None or updated.status != JobStatus.COMPLETED:
         raise HTTPException(
             status_code=500,
@@ -436,7 +446,10 @@ def download_latest_version(course_id: int, session: Session = Depends(get_sessi
 
 def _writer_test_job_read(job) -> WriterTestJobRead:
     snap = job.run_snapshot_json or {}
-    raw_reels = snap.get("writer_test_results") or job.completed_reels_json or []
+    generation_settings = (
+        (snap.get("CONFIG_INPUTS") or {}).get("GENERATION_SETTINGS") or {}
+    )
+    raw_reels = job.completed_reels_json or []
     public: list[WriterTestReelPublic] = []
     for raw in raw_reels:
         if not isinstance(raw, dict):
@@ -473,9 +486,9 @@ def _writer_test_job_read(job) -> WriterTestJobRead:
         )
     return WriterTestJobRead(
         job=GenerationJobRead.model_validate(job),
-        job_kind=str(snap.get("job_kind") or "writer_test_3_reels"),
-        settings_fingerprint=snap.get("settings_fingerprint"),
-        series_linked=bool(snap.get("series_linked")),
+        job_kind=str(generation_settings.get("job_kind") or "writer_test_3_reels"),
+        config_fingerprint=snap.get("CONFIG_FINGERPRINT"),
+        series_linked=bool(generation_settings.get("series_linked")),
         reels=public,
     )
 
@@ -523,7 +536,10 @@ def get_writer_test_job(
     if job is None or job.course_id != course_id:
         raise HTTPException(status_code=404, detail="Writer test job not found")
     snap = job.run_snapshot_json or {}
-    if snap.get("job_kind") != "writer_test_3_reels":
+    generation_settings = (
+        (snap.get("CONFIG_INPUTS") or {}).get("GENERATION_SETTINGS") or {}
+    )
+    if generation_settings.get("job_kind") != "writer_test_3_reels":
         raise HTTPException(status_code=404, detail="Not a writer-test job")
     return _writer_test_job_read(job)
 
