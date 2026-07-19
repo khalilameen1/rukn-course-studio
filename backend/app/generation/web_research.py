@@ -154,6 +154,35 @@ class WebSourceMemory(BaseModel):
     needs_logged: list[dict] = Field(default_factory=list)
 
 
+def research_identity_payload(
+    upload_memory: SourceMemory | dict | None,
+    web_memory: WebSourceMemory | dict | None,
+) -> dict:
+    """Return the stable research material that can affect course output.
+
+    Runtime telemetry such as cache hits, repeated ``needs_logged`` rows, and
+    whether a fact was fetched or reused must not invalidate an otherwise
+    identical approved map. The actual compact source/web material and stored
+    research answers remain part of the fingerprint.
+    """
+    upload = (
+        upload_memory
+        if isinstance(upload_memory, SourceMemory)
+        else SourceMemory.model_validate(upload_memory or {})
+    )
+    web = (
+        web_memory
+        if isinstance(web_memory, WebSourceMemory)
+        else WebSourceMemory.model_validate(web_memory or {})
+    )
+    return {
+        "upload_items": [item.model_dump(mode="json") for item in upload.items],
+        "web_items": [item.model_dump(mode="json") for item in web.items],
+        "gaps_researched": list(dict.fromkeys(web.gaps_researched)),
+        "research_entries": list(web.research_entries),
+    }
+
+
 @dataclass
 class ResearchGap:
     topic: str

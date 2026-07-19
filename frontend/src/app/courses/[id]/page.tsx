@@ -387,6 +387,9 @@ export default function CourseDetailPage() {
               courseId={courseId}
               onVersionCreated={loadAll}
               onJobUpdate={setCurrentJob}
+              webResearchMode={
+                course.web_research_mode ?? "autonomous_gap_fill"
+              }
             />
             {currentJob?.provenance_summary ? (
               <details className="rounded-md border border-border bg-surface-muted/30 px-3 py-2 text-xs text-muted">

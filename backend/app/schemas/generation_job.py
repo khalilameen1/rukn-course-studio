@@ -15,6 +15,7 @@ from pydantic import (
 from app.generation.public_progress import sanitize_progress_message
 from app.models.enums import GenerationQualityMode, JobStatus, WebResearchMode
 from app.schemas.validators import (
+    AddressFormLoose,
     GenerationQualityModeLoose,
     JobStatusLoose,
     WebResearchModeLoose,
@@ -56,10 +57,6 @@ class GenerateCourseRequest(BaseModel):
     # When true, client confirmed the map preview and hard-limit warnings.
     map_preview_confirmed: bool = False
     human_override_hard_limits: bool = False
-    address_form: str = "masculine"
-    presenter_language: str = "ar"
-    presenter_dialect: str = "egyptian"
-    delivery_pattern: str = "teleprompter_standard"
     approved_snapshot_fingerprint: str | None = None
 
 
@@ -83,10 +80,10 @@ class WriterTest3ReelsRequest(BaseModel):
 class MapPreviewRequest(BaseModel):
     generation_quality_mode: GenerationQualityModeLoose = GenerationQualityMode.PREMIUM
     human_override_hard_limits: bool = False
-    web_research_mode: WebResearchModeLoose = WebResearchMode.DISABLED
-    address_form: str = "masculine"
-    presenter_language: str = "ar"
-    presenter_dialect: str = "egyptian"
+    web_research_mode: WebResearchModeLoose = WebResearchMode.AUTONOMOUS_GAP_FILL
+    address_form: AddressFormLoose | None = None
+    presenter_language: str | None = None
+    presenter_dialect: str | None = None
     delivery_pattern: str = "teleprompter_standard"
 
 class GenerationJobRead(BaseModel):

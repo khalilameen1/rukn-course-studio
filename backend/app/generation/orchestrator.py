@@ -102,7 +102,6 @@ from app.generation.quality.context_snapshot import (
     active_prompt_versions,
     assert_snapshot_compatible,
     build_active_rule_pack,
-    build_config_inputs,
     build_generation_context_snapshot,
     fingerprint_value,
     snapshot_with_config_overrides,
@@ -203,6 +202,7 @@ from app.generation.web_research import (
     PROGRESS_READING_UPLOADS,
     SourceMemoryItem,
     mark_research_failure,
+    research_identity_payload,
     run_autonomous_gap_fill,
     strip_research_leaks_from_script,
 )
@@ -557,6 +557,7 @@ def run_generation(
             memory_items.append(
                 SourceMemoryItem(
                     title=(mem or {}).get("title")
+                    or u.course_source.title
                     or u.course_source.original_filename
                     or f"source-{u.course_source.id}",
                     kind="upload",
@@ -834,22 +835,65 @@ def run_generation(
                     "conflicts": list(tool_store.authority_conflicts)[:20],
                 }
             )
-        course_map, map_meta = _build_and_review_course_map(
-            provider=provider,
-            brief=brief,
-            sources=map_sources,
-            rules_context=map_rules,
-            course_creator_persona=course_persona_compact,
-            quality_mode=quality_mode,
-            on_progress=lambda msg: flush(
-                current_stage="building_map",
-                last_progress_message=msg,
-            ),
-            session=session,
-            job=job,
-            preset=preset_value,
-            official_tool_store=tool_store,
-        )
+        approved_snapshot = None
+        approved_map_data = None
+        if job.run_snapshot_json:
+            approved_snapshot = assert_snapshot_compatible(
+                job.run_snapshot_json,
+                action="load approved course map",
+            )
+            approved_map_data = approved_snapshot.approved_course_map
+        if approved_map_data:
+            course_map = CourseMap.model_validate(approved_map_data)
+            if course_map.thesis is None:
+                course_map = course_map.model_copy(
+                    update={
+                        "thesis": CourseThesis.model_validate(
+                            approved_snapshot.COURSE_THESIS
+                        )
+                    }
+                )
+            compressed_map, compression = enforce_map_hard_limits(
+                course_map,
+                thesis=course_map.thesis,
+            )
+            if not compression.ok:
+                raise UnusableOutputError(
+                    "; ".join(compression.errors)
+                    or "Approved map exceeds hard limits"
+                )
+            # Compression must be a no-op here. A changed map would violate
+            # the exact preview the user approved.
+            if compressed_map.model_dump(mode="json") != course_map.model_dump(
+                mode="json"
+            ):
+                raise SnapshotMismatchError(
+                    "Approved map would change during compression; build a new preview"
+                )
+            map_meta = {
+                "source": "approved_snapshot",
+                "map_builds": 0,
+                "compressed": False,
+            }
+            progress_message = "Using approved course map"
+            flush(last_progress_message=progress_message)
+        else:
+            course_map, map_meta = _build_and_review_course_map(
+                provider=provider,
+                brief=brief,
+                sources=map_sources,
+                rules_context=map_rules,
+                course_creator_persona=course_persona_compact,
+                quality_mode=quality_mode,
+                on_progress=lambda msg: flush(
+                    current_stage="building_map",
+                    last_progress_message=msg,
+                ),
+                session=session,
+                job=job,
+                preset=preset_value,
+                official_tool_store=tool_store,
+            )
         tool_store.tool_dependencies = annotate_dependencies_from_map(
             tool_store.tool_dependencies, course_map
         )
@@ -861,7 +905,11 @@ def run_generation(
         logs.append(
             {
                 "step": "build_map",
-                "source": "manual" if brief.manual_map_text else "generated",
+                "source": (
+                    "approved_snapshot"
+                    if approved_map_data
+                    else ("manual" if brief.manual_map_text else "generated")
+                ),
                 "modules": len(course_map.modules),
                 "reels": sum(len(m.reels) for m in course_map.modules),
                 **map_meta,
@@ -883,11 +931,25 @@ def run_generation(
         thesis = course_map.thesis
         if thesis is None:
             raise UnusableOutputError("Course Thesis missing before snapshot freeze")
+        approved_generation_settings = (
+            dict(approved_snapshot.CONFIG_INPUTS.get("GENERATION_SETTINGS") or {})
+            if approved_snapshot is not None
+            else {}
+        )
+        delivery_pattern = str(
+            approved_generation_settings.get("delivery_pattern")
+            or "teleprompter_standard"
+        )
+        human_override_hard_limits = bool(
+            approved_generation_settings.get("human_override_hard_limits", False)
+        )
         quality_contract = build_course_quality_contract(
             brief,
             course_domain=getattr(course, "course_domain", None),
             course_type=getattr(course, "course_type", None) or "practical_skill",
             address_form=thesis.address_form,
+            delivery_pattern=delivery_pattern,
+            human_override_hard_limits=human_override_hard_limits,
         )
         coverage_report = evaluate_coverage_matrix(
             course_map,
@@ -900,11 +962,10 @@ def run_generation(
             )
             for item in usable_sources
         }
-        research_identity = {
-            "upload_memory": coerce_json_dict(job.source_memory_json),
-            "web_memory": coerce_json_dict(job.web_source_memory_json),
-            "evidence_ledger": coerce_json_dict(job.evidence_ledger_json),
-        }
+        research_identity = research_identity_payload(
+            coerce_json_dict(job.source_memory_json),
+            coerce_json_dict(job.web_source_memory_json),
+        )
         provider_name = (settings.ai_provider or "fake").strip().lower()
         model_name = "fake" if provider_name == "fake" else (settings.ai_model_name or "")
         run_snapshot_model = build_generation_context_snapshot(
@@ -929,6 +990,8 @@ def run_generation(
             model_name=model_name,
             quality_mode=quality_mode.value,
             web_research_mode=research_mode.value,
+            map_preview_confirmed=approved_snapshot is not None,
+            human_override_hard_limits=human_override_hard_limits,
             instructor_profile=course_persona.model_dump(mode="json"),
             coverage_matrix=coverage_report.model_dump(mode="json"),
             benchmark_matrix={"map_review": map_meta},
@@ -937,6 +1000,7 @@ def run_generation(
                 "generation_preset": preset_value,
                 "structure_mode": brief.structure_mode.value,
                 "explanation_level": brief.explanation_level.value,
+                "delivery_pattern": delivery_pattern,
             },
         )
         if job.run_snapshot_json:
@@ -1413,11 +1477,23 @@ def run_generation(
         )
         session.refresh(course)
         current_brief = _build_course_brief(course)
+        current_generation_settings = dict(
+            frozen_snapshot.CONFIG_INPUTS.get("GENERATION_SETTINGS") or {}
+        )
         current_contract = build_course_quality_contract(
             current_brief,
             course_domain=getattr(course, "course_domain", None),
             course_type=getattr(course, "course_type", None) or "practical_skill",
             address_form=thesis.address_form,
+            delivery_pattern=str(
+                current_generation_settings.get("delivery_pattern")
+                or "teleprompter_standard"
+            ),
+            human_override_hard_limits=bool(
+                current_generation_settings.get(
+                    "human_override_hard_limits", False
+                )
+            ),
         )
         current_sources = [
             source
@@ -1439,9 +1515,6 @@ def run_generation(
                 for source in current_sources
             },
         )
-        current_generation_settings = dict(
-            frozen_snapshot.CONFIG_INPUTS.get("GENERATION_SETTINGS") or {}
-        )
         current_generation_settings.update(
             {
                 "generation_preset": current_brief.generation_preset.value,
@@ -1455,11 +1528,10 @@ def run_generation(
                 "app_commit": get_app_commit(),
             }
         )
-        current_research_identity = {
-            "upload_memory": coerce_json_dict(job.source_memory_json),
-            "web_memory": coerce_json_dict(job.web_source_memory_json),
-            "evidence_ledger": coerce_json_dict(job.evidence_ledger_json),
-        }
+        current_research_identity = research_identity_payload(
+            coerce_json_dict(job.source_memory_json),
+            coerce_json_dict(job.web_source_memory_json),
+        )
         current_config_inputs = snapshot_with_config_overrides(
             frozen_snapshot,
             STANDARD_PACKAGE=build_active_rule_pack(),
@@ -2545,6 +2617,15 @@ def _build_and_review_course_map(
                         brief=f"طبّق مهارات موديول {mod.title} في تسليم قصير",
                         deliverable_shape="ملف أو لقطة شاشة",
                         pass_criteria=["يستخدم مهارات الموديول"],
+                        skills_tested=[
+                            reel.new_skill_or_decision
+                            or reel.distinct_teaching_outcome
+                            for reel in reels
+                            if (
+                                reel.new_skill_or_decision
+                                or reel.distinct_teaching_outcome
+                            )
+                        ],
                     )
                 }
             )
@@ -2559,6 +2640,16 @@ def _build_and_review_course_map(
                 brief=thesis.final_project or thesis.practical_deliverable,
                 deliverable_shape="مشروع نهائي",
                 pass_criteria=["يغطي نتيجة الكورس"],
+                skills_tested=[
+                    reel.new_skill_or_decision
+                    or reel.distinct_teaching_outcome
+                    for module in modules
+                    for reel in module.reels
+                    if (
+                        reel.new_skill_or_decision
+                        or reel.distinct_teaching_outcome
+                    )
+                ],
             ),
         }
     )

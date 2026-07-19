@@ -332,11 +332,21 @@ def assert_job_snapshot_current(
     from app.generation.orchestrator import USABLE_SOURCE_STATUSES, _build_course_brief
 
     brief = _build_course_brief(course)
+    generation_settings = dict(
+        frozen_snapshot.CONFIG_INPUTS.get("GENERATION_SETTINGS") or {}
+    )
     contract = build_course_quality_contract(
         brief,
         course_domain=getattr(course, "course_domain", None),
         course_type=getattr(course, "course_type", None) or "practical_skill",
         address_form=thesis.address_form,
+        delivery_pattern=str(
+            generation_settings.get("delivery_pattern")
+            or "teleprompter_standard"
+        ),
+        human_override_hard_limits=bool(
+            generation_settings.get("human_override_hard_limits", False)
+        ),
     )
     selected_sources = [
         source
@@ -358,9 +368,6 @@ def assert_job_snapshot_current(
             for source in selected_sources
         },
     )
-    generation_settings = dict(
-        frozen_snapshot.CONFIG_INPUTS.get("GENERATION_SETTINGS") or {}
-    )
     generation_settings.update(
         {
             "generation_preset": brief.generation_preset.value,
@@ -374,11 +381,12 @@ def assert_job_snapshot_current(
             "app_commit": get_app_commit(),
         }
     )
-    research_identity = {
-        "upload_memory": coerce_json_dict(job.source_memory_json) or {},
-        "web_memory": coerce_json_dict(job.web_source_memory_json) or {},
-        "evidence_ledger": coerce_json_dict(job.evidence_ledger_json) or {},
-    }
+    from app.generation.web_research import research_identity_payload
+
+    research_identity = research_identity_payload(
+        coerce_json_dict(job.source_memory_json),
+        coerce_json_dict(job.web_source_memory_json),
+    )
     provider_name = (settings.ai_provider or "fake").strip().lower()
     current_inputs = snapshot_with_config_overrides(
         frozen_snapshot,

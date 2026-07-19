@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from app.ai.provider import CourseBrief
@@ -12,13 +13,53 @@ from app.schemas.generation import CourseThesis
 PRACTICAL_DEFAULTS = {
     "target_theory_ratio": 0.25,
     "target_practice_ratio": 0.60,
-    "target_lessons_min": 35,
-    "target_lessons_max": 55,
     "hard_max_lessons": 60,
-    "target_minutes_min": 150,
-    "target_minutes_max": 210,
     "hard_max_minutes": 240,
 }
+
+
+def _adaptive_size_targets(
+    brief: CourseBrief,
+    *,
+    scope: list[str],
+    required_tools: list[str],
+    practical: bool,
+) -> tuple[dict[str, int], list[str]]:
+    """Derive course size from distinct capabilities, never a fixed lesson count."""
+    raw_signals = [
+        *scope,
+        brief.required_final_performance,
+        *required_tools,
+        *brief.professional_constraints,
+        *brief.high_stakes_constraints,
+    ]
+    capabilities: list[str] = []
+    seen: set[str] = set()
+    for raw in raw_signals:
+        for part in re.split(r"[\n,،;؛]+|\s+(?:and|ثم|وذلك)\s+", raw or ""):
+            normalized = " ".join(part.split()).strip()
+            key = normalized.casefold()
+            if len(normalized) < 3 or key in seen:
+                continue
+            seen.add(key)
+            capabilities.append(normalized)
+    if not capabilities:
+        capabilities = [brief.outcome or brief.title]
+    count = len(capabilities)
+    multiplier = 3 if practical else 2
+    lesson_min = max(8, min(42, count * multiplier + 6))
+    lesson_max = min(60, lesson_min + max(6, count * 2))
+    minute_min = max(45, lesson_min * (3 if practical else 4))
+    minute_max = min(240, lesson_max * (4 if practical else 5))
+    return (
+        {
+            "target_lessons_min": lesson_min,
+            "target_lessons_max": lesson_max,
+            "target_minutes_min": minute_min,
+            "target_minutes_max": minute_max,
+        },
+        capabilities,
+    )
 
 
 @dataclass
@@ -64,15 +105,25 @@ def build_course_thesis_from_brief(
     defaults = PRACTICAL_DEFAULTS if practical else {
         "target_theory_ratio": 0.45,
         "target_practice_ratio": 0.40,
-        "target_lessons_min": 20,
-        "target_lessons_max": 45,
         "hard_max_lessons": 60,
-        "target_minutes_min": 90,
-        "target_minutes_max": 180,
         "hard_max_minutes": 240,
     }
     resolved_mix = mix_type or (
         CourseMixType.PRACTICAL if practical else CourseMixType.MIXED
+    )
+    resolved_scope = in_scope or [
+        part
+        for part in [(brief.outcome or "").strip(), (brief.title or "").strip()]
+        if part
+    ]
+    resolved_tools = (
+        required_tools if required_tools is not None else list(brief.available_tools)
+    )
+    adaptive, size_capabilities = _adaptive_size_targets(
+        brief,
+        scope=resolved_scope,
+        required_tools=resolved_tools,
+        practical=practical,
     )
     return CourseThesis(
         final_student_outcome=(
@@ -87,8 +138,7 @@ def build_course_thesis_from_brief(
             or brief.outcome
             or ""
         ).strip(),
-        in_scope=in_scope
-        or [p for p in [(brief.outcome or "").strip(), (brief.title or "").strip()] if p],
+        in_scope=resolved_scope,
         out_of_scope=out_of_scope
         or [
             "محتوى تسويقي تحفيزي بلا تطبيق",
@@ -133,13 +183,18 @@ def build_course_thesis_from_brief(
             if target_practice_ratio is not None
             else float(defaults["target_practice_ratio"])
         ),
-        target_minutes_min=target_minutes_min or int(defaults["target_minutes_min"]),
-        target_minutes_max=target_minutes_max or int(defaults["target_minutes_max"]),
+        target_minutes_min=target_minutes_min
+        or adaptive["target_minutes_min"],
+        target_minutes_max=target_minutes_max
+        or adaptive["target_minutes_max"],
         hard_max_minutes=hard_max_minutes or int(defaults["hard_max_minutes"]),
-        target_lessons_min=target_lessons_min or int(defaults["target_lessons_min"]),
-        target_lessons_max=target_lessons_max or int(defaults["target_lessons_max"]),
+        target_lessons_min=target_lessons_min
+        or adaptive["target_lessons_min"],
+        target_lessons_max=target_lessons_max
+        or adaptive["target_lessons_max"],
         hard_max_lessons=hard_max_lessons or int(defaults["hard_max_lessons"]),
-        required_tools=(required_tools if required_tools is not None else list(brief.available_tools)),
+        size_basis_capabilities=size_capabilities,
+        required_tools=resolved_tools,
         final_project=(
             final_project
             or brief.required_final_performance

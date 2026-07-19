@@ -9,6 +9,7 @@ from sqlmodel import Session, SQLModel
 import app.db as db_module
 from app.crud import course_versions, courses, generation_jobs
 from app.generation.domain_adapters import build_course_quality_contract
+from app.generation.web_research import research_identity_payload
 from app.generation.orchestrator import _build_course_brief
 from app.generation.quality.context_snapshot import build_generation_context_snapshot
 from app.models.enums import ExplanationLevel, JobStatus, StructureMode
@@ -123,7 +124,7 @@ def _run_snapshot(course, course_map: dict) -> dict:
         contract=contract,
         thesis=parsed_map.thesis,
         course_map=parsed_map,
-        research_blob={"upload_memory": {}, "web_memory": {}, "evidence_ledger": {}},
+        research_blob=research_identity_payload({}, {}),
         quality_mode="premium",
         web_research_mode="autonomous_gap_fill",
         generation_settings={

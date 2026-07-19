@@ -518,8 +518,6 @@ export const api = {
   },
 
   // Generation — paths must stay aligned with backend/app/routers/generation.py + jobs.py
-  generateCourseMap: (courseId: number) =>
-    apiFetch<Course>(`/courses/${courseId}/generate-map`, { method: "POST" }),
   generateCourse: (
     courseId: number,
     body?: {
@@ -527,10 +525,6 @@ export const api = {
       web_research_mode?: "disabled" | "autonomous_gap_fill";
       map_preview_confirmed?: boolean;
       human_override_hard_limits?: boolean;
-      address_form?: "masculine" | "feminine" | "neutral";
-      presenter_language?: string;
-      presenter_dialect?: string;
-      delivery_pattern?: string;
       approved_snapshot_fingerprint?: string;
     },
   ) =>

@@ -92,6 +92,11 @@ cd backend && RUKN_CREDIT_SAFE_TESTS=1 python -m pytest tests/test_universal_qua
 
 `quality/docx_verify.py` — reopen exported DOCX, compare against approved text, check metadata leaks and protected spans.
 
-## Deprecated
+## Canonical map approval
 
-`POST /courses/{id}/generate-map` — prefer `POST /courses/{id}/map-preview`.
+`POST /courses/{id}/map-preview` is the only course-map generation route.
+It freezes the selected brief, sources, Source/Web Memory, market, Thesis,
+quality settings, compressed map, projects, and Coverage Matrix under one
+configuration fingerprint. Full generation requires explicit confirmation of
+that fingerprint, consumes the frozen map without rebuilding it, and rejects
+any changed input before the worker starts.

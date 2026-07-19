@@ -340,9 +340,12 @@ export default function NewCoursePage() {
       await flushPendingSources(id);
       setMapStatus("Checking course sources…");
       setMapStatus("Building course map…");
-      const updated = await api.generateCourseMap(id);
+      const preview = await api.mapPreview(id, {
+        generation_quality_mode: values.generation_quality_mode,
+        web_research_mode: "autonomous_gap_fill",
+      });
       setMapStatus("Reviewing map…");
-      const map = updated.manual_map_text ?? "";
+      const map = preview.map_text ?? "";
       setValues((v) => ({ ...v, manual_map_text: map }));
       setSavedMapText(map);
       setMapStatus("Map ready to edit — review below before full generation.");

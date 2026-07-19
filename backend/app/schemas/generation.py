@@ -82,6 +82,8 @@ class CourseThesis(BaseModel):
     target_lessons_min: int = 35
     target_lessons_max: int = 55
     hard_max_lessons: int = 60
+    size_basis_capabilities: list[str] = Field(default_factory=list)
+    size_derivation: str = "capability_based"
     required_tools: list[str] = Field(default_factory=list)
     final_project: str = ""
     address_form: AddressForm = AddressForm.MASCULINE

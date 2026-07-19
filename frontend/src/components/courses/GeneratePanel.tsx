@@ -496,10 +496,12 @@ export default function GeneratePanel({
   courseId,
   onVersionCreated,
   onJobUpdate,
+  webResearchMode = "autonomous_gap_fill",
 }: {
   courseId: number;
   onVersionCreated: () => void;
   onJobUpdate?: (job: GenerationJob | null) => void;
+  webResearchMode?: "disabled" | "autonomous_gap_fill";
 }) {
   const [job, setJob] = useState<GenerationJob | null>(null);
   const [starting, setStarting] = useState(false);
@@ -664,6 +666,7 @@ export default function GeneratePanel({
     try {
       const stats = await api.mapPreview(courseId, {
         generation_quality_mode: qualityMode,
+        web_research_mode: webResearchMode,
       });
       setMapPreview(stats);
     } catch (err) {
@@ -743,7 +746,7 @@ export default function GeneratePanel({
       const started = await api.generateCourse(courseId, {
         generation_quality_mode: modeToUse,
         map_preview_confirmed: true,
-        web_research_mode: "disabled",
+        web_research_mode: webResearchMode,
         approved_snapshot_fingerprint: mapPreview.snapshot_fingerprint,
       });
       updateJob(started);

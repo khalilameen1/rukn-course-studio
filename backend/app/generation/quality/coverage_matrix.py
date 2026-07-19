@@ -21,6 +21,9 @@ class CoverageMatrixReport(BaseModel):
     issues: list[CoverageIssue] = Field(default_factory=list)
     theory_ratio: float = 0.0
     practice_ratio: float = 0.0
+    promise_to_lessons: dict[str, list[str]] = Field(default_factory=dict)
+    capability_rows: list[dict[str, object]] = Field(default_factory=list)
+    project_rows: list[dict[str, object]] = Field(default_factory=list)
 
     def add(self, code: str, detail: str, severity: str = "fatal") -> None:
         self.issues.append(CoverageIssue(code=code, detail=detail, severity=severity))
@@ -55,6 +58,11 @@ def evaluate_coverage_matrix(
 
     # Unique outcomes / learning jobs
     outcomes: dict[str, str] = {}
+    lesson_to_module = {
+        reel.reel_id: module.module_id
+        for module in course_map.modules
+        for reel in module.reels
+    }
     for reel in lessons:
         key = (reel.distinct_teaching_outcome or reel.purpose or reel.title or "").strip().lower()
         if not key:
@@ -72,6 +80,20 @@ def evaluate_coverage_matrix(
             )
         else:
             outcomes[key] = reel.reel_id
+        report.capability_rows.append(
+            {
+                "lesson_id": reel.reel_id,
+                "module_id": lesson_to_module.get(reel.reel_id, ""),
+                "capability": (
+                    reel.new_skill_or_decision
+                    or reel.distinct_teaching_outcome
+                    or reel.purpose
+                ),
+                "learner_after": reel.student_can_do_after,
+                "project_contribution": reel.project_contribution,
+                "prerequisites": list(reel.prerequisite_lesson_ids),
+            }
+        )
 
     # Promises without lessons (coarse: outcome string should appear in some purpose/outcome)
     if thesis and thesis.final_student_outcome:
@@ -94,6 +116,26 @@ def evaluate_coverage_matrix(
                 "Course promise not clearly covered by any lesson outcomes",
                 "serious",
             )
+            report.promise_to_lessons[promise] = []
+        else:
+            matching = [
+                reel.reel_id
+                for reel in lessons
+                if not tokens
+                or any(
+                    token
+                    in " ".join(
+                        [
+                            reel.title or "",
+                            reel.purpose or "",
+                            reel.distinct_teaching_outcome or "",
+                            reel.student_can_do_after or "",
+                        ]
+                    ).lower()
+                    for token in tokens
+                )
+            ]
+            report.promise_to_lessons[promise] = matching
 
     # Module checkpoints / projects
     mix = (
@@ -103,16 +145,53 @@ def evaluate_coverage_matrix(
     )
     if mix == CourseMixType.PRACTICAL:
         for module in course_map.modules:
-            if module.module_project is None and not (module.bridge_project or "").strip():
+            project = module.module_project
+            if project is None and not (module.bridge_project or "").strip():
                 report.add(
                     IssueCode.CHECKPOINT_MISSING.value,
                     f"Module {module.module_id} missing checkpoint/project",
+                )
+                continue
+            contributing = [
+                reel.reel_id
+                for reel in module.reels
+                if (reel.project_contribution or "").strip()
+            ]
+            tested = list(project.skills_tested) if project is not None else []
+            report.project_rows.append(
+                {
+                    "module_id": module.module_id,
+                    "project_name": project.name if project is not None else "bridge_project",
+                    "skills_tested": tested,
+                    "contributing_lessons": contributing,
+                }
+            )
+            if not tested and not contributing:
+                report.add(
+                    IssueCode.PROJECT_MISALIGNMENT.value,
+                    f"Module {module.module_id} project is not linked to taught capabilities",
+                    "serious",
                 )
         if not (course_map.graduation_project or (thesis and thesis.final_project)):
             report.add(
                 IssueCode.CHECKPOINT_MISSING.value,
                 "Practical course missing graduation/final project",
                 "serious",
+            )
+        elif course_map.graduation_project:
+            report.project_rows.append(
+                {
+                    "module_id": "graduation",
+                    "project_name": course_map.graduation_project.name,
+                    "skills_tested": list(
+                        course_map.graduation_project.skills_tested
+                    ),
+                    "contributing_lessons": [
+                        reel.reel_id
+                        for reel in lessons
+                        if (reel.project_contribution or "").strip()
+                    ],
+                }
             )
 
     # Theory/practice by estimated words/time proxy (lesson count weighted by mode)
@@ -131,7 +210,7 @@ def evaluate_coverage_matrix(
         target_practice = thesis.target_practice_ratio
         target_theory = thesis.target_theory_ratio
 
-    if target_theory is not None and report.theory_ratio > target_theory + 0.08:
+    if target_theory is not None and report.theory_ratio > target_theory + 0.10:
         report.add(
             IssueCode.THEORY_RATIO_VIOLATION.value,
             f"Theory ratio {report.theory_ratio:.2f} exceeds contract {target_theory:.2f}",

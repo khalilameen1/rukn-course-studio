@@ -37,7 +37,6 @@ def auth_on(monkeypatch):
 
 PROTECTED_GENERATE_ENDPOINTS = [
     ("POST", "/courses/1/generate"),
-    ("POST", "/courses/1/generate-map"),
     ("GET", "/courses/1/ai-usage"),
     ("GET", "/courses/1/download/latest"),
     ("GET", "/ai-usage/summary"),

@@ -337,9 +337,9 @@ export interface MapPreviewStats {
   thesis?: Record<string, unknown>;
   course_map?: Record<string, unknown>;
   quality_contract?: Record<string, unknown>;
-  snapshot?: Record<string, unknown>;
   snapshot_fingerprint?: string;
   adapter_id?: string;
+  map_text?: string;
 }
 
 export interface WriterTestReelPublic {

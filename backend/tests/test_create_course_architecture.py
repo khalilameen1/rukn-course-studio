@@ -4,7 +4,7 @@ import pytest
 from sqlmodel import Session, SQLModel, create_engine
 from sqlmodel.pool import StaticPool
 
-from app.generation.course_map_generate import format_course_map_text
+from app.generation.map_preview import format_course_map_text
 from app.models.enums import SourceCategory
 from app.schemas.generation import CourseMap, ModulePlan, ReelPlan
 

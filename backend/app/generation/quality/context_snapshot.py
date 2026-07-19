@@ -348,7 +348,6 @@ def build_generation_context_snapshot(
         "prompt_versions": dict(prompt_versions or active_prompt_versions()),
         "app_commit": get_app_commit(),
         "web_research_mode": web_research_mode,
-        "map_preview_confirmed": map_preview_confirmed,
         "human_override_hard_limits": human_override_hard_limits,
         **dict(generation_settings or {}),
     }
@@ -392,6 +391,9 @@ def build_generation_context_snapshot(
         "snapshot": "frozen",
         "thesis": "complete" if thesis else "pending",
         "approved_map": "complete" if course_map else "pending",
+        # Human approval is workflow state, not output identity. It must not
+        # change the CONFIG_FINGERPRINT of the map the user approved.
+        "map_preview_confirmed": bool(map_preview_confirmed),
         "lesson_writing": "pending",
         "quality_review": "pending",
         "export": "blocked_until_fingerprint_match",
