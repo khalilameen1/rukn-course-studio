@@ -12,10 +12,7 @@ from app.ai.provider import (
     BuildCourseMapInput,
     FinalReviewInput,
     RebuildFinalCourseInput,
-    ReviewFiveReelsInput,
-    ReviewModuleInput,
     ReviewSingleReelInput,
-    ReviewTwoModulesInput,
     WriteSingleReelInput,
 )
 from app.generation.contracts.spoken_final_master import beats_to_plain_script
@@ -100,12 +97,21 @@ def _fake_semantic_contract(
     is_last: bool,
 ) -> LessonSemanticContract:
     """Deterministic Arabic contract used only by the zero-network fake."""
+    variant = max(0, int(reel_id.rsplit("r", 1)[-1]) - 1) % 3
+    capability_change = (
+        f"ينتقل من التخمين إلى تنفيذ {skill_slug} بقرار قابل للفحص",
+        f"قدرة {reel_id} الجديدة هي ضبط {skill_slug} بدل الاختيار العشوائي",
+        f"بعد المقارنة يقدر المتعلم يحسم {skill_slug} وينفذه باستقلال",
+    )[variant]
+    next_need = (
+        f"ناتج {skill_slug} بقى مدخلًا للخطوة التالية",
+        f"اكتمال {skill_slug} كشف القرار التعليمي التالي المطلوب",
+        f"بعد اختبار {skill_slug} صار الانتقال التالي له سبب واضح",
+    )[variant]
     return LessonSemanticContract(
         learner_before=f"المتعلم لسه ما حسمش قرار {skill_slug}",
         learner_after=f"المتعلم يقدر ينفذ {skill_slug} ويبرر قراره",
-        exact_capability_change=(
-            f"ينتقل من التخمين إلى تنفيذ {skill_slug} بقرار قابل للفحص"
-        ),
+        exact_capability_change=capability_change,
         strongest_non_obvious_meaning=(
             f"قيمة {skill_slug} مش في الشكل وحده لكن في أثره على القرار"
         ),
@@ -131,7 +137,7 @@ def _fake_semantic_contract(
             f"في نهاية {reel_id} يطلع تطبيق {skill_slug} صالح للمراجعة"
         ),
         earned_next_need=(
-            f"ناتج {skill_slug} بقى مدخلًا للخطوة التالية"
+            next_need
             if not is_last
             else f"ناتج {skill_slug} جاهز للدخول في مشروع الموديول"
         ),
@@ -244,7 +250,15 @@ class FakeProvider(AIProvider):
                 inputs_or_files=["ملف تمرين"],
                 deliverable_shape="لقطة شاشة + ملف نهائي",
                 pass_criteria=["ينفّذ الخطوات", "يوضح القرار"],
-                skills_tested=[f"skill-{m_idx}"],
+                skills_tested=[
+                    reel.new_skill_or_decision
+                    or reel.distinct_teaching_outcome
+                    for reel in reels
+                    if (
+                        reel.new_skill_or_decision
+                        or reel.distinct_teaching_outcome
+                    )
+                ],
             )
             modules.append(
                 ModulePlan(
@@ -276,7 +290,16 @@ class FakeProvider(AIProvider):
                 brief=input.brief.outcome or "Final practical deliverable",
                 deliverable_shape="مشروع نهائي كامل",
                 pass_criteria=["يغطي مهارات الكورس"],
-                skills_tested=["capstone"],
+                skills_tested=[
+                    reel.new_skill_or_decision
+                    or reel.distinct_teaching_outcome
+                    for module in modules
+                    for reel in module.reels
+                    if (
+                        reel.new_skill_or_decision
+                        or reel.distinct_teaching_outcome
+                    )
+                ],
             ),
         )
         self.last_usage = _synthetic_usage(input, result)
@@ -405,25 +428,6 @@ class FakeProvider(AIProvider):
     def review_single_reel(self, input: ReviewSingleReelInput) -> ReviewResult:
         empty = [input.generated_reel] if not input.generated_reel.script_text.strip() else []
         result = _result_for(ReviewScope.REEL, empty)
-        self.last_usage = _synthetic_usage(input, result)
-        return result
-
-    def review_five_reels(self, input: ReviewFiveReelsInput) -> ReviewResult:
-        empty = [r for r in input.reels if not r.script_text.strip()]
-        result = _result_for(ReviewScope.FIVE_REELS, empty)
-        self.last_usage = _synthetic_usage(input, result)
-        return result
-
-    def review_module(self, input: ReviewModuleInput) -> ReviewResult:
-        empty = [r for r in input.reels if not r.script_text.strip()]
-        result = _result_for(ReviewScope.MODULE, empty)
-        self.last_usage = _synthetic_usage(input, result)
-        return result
-
-    def review_two_modules(self, input: ReviewTwoModulesInput) -> ReviewResult:
-        all_reels = input.first.reels + input.second.reels
-        empty = [r for r in all_reels if not r.script_text.strip()]
-        result = _result_for(ReviewScope.TWO_MODULES, empty)
         self.last_usage = _synthetic_usage(input, result)
         return result
 

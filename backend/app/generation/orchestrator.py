@@ -1,7 +1,7 @@
 """The internal generation pipeline orchestrator (docs/ARCHITECTURE.md §6).
 
 `run_generation(session, course_id)` is the only entry point. It runs the
-full 8-stage pipeline synchronously against an `AIProvider` (defaulting to
+full effectful pipeline synchronously against an `AIProvider` (defaulting to
 whatever `app/ai/factory.py get_ai_provider()` selects via `AI_PROVIDER` -
 `FakeProvider` unless real AI is explicitly configured) and returns the
 finished `GenerationJob`.
@@ -23,12 +23,8 @@ it's appended - so a mid-run failure never loses already-completed work.
 On failure, `except Exception` below classifies the error
 (app/generation/errors.py) and, if any of that persisted state exists,
 builds and saves a partial DOCX and ends the job `PARTIAL` instead of
-`FAILED`. There is deliberately no `resume_generation`: the two-module
-review pairing (`pending_pair` below) can't be safely reconstructed from
-`completed_reels_json` alone (a crash between a module's own review and
-its pairing review would look identical, on resume, to one where the pairing
-already ran) - see README.md's "Generation resilience" section. Partial
-DOCX download is the supported recovery path for now.
+`FAILED`. Recovery always resumes from the frozen run snapshot and persisted
+lesson ledger; no retired review checkpoint is reconstructed from memory.
 """
 
 from dataclasses import dataclass
@@ -45,13 +41,9 @@ from app.ai.provider import (
     BuildCourseMapInput,
     CourseBrief,
     FinalReviewInput,
-    ModuleWithReels,
     PriorReelSummary,
     RebuildFinalCourseInput,
-    ReviewFiveReelsInput,
-    ReviewModuleInput,
     ReviewSingleReelInput,
-    ReviewTwoModulesInput,
     SourceExcerpt,
     WriteSingleReelInput,
 )
@@ -1052,7 +1044,6 @@ def run_generation(
 
         # --- Steps 6-11: generate reel by reel, with layered review -----
         all_reels: list[GeneratedReel] = []
-        pending_pair: tuple[ModulePlan, list[GeneratedReel]] | None = None
         reels_done = 0
         modules_done = 0
         previous_module_curve: ModuleCurve | None = None
@@ -1248,17 +1239,6 @@ def run_generation(
                 )
                 _abort_if_canceled()
 
-                if reels_done % 5 == 0:
-                    # Disabled: was log-only AI cost with no script/map effect.
-                    logs.append(
-                        {
-                            "step": "review_5reels",
-                            "status": "disabled",
-                            "reason": "no_effect_ai_review_removed",
-                        }
-                    )
-                    flush()
-
             # Internal curve variation checks (logged only — never DOCX).
             flat_issues = check_anti_flatness(
                 module_lesson_curves, module_id=module.module_id
@@ -1284,7 +1264,7 @@ def run_generation(
             module_result = review_module_structure(module=module, reels=module_reels)
             logs.append(
                 {
-                    "step": "review_module",
+                    "step": "structural_module_gate",
                     "id": module.module_id,
                     "status": module_result.status.value,
                     "failing_reels": [
@@ -1293,41 +1273,65 @@ def run_generation(
                     "mode": "structural",
                 }
             )
-            for action in module_result.actions:
-                if action.reason_code == "needs_map_revision":
-                    logs.append(
-                        {
-                            "step": "needs_map_revision",
-                            "id": module.module_id,
-                            "detail": action.instruction,
+            reel_findings = {
+                action.target_id: action
+                for action in module_result.actions
+                if action.target_id
+                and action.target_id != module.module_id
+                and action.requires_rewrite
+            }
+            if reel_findings:
+                newly_flagged = {
+                    reel.reel_id
+                    for reel in module_reels
+                    if reel.reel_id in reel_findings
+                    and (reel.quality_status or "").lower() != "needs_review"
+                }
+
+                def _apply_module_finding(reel: GeneratedReel) -> GeneratedReel:
+                    action = reel_findings.get(reel.reel_id)
+                    if action is None:
+                        return reel
+                    quality_report = dict(reel.quality_report or {})
+                    quality_report["structural_module_gate"] = {
+                        "reason_code": action.reason_code,
+                        "instruction": action.instruction,
+                    }
+                    return reel.model_copy(
+                        update={
+                            "quality_status": "needs_review",
+                            "self_check_status": ReviewStatus.NEEDS_REVISION,
+                            "quality_report": quality_report,
                         }
                     )
+
+                module_reels = [_apply_module_finding(reel) for reel in module_reels]
+                all_reels = [_apply_module_finding(reel) for reel in all_reels]
+                needs_review_total += len(newly_flagged)
+                flush(
+                    completed_reels_json=[
+                        reel.model_dump(mode="json") for reel in all_reels
+                    ],
+                    needs_review_count=needs_review_total,
+                )
+
+            map_findings = [
+                action
+                for action in module_result.actions
+                if action.affects_map_or_other_lessons
+                or action.reason_code == "needs_map_revision"
+            ]
+            if map_findings:
+                raise UnusableOutputError(
+                    "Structural module gate requires a real map revision: "
+                    + "; ".join(action.instruction for action in map_findings)
+                )
             modules_done += 1
             previous_module_curve = module_curve
             flush(
                 completed_modules_count=modules_done,
                 last_completed_step=f"module:{module.module_id}",
             )
-
-            if pending_pair is None:
-                pending_pair = (module, module_reels)
-            else:
-                prev_module, prev_reels = pending_pair
-                # Disabled: two-module AI review was log-only.
-                logs.append(
-                    {
-                        "step": "review_2modules",
-                        "ids": [prev_module.module_id, module.module_id],
-                        "status": "disabled",
-                        "reason": "no_effect_ai_review_removed",
-                    }
-                )
-                flush()
-                pending_pair = None
-
-        if pending_pair is not None:
-            logs.append({"step": "review_2modules", "skipped": "unpaired trailing module"})
-            flush()
 
         _abort_if_canceled()
 
@@ -1401,18 +1405,27 @@ def run_generation(
                 _record_usage_event(
                     session, job, provider, PipelineStage.REBUILD_FINAL_COURSE, preset_value
                 )
+                _assert_final_review_actions_applied(
+                    course_map=course_map,
+                    original_reels=all_reels,
+                    final_review=final_result,
+                    rebuilt_course=final_course,
+                )
                 logs.append({"step": "rebuild_final_course", "triggered": True})
             except Exception as rebuild_exc:  # noqa: BLE001
                 logs.append(
                     {
                         "step": "rebuild_final_course",
                         "triggered": False,
-                        "fallback": "assemble_saved",
+                        "fallback": "blocked_unapplied_review",
                         "error_type": type(rebuild_exc).__name__,
                         "message": redact_secrets(str(rebuild_exc)[:200]),
                     }
                 )
-                final_course = _assemble_final_course(course_map, all_reels)
+                raise UnusableOutputError(
+                    "Final review required changes, but the Creator rebuild did "
+                    "not apply them; export remains blocked"
+                ) from rebuild_exc
         else:
             # No AI call needed: everything already passed, so assemble the
             # already-approved content directly.
@@ -3165,6 +3178,70 @@ def _assemble_final_course(course_map: CourseMap, all_reels: list[GeneratedReel]
     )
 
 
+def _assert_final_review_actions_applied(
+    *,
+    course_map: CourseMap,
+    original_reels: list[GeneratedReel],
+    final_review: ReviewResult,
+    rebuilt_course: FinalCourse,
+) -> None:
+    """Fail closed when a requested final repair leaves its target unchanged."""
+    required_actions = [
+        action
+        for action in final_review.actions
+        if action.requires_rewrite or action.action != ReviewActionType.KEEP
+    ]
+    if final_review.status == ReviewStatus.NEEDS_REVISION and not required_actions:
+        raise UnusableOutputError(
+            "Final review requested revision without an actionable repair"
+        )
+
+    original_course = _assemble_final_course(course_map, original_reels)
+    original_reel_by_id = {
+        reel.reel_id: reel
+        for module in original_course.modules
+        for reel in module.reels
+    }
+    rebuilt_reel_by_id = {
+        reel.reel_id: reel
+        for module in rebuilt_course.modules
+        for reel in module.reels
+    }
+    original_module_by_id = {
+        module.module_id: module for module in original_course.modules
+    }
+    rebuilt_module_by_id = {
+        module.module_id: module for module in rebuilt_course.modules
+    }
+
+    unapplied: list[str] = []
+    for action in required_actions:
+        target = action.target_id
+        if target in original_reel_by_id:
+            before = original_reel_by_id[target].model_dump(mode="json")
+            after_reel = rebuilt_reel_by_id.get(target)
+            changed = after_reel is None or after_reel.model_dump(mode="json") != before
+        elif target in original_module_by_id:
+            before = original_module_by_id[target].model_dump(mode="json")
+            after_module = rebuilt_module_by_id.get(target)
+            changed = (
+                after_module is None
+                or after_module.model_dump(mode="json") != before
+            )
+        else:
+            changed = rebuilt_course.model_dump(mode="json") != original_course.model_dump(
+                mode="json"
+            )
+        if not changed:
+            unapplied.append(f"{target}:{action.reason_code}")
+
+    if unapplied:
+        raise UnusableOutputError(
+            "Final review actions were not applied to accepted text: "
+            + ", ".join(unapplied)
+        )
+
+
 def _build_course_summary(
     course_map: CourseMap, all_reels: list[GeneratedReel], logs: list[dict]
 ) -> str:
@@ -3192,7 +3269,7 @@ def _build_course_report(
     review_steps = [
         e
         for e in logs
-        if e.get("step") in ("review_5reels", "review_module", "review_2modules", "final_review")
+        if e.get("step") in ("structural_module_gate", "final_review")
     ]
     flagged_needing_revision = sum(1 for e in review_steps if e.get("status") == "needs_revision")
     lines.append("")

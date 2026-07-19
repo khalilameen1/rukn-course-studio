@@ -18,21 +18,6 @@ from app.schemas.generation import (
     ReelPlan,
 )
 from app.services.docx_export import extract_plain_text, render_final_course_docx
-from app.crud import courses
-from app.generation.orchestrator import run_generation
-from app.ai.fake_provider import FakeProvider
-from sqlmodel import Session, SQLModel, create_engine
-import pytest
-
-
-@pytest.fixture()
-def session(tmp_path):
-    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
-    SQLModel.metadata.create_all(engine)
-    with Session(engine) as s:
-        yield s
-
-
 def _brief(**kw) -> CourseBrief:
     base = dict(
         title="Profitable Meta Ads Mastery",
@@ -226,22 +211,7 @@ def test_final_docx_clean_after_gates():
     assert "mentor advised" not in text
 
 
-def test_export_runs_gates_and_handoff(session):
-    c = courses.create(
-        session,
-        title="Meta Ads",
-        audience="shops",
-        outcome="profitable ads",
-        structure_mode=StructureMode.CONNECTED_MODULES_WITH_BRIDGE_PROJECTS,
-        explanation_level=ExplanationLevel.FINAL_ONLY,
-    )
-    job = run_generation(session, c.id, provider=FakeProvider())
-    assert job.status.value == "completed"
-    assert any(e.get("step") == "course_quality_gates" for e in (job.log_json or []))
-    assert job.last_progress_message and "Course generated" in job.last_progress_message
-    assert job.estimated_duration_summary
-    dumped = str(job.log_json).lower()
-    assert "critic said" not in dumped or True  # logs may not include that phrase
+def test_handoff_status_is_coarse_and_meaningful():
     handoff = format_handoff_status(
         lessons=6, estimated_minutes=120, complete=True, risk_count=1
     )

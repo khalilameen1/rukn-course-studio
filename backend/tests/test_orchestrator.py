@@ -513,44 +513,6 @@ def test_report_text_only_populated_for_full_report_level(session):
     assert full_version.report_text is None
 
 
-def test_two_modules_review_runs_for_even_module_count(session):
-    course = _make_course(session)
-
-    job = run_generation(session, course.id)
-
-    two_module_logs = [e for e in job.log_json if e["step"] == "review_2modules"]
-    assert len(two_module_logs) == 1
-    assert two_module_logs[0]["ids"] == ["m1", "m2"]
-    # No-op AI two-module review removed — logged as disabled.
-    assert two_module_logs[0].get("status") == "disabled"
-
-
-def test_two_modules_review_skips_unpaired_trailing_module(session):
-    class ThreeModuleProvider(FakeProvider):
-        DEFAULT_MODULE_COUNT = 3
-
-    course = _make_course(session)
-
-    job = run_generation(session, course.id, provider=ThreeModuleProvider())
-
-    two_module_logs = [e for e in job.log_json if e["step"] == "review_2modules"]
-    assert len(two_module_logs) == 2
-    assert two_module_logs[0]["ids"] == ["m1", "m2"]
-    assert two_module_logs[0].get("status") == "disabled"
-    assert two_module_logs[1].get("skipped") == "unpaired trailing module"
-
-
-def test_five_reel_review_runs_once_for_six_reel_course(session):
-    course = _make_course(session)
-
-    job = run_generation(session, course.id)
-
-    five_reel_logs = [e for e in job.log_json if e["step"] == "review_5reels"]
-    # 2 modules x 3 reels = 6 reels total -> one trigger at reel 5 (now disabled).
-    assert len(five_reel_logs) == 1
-    assert five_reel_logs[0].get("status") == "disabled"
-
-
 def test_course_not_found_raises(session):
     with pytest.raises(ValueError):
         run_generation(session, course_id=999999)

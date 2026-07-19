@@ -20,9 +20,6 @@ class PipelineStage(str, Enum):
     BUILD_COURSE_MAP = "build_course_map"
     WRITE_SINGLE_REEL = "write_single_reel"
     REVIEW_SINGLE_REEL = "review_single_reel"
-    REVIEW_FIVE_REELS = "review_five_reels"
-    REVIEW_MODULE = "review_module"
-    REVIEW_TWO_MODULES = "review_two_modules"
     FINAL_REVIEW = "final_review"
     REBUILD_FINAL_COURSE = "rebuild_final_course"
 
@@ -56,24 +53,6 @@ PROMPT_SPECS: dict[PipelineStage, PromptSpec] = {
         filename="review_single_reel.md",
         tool_name="review_result",
         provider_method="review_single_reel",
-    ),
-    PipelineStage.REVIEW_FIVE_REELS: PromptSpec(
-        stage=PipelineStage.REVIEW_FIVE_REELS,
-        filename="review_five_reels.md",
-        tool_name="review_result",
-        provider_method="review_five_reels",
-    ),
-    PipelineStage.REVIEW_MODULE: PromptSpec(
-        stage=PipelineStage.REVIEW_MODULE,
-        filename="review_module.md",
-        tool_name="review_result",
-        provider_method="review_module",
-    ),
-    PipelineStage.REVIEW_TWO_MODULES: PromptSpec(
-        stage=PipelineStage.REVIEW_TWO_MODULES,
-        filename="review_two_modules.md",
-        tool_name="review_result",
-        provider_method="review_two_modules",
     ),
     PipelineStage.FINAL_REVIEW: PromptSpec(
         stage=PipelineStage.FINAL_REVIEW,

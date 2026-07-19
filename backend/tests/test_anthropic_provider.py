@@ -20,12 +20,8 @@ from app.ai.provider import (
     BuildCourseMapInput,
     CourseBrief,
     FinalReviewInput,
-    ModuleWithReels,
     RebuildFinalCourseInput,
-    ReviewFiveReelsInput,
-    ReviewModuleInput,
     ReviewSingleReelInput,
-    ReviewTwoModulesInput,
     WriteSingleReelInput,
 )
 from app.generation.presets import PRESET_TEMPERATURES
@@ -583,33 +579,6 @@ VALID_FINAL_COURSE = {
             VALID_REVIEW_RESULT,
             ReviewResult,
             "Review a Completed Reel Draft",
-        ),
-        (
-            "review_five_reels",
-            lambda: ReviewFiveReelsInput(reels=[_generated_reel()]),
-            "review_result",
-            {"scope": "five_reels", "status": "pass", "actions": []},
-            ReviewResult,
-            "Review a Window of Five Reels",
-        ),
-        (
-            "review_module",
-            lambda: ReviewModuleInput(module=_module_plan(), reels=[_generated_reel()]),
-            "review_result",
-            {"scope": "module", "status": "pass", "actions": []},
-            ReviewResult,
-            "Review One Completed Module",
-        ),
-        (
-            "review_two_modules",
-            lambda: ReviewTwoModulesInput(
-                first=ModuleWithReels(module=_module_plan(), reels=[_generated_reel()]),
-                second=ModuleWithReels(module=_module_plan(), reels=[_generated_reel()]),
-            ),
-            "review_result",
-            {"scope": "two_modules", "status": "pass", "actions": []},
-            ReviewResult,
-            "Review a Pair of Modules",
         ),
         (
             "final_review",

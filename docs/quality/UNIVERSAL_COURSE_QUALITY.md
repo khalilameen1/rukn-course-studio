@@ -64,9 +64,17 @@ Blocks map approval when promises/skills/checkpoints/theory-ratio/early-practice
 
 ## Reviews
 
-- Every-5 and two-module AI reviews: **disabled** (were log-only).
-- Module review: **structural** (`quality/module_review.py`) — failing lessons + missing checkpoints → `needs_map_revision`.
-- Integrated editorial + local validators remain the per-lesson effect path.
+- Retired log-only AI reviews are deleted: no five-reel, AI module, or
+  two-module provider methods/prompts/routing/logs remain.
+- Each lesson follows Writer First Draft → deterministic checks → independent
+  editorial/domain review → bounded Creator rewrite → deterministic re-check.
+- `quality/module_review.py` applies structural findings to acceptance; it
+  cannot merely log them.
+- `quality/cross_scope_review.py` reviews lesson, module, adjacent-module, and
+  whole-course relationships. Every serious/fatal finding becomes an export
+  blocker requiring a real rewrite, merge, or map/project revision.
+- A final AI review may request a Creator rebuild. The rebuild is verified
+  target-by-target; unchanged actions fail closed.
 
 ## Export blockers
 

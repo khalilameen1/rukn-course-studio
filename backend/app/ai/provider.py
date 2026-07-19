@@ -109,13 +109,6 @@ class PriorReelSummary(BaseModel):
     used_examples: list[str] = Field(default_factory=list)
 
 
-class ModuleWithReels(BaseModel):
-    """A module plan paired with the reels generated for it so far."""
-
-    module: ModulePlan
-    reels: list[GeneratedReel] = Field(default_factory=list)
-
-
 class BuildCourseMapInput(BaseModel):
     brief: CourseBrief
     sources: list[SourceExcerpt] = Field(default_factory=list)
@@ -174,23 +167,6 @@ class ReviewSingleReelInput(BaseModel):
     review_mode: str = "draft_bundle"
 
 
-class ReviewFiveReelsInput(BaseModel):
-    reels: list[GeneratedReel]
-    rules_context: dict[str, str] = Field(default_factory=dict)
-
-
-class ReviewModuleInput(BaseModel):
-    module: ModulePlan
-    reels: list[GeneratedReel]
-    rules_context: dict[str, str] = Field(default_factory=dict)
-
-
-class ReviewTwoModulesInput(BaseModel):
-    first: ModuleWithReels
-    second: ModuleWithReels
-    rules_context: dict[str, str] = Field(default_factory=dict)
-
-
 class FinalReviewInput(BaseModel):
     course_map: CourseMap
     all_reels: list[GeneratedReel]
@@ -205,7 +181,7 @@ class RebuildFinalCourseInput(BaseModel):
 
 
 class AIProvider(ABC):
-    """Every pipeline stage (docs/ARCHITECTURE.md §6, stages 1-2 and 3-7) calls through this."""
+    """Provider calls that can change an accepted map or script."""
 
     @abstractmethod
     def build_course_map(self, input: BuildCourseMapInput) -> CourseMap: ...
@@ -215,15 +191,6 @@ class AIProvider(ABC):
 
     @abstractmethod
     def review_single_reel(self, input: ReviewSingleReelInput) -> ReviewResult: ...
-
-    @abstractmethod
-    def review_five_reels(self, input: ReviewFiveReelsInput) -> ReviewResult: ...
-
-    @abstractmethod
-    def review_module(self, input: ReviewModuleInput) -> ReviewResult: ...
-
-    @abstractmethod
-    def review_two_modules(self, input: ReviewTwoModulesInput) -> ReviewResult: ...
 
     @abstractmethod
     def final_review(self, input: FinalReviewInput) -> ReviewResult: ...

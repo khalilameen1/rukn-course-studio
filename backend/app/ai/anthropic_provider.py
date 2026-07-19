@@ -33,10 +33,7 @@ from app.ai.provider import (
     BuildCourseMapInput,
     FinalReviewInput,
     RebuildFinalCourseInput,
-    ReviewFiveReelsInput,
-    ReviewModuleInput,
     ReviewSingleReelInput,
-    ReviewTwoModulesInput,
     WriteSingleReelInput,
 )
 from app.config import settings
@@ -276,15 +273,6 @@ class AnthropicProvider(AIProvider):
 
     def review_single_reel(self, input: ReviewSingleReelInput) -> ReviewResult:
         return self._run(PipelineStage.REVIEW_SINGLE_REEL, input, ReviewResult)
-
-    def review_five_reels(self, input: ReviewFiveReelsInput) -> ReviewResult:
-        return self._run(PipelineStage.REVIEW_FIVE_REELS, input, ReviewResult)
-
-    def review_module(self, input: ReviewModuleInput) -> ReviewResult:
-        return self._run(PipelineStage.REVIEW_MODULE, input, ReviewResult)
-
-    def review_two_modules(self, input: ReviewTwoModulesInput) -> ReviewResult:
-        return self._run(PipelineStage.REVIEW_TWO_MODULES, input, ReviewResult)
 
     def final_review(self, input: FinalReviewInput) -> ReviewResult:
         return self._run(PipelineStage.FINAL_REVIEW, input, ReviewResult)

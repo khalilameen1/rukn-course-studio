@@ -294,41 +294,50 @@ def gate_application(
 
 def gate_repetition(course: FinalCourse, report: CourseGateReport) -> FinalCourse:
     reels = _all_reels(course)
-    modules_out = [
-        m.model_copy(update={"reels": [r.model_copy() for r in m.reels]})
-        for m in course.modules
-    ]
-    id_to_reel = {
-        r.reel_id: (mi, ri)
-        for mi, m in enumerate(modules_out)
-        for ri, r in enumerate(m.reels)
-    }
-
     for i, reel in enumerate(reels):
-        opener = (reel.script_text or "").strip().split("\n")[0][:120]
+        lines = [
+            line.strip()
+            for line in (reel.script_text or "").splitlines()
+            if line.strip()
+        ]
+        if not lines:
+            continue
+        opener = lines[0][:120]
+        ending = lines[-1][:120]
         for j in range(i):
             prev = reels[j]
-            prev_opener = (prev.script_text or "").strip().split("\n")[0][:120]
+            previous_lines = [
+                line.strip()
+                for line in (prev.script_text or "").splitlines()
+                if line.strip()
+            ]
+            if not previous_lines:
+                continue
+            prev_opener = previous_lines[0][:120]
             if text_similarity(opener, prev_opener) >= 0.85 and len(opener) > 20:
                 report.issues.append(
                     GateIssue(
                         gate="repetition",
                         code="repeated_opening",
-                        detail=f"{reel.reel_id} opening echoes {prev.reel_id}.",
+                        detail=(
+                            f"{reel.reel_id} opening echoes {prev.reel_id}; "
+                            "creator rewrite required before export."
+                        ),
                     )
                 )
-                # Diversify later opener slightly without padding essays.
-                mi, ri = id_to_reel[reel.reel_id]
-                current = modules_out[mi].reels[ri]
-                lines = (current.script_text or "").split("\n")
-                if lines:
-                    lines[0] = f"خلّينا نثبت فرق تاني: {lines[0]}"
-                    new_script = "\n".join(lines)
-                    modules_out[mi].reels[ri] = current.model_copy(
-                        update={"script_text": new_script}
+                break
+            prev_ending = previous_lines[-1][:120]
+            if text_similarity(ending, prev_ending) >= 0.85 and len(ending) > 20:
+                report.issues.append(
+                    GateIssue(
+                        gate="repetition",
+                        code="repeated_ending",
+                        detail=(
+                            f"{reel.reel_id} ending echoes {prev.reel_id}; "
+                            "creator rewrite required before export."
+                        ),
                     )
-                    report.remediations.append(f"repetition_diversify:{reel.reel_id}")
-                    report.rebuilt_reel_ids.append(reel.reel_id)
+                )
                 break
 
         body = reel.script_text or ""
@@ -343,7 +352,9 @@ def gate_repetition(course: FinalCourse, report: CourseGateReport) -> FinalCours
                 )
                 break
 
-    return course.model_copy(update={"modules": modules_out})
+    # Detection does not invent replacement prose. The cross-scope export
+    # gate consumes the same findings as blockers until the Creator rewrites.
+    return course
 
 
 def gate_course_ending(course: FinalCourse, report: CourseGateReport) -> FinalCourse:

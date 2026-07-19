@@ -26,9 +26,6 @@ MODEL_ROUTING_OVERRIDES: dict[PipelineStage, dict] = {
     PipelineStage.REBUILD_FINAL_COURSE: {"max_tokens": MODEL_OUTPUT_MAX_TOKENS},
     PipelineStage.WRITE_SINGLE_REEL: {"max_tokens": MODEL_OUTPUT_MAX_TOKENS},
     PipelineStage.REVIEW_SINGLE_REEL: {"max_tokens": MODEL_OUTPUT_MAX_TOKENS},
-    PipelineStage.REVIEW_FIVE_REELS: {"max_tokens": MODEL_OUTPUT_MAX_TOKENS},
-    PipelineStage.REVIEW_MODULE: {"max_tokens": MODEL_OUTPUT_MAX_TOKENS},
-    PipelineStage.REVIEW_TWO_MODULES: {"max_tokens": MODEL_OUTPUT_MAX_TOKENS},
     PipelineStage.FINAL_REVIEW: {"max_tokens": MODEL_OUTPUT_MAX_TOKENS},
 }
 

@@ -18,12 +18,10 @@ from app.models.enums import AddressForm, CourseFamily, CourseMixType, LessonDel
 
 
 class ReviewScope(str, Enum):
-    """Matches the 5 review stages in docs/ARCHITECTURE.md §6 (stages 3-7)."""
+    """Scopes whose findings can change acceptance or trigger a rewrite."""
 
     REEL = "reel"
-    FIVE_REELS = "five_reels"
     MODULE = "module"
-    TWO_MODULES = "two_modules"
     FINAL = "final"
 
 
@@ -256,7 +254,7 @@ class ReviewAction(BaseModel):
 
 
 class ReviewResult(BaseModel):
-    """Output of any of the 5 review stages (Stage 3 through Stage 7)."""
+    """Actionable review output; findings must rewrite content or block it."""
 
     scope: ReviewScope
     status: ReviewStatus

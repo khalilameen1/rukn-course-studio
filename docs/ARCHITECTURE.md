@@ -2,7 +2,7 @@
 
 ## Product: Rukn Course Studio
 
-**Status:** Draft v1.0 — Documentation & Architecture Phase
+**Status:** RUKN Universal Course Standard v1.3 implementation
 **Companion docs:** `docs/PRD.md`, `docs/BUILD_PLAN.md`
 **Last Updated:** 2026-07-13
 
@@ -12,9 +12,9 @@
 
 1. **The user sees exactly one artifact: the final DOCX.** Every internal stage (map building, reel drafting, multi-level review, rebuild) is a backend process, not a UI experience.
 2. **Generation is incremental by construction.** The system is architecturally incapable of generating an entire course in a single model call — the pipeline forces reel-by-reel generation with mandatory checkpoints. This is the primary defense against laziness/repetition/hallucination, not a prompting trick.
-3. **Rules are data, not prompt text scattered in code.** Fixed Rukn knowledge lives in a structured, versioned store the pipeline reads from — admins edit data, not code.
+3. **The canonical standard is immutable runtime code data.** Exactly fourteen approved Markdown files are loaded in their fixed order and fingerprinted; there is no custom Admin Knowledge authoring path.
 4. **Every generation run is traceable.** Given a final DOCX, it must be possible to reconstruct exactly which rule version, brief, sources, map, and review outcomes produced it.
-5. **Review is layered by scope, not just repeated at one grain.** Local checks (per reel) catch local problems (drift within one reel); wider checks (every 5 reels, per module, per 2 modules, full course) catch problems only visible at larger scope (repetition across reels, degradation across modules, global inconsistency). Each layer has a distinct job — they are not redundant copies of each other.
+5. **Review is layered by scope and must affect acceptance.** Local checks catch lesson defects; module, adjacent-module, and whole-course checks catch repetition, degradation, contradiction, lost prerequisites, and project mismatch. A serious/fatal finding rewrites its target or blocks export.
 6. **Regeneration over live editing (MVP).** Correction happens by re-running (parts of) the pipeline, not by a human hand-editing generated text in-app.
 
 ---
@@ -25,14 +25,14 @@
 ┌──────────────────────────────────────────────────────────────────────┐
 │                              FRONTEND (UI)                           │
 │                                                                        │
-│   Admin Rules Page   |   Course Creation Page   |   Source Upload    │
+│ Canonical Standard  |   Course Creation Page   |   Source Upload    │
 │                                                                        │
 │   Status view (coarse) --------------------------> Download DOCX     │
 └───────────────────────────────┬────────────────────────────────────--┘
                                  │  REST/RPC API
 ┌───────────────────────────────▼──────────────────────────────────────┐
 │                          APPLICATION LAYER                           │
-│  - Rules Service (CRUD + versioning)                                 │
+│  - Canonical Standard Service (read-only + fingerprint)              │
 │  - Course Service (brief, map, sources linkage, run lifecycle)       │
 │  - Source Ingestion Service (upload, parse, normalize, store text)   │
 │  - Generation Orchestrator (owns the pipeline state machine)         │
@@ -42,17 +42,15 @@
 │                     GENERATION PIPELINE (internal)                   │
 │  1. Course Map (build/validate)                                      │
 │  2. Reel-by-reel generation                                          │
-│  3. Per-reel silent review                                           │
-│  4. Every-5-reels review                                             │
-│  5. Per-module review                                                │
-│  6. Every-2-modules review                                           │
-│  7. Full-course review/rebuild                                       │
-│  8. DOCX export                                                      │
+│  3. Independent per-reel review + bounded Creator rewrite            │
+│  4. Module / adjacent-module / whole-course deterministic gates      │
+│  5. Effectful final review/rebuild                                   │
+│  6. Hard blockers + DOCX export                                      │
 └───────────────────────────────┬──────────────────────────────────────┘
                                  │
 ┌───────────────────────────────▼──────────────────────────────────────┐
 │                              DATA LAYER                               │
-│  Rules store | Courses/Briefs | Sources (raw+parsed) | Course Maps   │
+│  Standard fingerprint | Courses/Briefs | Sources | Frozen Maps       │
 │  Reels (draft+final+revision history) | Review Logs | Generated DOCX │
 └────────────────────────────────────────────────────────────────────--┘
 ```
@@ -76,12 +74,17 @@ The frontend never renders reel-level draft content as a primary feature. (An op
 - **Rules Service** — CRUD + versioning over Rukn Rules. Exposes a "get active rules for new runs" read path used only by the orchestrator.
 - **Course Service** — owns Course, Course Brief, and Course Map entities; manages linking Sources to a Course; exposes "start generation run" which snapshots brief + map + source refs + active rule version into an immutable **Generation Run** record.
 - **Source Ingestion Service** — handles upload, file-type validation, text extraction/normalization per format (§5), and persistence of parsed text + metadata (page/section boundaries where available, for later citation/grounding).
-- **Generation Orchestrator** — the state machine that executes the 8-stage pipeline (§6) for a Generation Run, persists intermediate artifacts (map, reel drafts, review verdicts) for traceability, exposes coarse status to the frontend, and on success hands the final assembled content to the DOCX Exporter.
+- **Generation Orchestrator** — the state machine that executes the effectful pipeline (§6) for a Generation Run, persists intermediate artifacts (map, reel drafts, review verdicts) for traceability, exposes coarse status to the frontend, and on success hands the final assembled content to the DOCX Exporter.
 - **DOCX Exporter** — deterministic renderer that takes the final, reviewed course content tree (modules → reels, front/back matter) plus formatting rules from Rukn Rules and produces the `.docx` binary.
 
 ### 3.3 Why an Orchestrator/State Machine (not a single long LLM chain)
 
-The pipeline has 8 distinct stages with different scopes (reel / 5-reels / module / 2-modules / course) and different failure-handling needs (a failed per-reel review triggers a reel rewrite; a failed full-course review can trigger a targeted rebuild of specific modules, not necessarily everything). This requires explicit state, not an implicit chain-of-thought inside one model call. The orchestrator:
+The pipeline has effectful stages at map, lesson, cross-scope, final rebuild,
+and export boundaries. Retired five-reel/module/two-module AI calls were deleted
+because they only logged verdicts. A failed per-lesson review triggers a bounded
+Creator rewrite; cross-scope or final findings either change their target or
+block export. This requires explicit state, not an implicit chain-of-thought
+inside one model call. The orchestrator:
 
 - Tracks pipeline position (which stage, which reel/module index).
 - Persists each stage's output and verdict, enabling resumability after failure/crash.
@@ -147,7 +150,7 @@ Sources are optional; when absent, generation relies on the Course Brief + Rukn 
 
 ---
 
-## 6. The Internal Generation Pipeline (8 Stages)
+## 6. The Internal Generation Pipeline
 
 This is the core of the system and the direct mechanism for preventing laziness, repetition, and hallucination. **None of these stages are user-visible as content** — only as a coarse status.
 
@@ -167,34 +170,29 @@ This is the core of the system and the direct mechanism for preventing laziness,
 
 - Runs immediately after each reel is drafted, before moving to the next reel.
 - Checks: structure_rules compliance (required components present), style_rules compliance, pedagogy_rules compliance, prohibited_content, and factual grounding against linked Source segments (flag unsupported specific claims).
-- Verdict `pass` → move to next reel. Verdict `revise` → bounded retry: regenerate this reel with review findings injected as explicit correction instructions. Verdict `fail` after max retries → mark reel `flagged`, continue (do not block whole run on one reel; surfaced in stage 7/final QA).
+- Verdict `pass` → move to next reel. Verdict `revise` → bounded Creator rewrite with review findings as explicit correction instructions, followed by deterministic re-check. A fatal/serious finding that remains is marked `needs_review` and blocks export.
 
-### Stage 4 — Every-5-Reels Review
+### Stage 4 — Deterministic Cross-Scope Review
 
-- Triggered after every 5th reel is drafted+passed stage 3 (window may cross module boundaries).
-- Checks scoped to this 5-reel window: cross-reel repetition (duplicate examples/explanations/phrasing patterns), local terminology consistency (glossary), local pacing/difficulty consistency.
-- Verdict `revise` → targeted rewrite of specific offending reel(s) within the window (not the whole window by default).
+- Runs across lesson, module, adjacent-module, and whole-course relationships.
+- Checks semantic duplication, repeated hooks/endings, phrase/voice drift,
+  late-course quality collapse, contradiction, prerequisites, and project-to-teaching alignment.
+- Serious/fatal findings are consumed by the export gate; they cannot be log-only.
 
-### Stage 5 — Per-Module Review
+### Stage 5 — Final Review and Creator Rebuild
 
-- Triggered when all reels in a module have passed stages 2–4.
-- Checks: does the module fulfill its stated objective as a whole; internal ordering/flow between reels; module-level intro/recap components present and accurate to actual reel content; repetition within the module not caught by the 5-reel window (e.g. module has 7 reels).
-- Verdict `revise` → targeted reel rewrite(s) or module intro/recap rewrite.
+- The independent final review may request targeted reel/module corrections.
+- `needs_revision` without actionable repairs fails closed.
+- After rebuild, every requested target is compared with the accepted input;
+  an unchanged target blocks export.
 
-### Stage 6 — Every-2-Modules Review
+### Stage 6 — Hard Export Gates
 
-- Triggered after every 2nd module completes stage 5 (or at course end if odd count).
-- Checks scoped across the module pair: cross-module repetition, consistency of depth/effort (the primary **anti-laziness check** — comparing detail/length/quality signals between the earlier and later module in the pair), terminology consistency.
-- Verdict `revise` → targeted module or reel rewrites within the pair.
+- Re-run deterministic course and cross-scope checks on the exact rebuilt text.
+- Any unresolved `needs_review`, fatal/serious finding, map/project mismatch,
+  language failure, or delivery-contract failure blocks DOCX creation.
 
-### Stage 7 — Final Full-Course Review / Rebuild
-
-- Triggered once all modules pass stage 6.
-- Checks at whole-course scope: global repetition across all modules, global depth/effort consistency across the entire module sequence (not just adjacent pairs — catches slow drift stage 6 could miss), global terminology/glossary consistency, front/back matter accuracy against final module list, overall compliance with `structure_rules`/`pedagogy_rules` as a complete artifact.
-- This stage has authority to trigger a **rebuild**: targeted regeneration of specific reels/modules identified as outliers, followed by a re-check (bounded retries), rather than assuming stages 3–6 already guarantee perfection. This is the safety net.
-- Only on `pass` here does the run proceed to export.
-
-### Stage 8 — Export DOCX
+### Stage 7 — Export DOCX
 
 - Assemble final approved content tree (front matter, modules, reels, back matter) and render via the DOCX Exporter using `formatting_rules` from the active Rukn Rules.
 - Persist the resulting file, mark Generation Run `done`, expose download to the user.
@@ -211,12 +209,12 @@ This is the core of the system and the direct mechanism for preventing laziness,
 
 | Failure mode | Primary defense | Secondary defense |
 |---|---|---|
-| **Laziness** (later content thinner) | Stage 6 (every-2-modules) explicitly compares depth/effort signals across the pair | Stage 7 full-course pass re-checks global consistency; reel-level structure_rules (Stage 3) enforce minimum required components on every reel regardless of position |
-| **Repetition** | Stage 4 (every-5-reels) checks cross-reel duplication in a bounded window | Stage 5 (module) and Stage 7 (course) catch repetition at larger grains the 5-reel window misses |
-| **Hallucination** | Stage 3 per-reel grounding check against linked Source segments | Stage 7 full-course pass re-validates claims; `prohibited_content` and pedagogy rules bias generation toward general practical guidance over invented specifics when ungrounded |
+| **Laziness** (later content thinner) | Whole-course scope compares early and late teaching depth | Per-lesson semantic contracts and deterministic re-checks enforce required meaning at every position |
+| **Repetition** | Module and adjacent-module scopes check semantic/hooks/endings | Whole-course phrase/voice/semantic gates catch slow accumulation |
+| **Hallucination** | Per-reel grounding check against linked Source segments | Whole-course claim/source and high-stakes export gates fail closed |
 | **Context-growth degradation** | Stage 2's bounded "prior context summary" (not full history) keeps generation cost/quality stable regardless of course length | Orchestrator persists compact per-module summaries, not raw growing transcripts, as it moves forward |
 
-This table is the architectural justification for the 8-stage design — each stage exists to catch a specific failure mode at the smallest scope where it's economically detectable, with wider stages as a safety net for what smaller scopes miss.
+Each check runs at the smallest useful scope, with wider deterministic gates as a safety net. No provider call exists solely to create a log entry.
 
 ---
 

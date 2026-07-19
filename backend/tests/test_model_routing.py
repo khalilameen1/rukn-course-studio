@@ -34,9 +34,6 @@ def test_all_generation_stages_use_model_output_ceiling():
         PipelineStage.BUILD_COURSE_MAP,
         PipelineStage.WRITE_SINGLE_REEL,
         PipelineStage.REVIEW_SINGLE_REEL,
-        PipelineStage.REVIEW_FIVE_REELS,
-        PipelineStage.REVIEW_MODULE,
-        PipelineStage.REVIEW_TWO_MODULES,
         PipelineStage.FINAL_REVIEW,
         PipelineStage.REBUILD_FINAL_COURSE,
     ):

@@ -19,7 +19,7 @@
 **Goal:** Shared understanding of what's being built and how, before any code exists.
 
 - [x] `docs/PRD.md` — scope, users, functional/non-functional requirements, MVP boundaries.
-- [x] `docs/ARCHITECTURE.md` — system components, data model, 8-stage pipeline design, anti-laziness/repetition/hallucination mechanisms.
+- [x] `docs/ARCHITECTURE.md` — system components, immutable context/map, effectful review pipeline, and anti-laziness/repetition/hallucination mechanisms.
 - [x] `docs/BUILD_PLAN.md` — this document.
 
 **Exit criteria:** Stakeholder review/sign-off on all three docs. Open Questions in `PRD.md` §11 are answered or explicitly deferred with an owner.
@@ -83,16 +83,16 @@
 
 ---
 
-## Phase 5 — Wider Review Layers (Stages 4–6)
+## Phase 5 — Effectful Wider Review Layers
 
 **Goal:** Add the review layers that catch what Stage 3 structurally cannot see: repetition and degradation across reels and modules.
 
-- Stage 4: every-5-reels review (cross-reel repetition/consistency within a window) + targeted reel rewrite action.
-- Stage 5: per-module review (module coherence, intro/recap accuracy, within-module repetition) + targeted rewrite action.
-- Stage 6: every-2-modules review (cross-module repetition, the primary anti-laziness depth/effort comparison) + targeted rewrite action.
-- Extend orchestrator retry/escalation policy across all stages per `ARCHITECTURE.md` §6.9 (max retries, `flagged` units, escalation to later stages).
+- Delete log-only five-reel, AI module, and two-module calls and their provider/prompt/routing surface.
+- Apply independent review findings through bounded Creator rewrite and deterministic re-check.
+- Enforce lesson, module, adjacent-module, and whole-course checks as export blockers when unresolved.
+- Verify final rebuild actions changed their requested targets; otherwise fail closed.
 
-**Exit criteria:** Running a full multi-module course through the pipeline (through Stage 6) produces measurably reduced repetition and consistent depth between early and late modules, verified by spot-checking a real generated course against `PRD.md` §10 success criteria.
+**Exit criteria:** Unit/integration fixtures prove no serious/fatal finding can be logged and ignored, without generating a complete course or calling a paid provider.
 
 ---
 
@@ -102,7 +102,7 @@
 
 - Stage 7: full-course review with authority to trigger targeted reel/module rebuilds; re-check loop with bounded retries; `needs_review` terminal state for runs that can't converge.
 - DOCX Exporter: render final approved content tree using `formatting_rules`, producing a real, correctly formatted `.docx`.
-- Wire end-to-end: Course Creation Page "Generate" → full 8-stage pipeline → coarse status → download link on success, clear actionable error/needs-review state on failure.
+- Wire end-to-end: Course Creation Page "Generate" → effectful pipeline → coarse status → download link on success, clear actionable error/needs-review state on failure.
 - Remove/disable any temporary debug-output-as-primary-flow scaffolding from Phases 3–5 so the shipped UX matches `PRD.md` NFR-5 (opacity of process).
 
 **Exit criteria:** A user can go from brief-only (or brief+map+sources) to a downloaded, correctly formatted final DOCX with no visibility into intermediate reels, matching all functional requirements in `PRD.md` §7. This is the first phase that delivers the complete MVP end-to-end.

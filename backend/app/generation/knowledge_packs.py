@@ -16,9 +16,6 @@ LESSON_WRITING_STAGES = {
 }
 REVIEW_STAGES = {
     PipelineStage.REVIEW_SINGLE_REEL,
-    PipelineStage.REVIEW_FIVE_REELS,
-    PipelineStage.REVIEW_MODULE,
-    PipelineStage.REVIEW_TWO_MODULES,
     PipelineStage.FINAL_REVIEW,
 }
 FINAL_EXPORT_STAGES = {

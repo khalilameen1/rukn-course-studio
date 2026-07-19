@@ -139,6 +139,11 @@ def build_lesson_semantic_contract(
             else "the declared learner starting state"
         )
     )
+    if not _specific(prior_after, allow_state_label=True):
+        prior_after = (
+            "the explicitly declared learner starting state: "
+            f"{prior_after or 'not specified'}"
+        )
     learner_after = reel.student_can_do_after or reel.distinct_teaching_outcome or capability
     failure = (
         avoid[0]
@@ -147,7 +152,7 @@ def build_lesson_semantic_contract(
     )
     visual = (reel.internal_visual_plan or "").strip()
     if visual:
-        proof = visual
+        proof = f"{visual}; demonstrate {core} while performing {capability}"
     elif reel.delivery_mode in {
         LessonDeliveryMode.SCREEN_DEMO,
         LessonDeliveryMode.PROJECT_BUILD,

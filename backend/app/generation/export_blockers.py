@@ -147,6 +147,28 @@ def evaluate_export_blockers(
             )
 
     reels = generated_reels or []
+    if cmap:
+        from app.generation.quality.cross_scope_review import review_cross_scope
+
+        cross_scope = review_cross_scope(
+            course_map=cmap,
+            generated_reels=reels,
+        )
+        for finding in cross_scope.blocking_findings:
+            target = (
+                finding.target_reel_ids[0]
+                if len(finding.target_reel_ids) == 1
+                else None
+            )
+            report.blockers.append(
+                ExportBlocker(
+                    "lesson" if target else "course",
+                    finding.code,
+                    f"{finding.detail} Required action: {finding.required_action}.",
+                    reel_id=target,
+                )
+            )
+
     reel_by_id = {r.reel_id: r for r in reels}
     for module in final_course.modules:
         for reel in module.reels:

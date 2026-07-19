@@ -1,7 +1,7 @@
 """Writer test: exactly 3 reels using the production Creator / review / gates path.
 
-Skips Course Map, module reviews, two-module reviews, final course review,
-project generation, and broad course-wide web research.
+Uses a three-lesson test map and the production lesson review/rewrite path,
+while skipping full-course generation, final review, projects, and web research.
 """
 
 from __future__ import annotations
@@ -21,6 +21,7 @@ from app.crud import (
 )
 from app.generation.contracts.spoken_final_master import ensure_spoken_beats
 from app.generation.contracts.course_thesis import build_course_thesis_from_brief
+from app.generation.contracts.lesson_semantic import attach_lesson_semantic_contracts
 from app.generation.duration_policy import (
     count_spoken_words,
     estimate_spoken_minutes,
@@ -216,6 +217,9 @@ def run_writer_test_3_reels(
         modules=[module],
         thesis=thesis,
     )
+    course_map = attach_lesson_semantic_contracts(course_map)
+    module = course_map.modules[0]
+    plans = list(module.reels)
 
     coverage = evaluate_coverage_matrix(course_map, thesis=thesis, contract=contract)
     provider_name = "fake" if provider.__class__.__name__ == "FakeProvider" else provider.__class__.__name__
