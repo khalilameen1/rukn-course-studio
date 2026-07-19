@@ -1,7 +1,7 @@
 """Course-map-only generation — Creator→Student→Specialist→Mentor→Final rebuild.
 
 Stores the editable Final Course Map on Course.manual_map_text (course-specific).
-Never writes Admin Knowledge. Reviews stay internal.
+Never writes the canonical course standard. Reviews stay internal.
 """
 
 from __future__ import annotations

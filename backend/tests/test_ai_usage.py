@@ -132,7 +132,6 @@ def test_ai_usage_summary_empty_table_returns_zero_summary(tmp_path, monkeypatch
 
     engine = create_engine(f"sqlite:///{tmp_path / 'empty_usage.db'}")
     monkeypatch.setattr(db_module, "engine", engine)
-    monkeypatch.setattr(db_module.settings, "auth_enabled", False)
     init_db()
 
     def override():
@@ -155,7 +154,6 @@ def test_ai_usage_summary_empty_table_returns_zero_summary(tmp_path, monkeypatch
 def test_ai_usage_summary_missing_table_returns_zero_summary_not_500(tmp_path, monkeypatch):
     import app.db as db_module
 
-    monkeypatch.setattr(db_module.settings, "auth_enabled", False)
     engine = create_engine(f"sqlite:///{tmp_path / 'no_usage_table.db'}")
     monkeypatch.setattr(db_module, "engine", engine)
 

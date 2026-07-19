@@ -18,7 +18,6 @@ from app.generation.source_memory_store import build_source_memory_payload
 from app.generation.teleprompter_checks import find_forbidden_substrings
 from app.models.enums import ExtractionMethod, SourceOrigin
 from app.schemas.generation import FinalCourse, FinalModule, FinalReel
-from app.seed_admin_knowledge import REQUIRED_KEYS, SOURCE_IMPERFECTION_GATE
 from app.services.docx_export import extract_plain_text, render_final_course_docx
 
 META = {
@@ -72,12 +71,6 @@ GOOD_SCRIPT = """\
 خليني أوضح لك الحتة دي بسرعة.
 الغلط هنا إن ناس كتير بتفهم الموضوع بالعكس لما الميزانية صغيرة.
 """
-
-
-def test_gate_in_required_keys():
-    assert "rukn_source_imperfection_gate" in REQUIRED_KEYS
-    assert "raw material" in SOURCE_IMPERFECTION_GATE.lower()
-    assert PROMPT_COMPILER_VERSION == "2.21"
 
 
 def test_book_pdf_treated_as_raw_material_not_format_authority():

@@ -61,7 +61,7 @@ async def upload_source(
 ):
     """Save the uploaded file, then extract its text.
 
-    Course-specific only — never written to Admin Knowledge.
+    Course-specific only — never written to the canonical standard.
     Upload success (file + DB row) is separate from extraction/analysis success.
     """
     get_course_or_404(session, course_id)
@@ -214,7 +214,7 @@ def add_source_notes(
     request: Request,
     session: Session = Depends(get_session),
 ):
-    """Paste transcript/notes for this course — never Admin Knowledge."""
+    """Paste transcript/notes for this course — never the canonical standard."""
     get_course_or_404(session, course_id)
     assert_notes_length(
         payload.text, max_chars=int(getattr(settings, "max_notes_chars", 200_000))

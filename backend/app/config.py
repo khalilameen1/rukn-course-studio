@@ -143,7 +143,7 @@ class Settings(BaseSettings):
     anthropic_prompt_cache_enabled: bool = False
 
     # Auth for this internal MVP (see app/auth/). Admin gets full scopes;
-    # optional OPERATOR_* credentials get courses:* only (no Admin Knowledge).
+    # optional OPERATOR_* credentials get courses:* only (no standard management).
     auth_enabled: bool = True
     admin_username: str | None = None
     admin_password: str | None = None

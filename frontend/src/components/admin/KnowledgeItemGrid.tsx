@@ -1,96 +1,64 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { api } from "@/lib/api";
-import type { AdminKnowledgeItem } from "@/lib/types";
 import Card from "@/components/ui/Card";
 import StatusBadge from "@/components/ui/StatusBadge";
-
-const ITEM_TYPE_LABELS: Record<string, string> = {
-  markdown: "Markdown",
-  json: "JSON",
-  docx_template: "DOCX template",
-};
+import { api } from "@/lib/api";
+import type { AdminKnowledgeItem } from "@/lib/types";
 
 export type KnowledgeCatalogEntry = {
   key: string;
   title: string;
   description: string;
-  required?: boolean;
-  refreshable?: boolean;
-  stable?: boolean;
+  order: number;
+  file_path: string;
+  standard_version: string;
+  standard_fingerprint: string;
+  read_only: boolean;
 };
 
 export default function KnowledgeItemGrid({
   items,
   catalog,
-  onEdit,
-  onDelete,
-  onActivate,
-  actionBusy = null,
 }: {
   items: AdminKnowledgeItem[];
   catalog: Record<string, KnowledgeCatalogEntry>;
-  onEdit: (item: AdminKnowledgeItem) => void;
-  onDelete: (item: AdminKnowledgeItem) => void;
-  onActivate: (item: AdminKnowledgeItem) => void;
-  actionBusy?: string | null;
 }) {
+  const ordered = [...items].sort(
+    (left, right) =>
+      (catalog[left.key]?.order ?? Number.MAX_SAFE_INTEGER) -
+      (catalog[right.key]?.order ?? Number.MAX_SAFE_INTEGER),
+  );
   return (
-    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-      {items.map((item) => {
+    <div className="flex flex-col gap-4">
+      {ordered.map((item, index) => {
         const known = catalog[item.key];
         return (
           <Card key={item.id} className="flex flex-col gap-3">
-            <div className="flex items-start justify-between gap-2">
+            <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
-                <p className="font-medium">{known?.title ?? item.title}</p>
-                <p className="mt-0.5 font-mono text-xs text-muted">{item.key}</p>
+                <p className="text-xs font-medium uppercase tracking-wide text-muted">
+                  File {known?.order ?? index + 1} of 14
+                </p>
+                <p className="mt-1 font-medium">{known?.title ?? item.title}</p>
+                <p className="mt-1 font-mono text-xs text-muted">{item.key}</p>
               </div>
-              <StatusBadge
-                label={item.is_active ? "active" : "inactive"}
-                tone={item.is_active ? "success" : "neutral"}
-              />
-            </div>
-            <p className="text-sm text-muted">{known?.description ?? item.title}</p>
-
-            <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
-              <span className="rounded-full border border-border px-2 py-0.5">
-                {ITEM_TYPE_LABELS[item.item_type] ?? item.item_type}
-              </span>
-              <span>v{item.version}</span>
-              {known?.stable ? (
-                <span className="rounded-full border border-border px-2 py-0.5">
-                  high-trust
+              <div className="flex items-center gap-2">
+                <StatusBadge label="canonical" tone="success" />
+                <span className="rounded-full border border-border px-2 py-0.5 text-xs text-muted">
+                  read-only
                 </span>
-              ) : null}
+              </div>
             </div>
-
-            <div className="mt-1 flex gap-3 text-sm">
-              <button
-                onClick={() => onEdit(item)}
-                disabled={Boolean(actionBusy)}
-                className="hover:underline disabled:opacity-50"
-              >
-                Edit
-              </button>
-              {!item.is_active ? (
-                <button
-                  onClick={() => onActivate(item)}
-                  disabled={Boolean(actionBusy)}
-                  className="hover:underline disabled:opacity-50"
-                >
-                  {actionBusy === `activate-${item.id}` ? "Activating…" : "Activate"}
-                </button>
-              ) : null}
-              <button
-                onClick={() => onDelete(item)}
-                disabled={Boolean(actionBusy)}
-                className="text-red-600 hover:underline disabled:opacity-50 dark:text-red-400"
-              >
-                Delete
-              </button>
-            </div>
+            <p className="font-mono text-xs text-muted">
+              {known?.file_path ?? item.file_path}
+            </p>
+            <details className="rounded-lg border border-border bg-background/50 p-3">
+              <summary className="cursor-pointer text-sm font-medium">View source</summary>
+              <pre className="mt-3 max-h-96 overflow-auto whitespace-pre-wrap text-xs leading-6 text-muted">
+                {item.content_text}
+              </pre>
+            </details>
           </Card>
         );
       })}
@@ -98,7 +66,6 @@ export default function KnowledgeItemGrid({
   );
 }
 
-/** Hook helper: load catalog keyed by key. */
 export function useKnowledgeCatalog() {
   const [catalog, setCatalog] = useState<Record<string, KnowledgeCatalogEntry>>({});
   useEffect(() => {

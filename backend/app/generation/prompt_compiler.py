@@ -1,8 +1,7 @@
 """Two small, pure helpers that keep every AI-provider prompt lean:
 
-- `select_rules_for_stage`: only the admin-knowledge keys relevant to a
-  given pipeline stage, instead of dumping every active rule into every
-  prompt regardless of relevance.
+- `select_rules_for_stage`: validates and returns the complete immutable
+  14-file RUKN standard for every pipeline stage.
 - `compile_source_context`: turns raw source material into a bounded list
   of `SourceExcerpt`s, with category-aware handling (factual extraction vs.
   a Natural Colloquial Calibration heuristic profile vs. verbatim user notes)
@@ -22,12 +21,10 @@ models, facts, or wording. Good enough for the fake-provider era.
 ## Source Authority Firewall
 
 Uploaded/pasted sources must never define Rukn's language, format,
-lesson/reel structure, or style - that authority comes only from Admin
-Knowledge (`rukn_writing_style`, `rukn_practical_course_rules`,
-`rukn_teleprompter_docx_contract`, `rukn_quality_rubric`,
-`rukn_high_signal_reel_doctrine`, all loaded via
-`select_rules_for_stage` above - always present, independent of any
-source) and explicit user instructions (`user_notes`, always passed
+lesson/reel structure, or style - that authority comes only from the complete
+RUKN Universal Skill Course Standard, loaded via `select_rules_for_stage`
+and always present independent of any source, plus explicit user instructions
+(`user_notes`, always passed
 through in full below). `compile_source_context` enforces this two ways:
 
 1. Every `SourceExcerpt` it returns carries `allowed_use`/`disallowed_use`/
@@ -56,14 +53,14 @@ from collections import Counter
 from dataclasses import dataclass
 
 from app.ai.provider import SourceExcerpt
+from app.data.course_standard import load_standard_files
 from app.generation.knowledge_priority_ladder import (
     authority_label_for_category,
     authority_type_for_category,
-    stage_authority_pack_hint,
 )
 from app.models.enums import SourceCategory
 from app.prompts.prompt_registry import PipelineStage
-from app.data.admin_knowledge_registry import STABLE_RULE_KEYS, STAGE_RULE_KEYS
+from app.data.admin_knowledge_registry import STABLE_RULE_KEYS
 from app.services.source_analysis import SHORT_SOURCE_MAX_CHARS, select_relevant_chunks
 
 DEFAULT_MAX_TOTAL_CHARS = 6000
@@ -75,36 +72,27 @@ DEFAULT_MAX_TOTAL_CHARS = 6000
 # for traceability - so an old run's snapshot can be compared against
 # whatever version is active today. Not read by anything at runtime other
 # than the snapshot builder.
-PROMPT_COMPILER_VERSION = "2.22"
-
-# Stage maps + stable keys: see app/data/admin_knowledge_registry.py
-_STAGE_RULE_KEYS = STAGE_RULE_KEYS
-
+PROMPT_COMPILER_VERSION = "3.0-rukn-standard-v1.3"
 
 def select_rules_for_stage(all_rules: dict[str, str], stage: PipelineStage) -> dict[str, str]:
-    """Only the keys in `all_rules` relevant to `stage` - a missing key is
-    just omitted, never an error (an admin may not have activated it).
+    """Return all 14 canonical files, whole and ordered, for every stage.
 
-    Also injects a compact stage authority-pack hint so prompts never treat
-    all sources as equal authority (Knowledge Priority Ladder), and the
-    teleprompter readability formatting rule on write/final/rebuild stages.
+    Generation fails closed if a file is absent or empty. There is no legacy
+    per-stage slicing, optional activation, or runtime rule overlay.
     """
-    from app.generation.teleprompter_readability import TELEPROMPTER_READABILITY_PROMPT_RULE
-
-    keys = _STAGE_RULE_KEYS.get(stage, ())
-    selected = {key: all_rules[key] for key in keys if key in all_rules}
-    selected["rukn_authority_pack_hint"] = stage_authority_pack_hint(stage)
-    if "rukn_teleprompter_docx_contract" in keys:
-        selected["rukn_teleprompter_readability_runtime"] = (
-            TELEPROMPTER_READABILITY_PROMPT_RULE
-        )
-    return selected
+    del stage
+    if not all_rules:
+        all_rules = load_standard_files()
+    missing = [key for key in STABLE_RULE_KEYS if not all_rules.get(key)]
+    if missing:
+        raise ValueError(f"Canonical RUKN standard is incomplete: {missing}")
+    return {key: all_rules[key] for key in STABLE_RULE_KEYS}
 
 
 def select_packed_rules_for_stage(
     all_rules: dict[str, str], stage: PipelineStage
 ) -> dict[str, str]:
-    """Stage keys compacted into one Cost Hygiene pack — no full Admin dump."""
+    """Serialize the complete canonical standard once for the provider prompt."""
     from app.generation.knowledge_packs import build_stage_rules_pack
 
     return build_stage_rules_pack(select_rules_for_stage(all_rules, stage), stage)
@@ -112,22 +100,19 @@ def select_packed_rules_for_stage(
 
 # --- Prompt caching preparation (§8) ------------------------------------
 #
-# Stable keys for a future Anthropic cache-control block. Canonical set is
-# the union of all STAGE_RULE_KEYS (imported from admin_knowledge_registry).
+# Stable keys for provider prompt caching. The canonical set is exactly the
+# 14 immutable standard files.
 
 
 def split_stable_and_dynamic_rules(
     rules: dict[str, str],
 ) -> tuple[dict[str, str], dict[str, str]]:
-    """Split `rules` (typically an already-per-stage-narrowed
-    `rules_context`, see `select_rules_for_stage`) into `(stable, dynamic)`.
+    """Split canonical standard files from any caller-supplied dynamic data.
 
     "Stable" = the fixed `STABLE_RULE_KEYS` above, identical for every
     course/run. "Dynamic" = everything else present in `rules` (in
-    practice, nothing today - every currently-seeded admin-knowledge key is
-    one of the stable ones; see app/seed_admin_knowledge.py). Additive
-    only: does not change `select_rules_for_stage`'s existing return shape
-    or any of its callers.
+    practice, nothing today because generation receives only the canonical
+    standard). This helper is retained for provider prompt-cache boundaries.
 
     Scope note, stated plainly: course-specific content (the brief,
     compiled source excerpts, prior-reel summaries) is *not* part of
@@ -346,7 +331,7 @@ STYLE_CONTAMINATION_WARNING_BY_CATEGORY: dict[str, str | None] = {
 
 # Authority-hierarchy ordering for `compile_source_context`'s output -
 # independent of the `priority` field. Reflects: user instructions > Rukn
-# Admin Knowledge (handled separately, always present - see
+# The canonical RUKN standard (handled separately, always present - see
 # `select_rules_for_stage`) > course brief (handled elsewhere in the
 # orchestrator) > scientific facts > flow mechanics > old course structure.
 _CATEGORY_AUTHORITY_RANK: dict[str, int] = {

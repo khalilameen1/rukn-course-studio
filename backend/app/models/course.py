@@ -46,7 +46,7 @@ class Course(SQLModel, table=True):
     outcome: str
     special_notes: Optional[str] = None
     course_type: str = Field(default="practical_skill")
-    # Optional domain label (e.g. "meta_ads", "excel") — course-specific, not Admin Knowledge.
+    # Optional domain label (e.g. "meta_ads", "excel") — course-specific.
     course_domain: Optional[str] = Field(default=None)
     structure_mode: StructureMode = Field(
         sa_column=Column(sa_str_enum(StructureMode), nullable=False)

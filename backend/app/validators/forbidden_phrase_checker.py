@@ -1,12 +1,12 @@
-"""Checks generated text against Rukn's forbidden-phrases admin knowledge
-item (see app/seed_admin_knowledge.py `rukn_forbidden_phrases`). Plain
+"""Checks generated text against structured phrase data when supplied through
+the canonical quality-gates standard file. Plain
 substring matching - no AI, no embeddings.
 """
 
 import json
 from dataclasses import dataclass
 
-FORBIDDEN_PHRASES_KEY = "rukn_forbidden_phrases"
+FORBIDDEN_PHRASES_KEY = "08-quality-gates-and-rewrite-protocol.md"
 
 
 @dataclass
@@ -17,7 +17,7 @@ class ForbiddenPhraseMatch:
 
 
 def load_forbidden_phrases(rules_context: dict[str, str]) -> list[dict]:
-    """Parse the active `rukn_forbidden_phrases` admin knowledge item.
+    """Parse optional structured phrase data from the canonical standard slot.
 
     Never raises: a missing item or malformed JSON just means no phrases
     are checked, rather than breaking the whole pipeline over formatting.

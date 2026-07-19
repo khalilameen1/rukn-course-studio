@@ -13,7 +13,7 @@ class TermEntry:
     note: str = ""
 
 
-# Shared defaults; courses may extend via Admin Knowledge / source memory.
+# Shared defaults; courses may extend through canonical rules / source memory.
 DEFAULT_TERMINOLOGY: list[TermEntry] = [
     TermEntry(
         awkward_literal="الجمهور البارد",

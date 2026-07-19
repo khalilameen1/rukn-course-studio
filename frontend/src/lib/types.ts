@@ -55,17 +55,20 @@ export interface AdminKnowledgeItem {
   updated_at: string;
 }
 
-export interface AdminKnowledgeCreateInput {
+export interface CourseStandardManifestFile {
+  order: number;
   key: string;
   title: string;
-  item_type: ItemType;
-  content_text?: string | null;
-  file_path?: string | null;
-  version?: number;
-  is_active?: boolean;
+  file_path: string;
+  content_sha256: string;
 }
 
-export type AdminKnowledgeUpdateInput = Partial<AdminKnowledgeCreateInput>;
+export interface CourseStandardManifest {
+  standard_version: string;
+  fingerprint: string;
+  file_count: number;
+  files: CourseStandardManifestFile[];
+}
 
 export interface Course {
   id: number;

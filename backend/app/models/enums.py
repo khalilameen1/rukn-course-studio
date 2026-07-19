@@ -61,7 +61,7 @@ class SourceCategory(str, Enum):
     OLD_COURSE = "old_course"
     USER_NOTES = "user_notes"
     RAW_MATERIAL = "raw_material"
-    # Spoken/pasted lesson transcript for this course (course-specific, never Admin Knowledge).
+    # Spoken/pasted lesson transcript for this course (never the canonical standard).
     TRANSCRIPT = "transcript"
 
 

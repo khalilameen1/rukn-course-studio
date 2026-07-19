@@ -7,7 +7,7 @@ Check one finished module - its plan plus all of its reels - as a whole. Interna
 - Does it actually deliver `module.purpose`, not just touch on it?
 - Reels out of order, or disconnected from each other.
 - Repetition within the module beyond what a 5-reel window could already catch.
-- Any violation of a rule in `rules_context`, especially `rukn_high_signal_reel_doctrine` anti-template checks:
+- Any violation of the complete canonical standard in `rules_context`, especially anti-template checks:
   - hooks from the same family
   - loops using the same move
   - lengths that do not vary naturally

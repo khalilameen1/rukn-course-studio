@@ -96,7 +96,7 @@ def ledger_support_rollup(ledger: EvidenceLedger | dict | None) -> str | None:
     if supported == 0 and omitted > 0:
         return (
             "Evidence ledger shows researched gaps were omitted — "
-            "scripts may rely on brief/Admin Knowledge only."
+            "scripts may rely on the brief and canonical RUKN standard only."
         )
     if supported > 0 and used == 0:
         return (

@@ -182,14 +182,12 @@ def test_course_map_fragile_ui_triggers_rebuild_feedback():
 
 
 def test_target_market_passed_to_prompt_compiler_runtime():
-    assert PROMPT_COMPILER_VERSION.startswith("2.")
+    from app.data.course_standard import STANDARD_FILE_NAMES, load_standard_files
+
+    assert PROMPT_COMPILER_VERSION == "3.0-rukn-standard-v1.3"
     guide = compile_market_guidance(TargetMarket.GLOBAL)
     assert "TARGET_MARKET=global" in guide
-    # Stage key mapping includes market/evergreen admin knowledge when seeded.
-    selected = select_rules_for_stage(
-        {"rukn_market_evergreen_gates": "market rules here"},
-        PipelineStage.WRITE_SINGLE_REEL,
-    )
-    assert "rukn_market_evergreen_gates" in selected
+    selected = select_rules_for_stage(load_standard_files(), PipelineStage.WRITE_SINGLE_REEL)
+    assert tuple(selected) == STANDARD_FILE_NAMES
     brief = _brief(target_market=TargetMarket.ARAB_MARKET)
     assert brief.target_market == TargetMarket.ARAB_MARKET

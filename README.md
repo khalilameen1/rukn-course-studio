@@ -97,18 +97,18 @@ On first run, the backend creates `backend/rukn_course_studio.db` and ensures
 and see errors about missing columns (e.g. after pulling schema changes), reset
 it — see [Reset local database](#reset-local-database) below.
 
-Seed admin knowledge separately (idempotent — skips keys that already exist):
+The backend installs the immutable 14-file RUKN standard on startup. It can
+also be installed explicitly:
 
 ```powershell
-python -m app.seed_admin_knowledge
+python -m app.seed_course_standard
 ```
 
-To intentionally refresh selected system defaults (forbidden phrases, quality
-rubric, high-signal doctrine, teleprompter contract) after a code upgrade —
-keeps previous active content as an inactive backup version:
+To permanently replace every existing row and retired rules snapshot with the
+shipped package (no archive or custom-key preservation):
 
 ```powershell
-python -m app.seed_admin_knowledge --refresh-defaults --confirm
+python -m app.seed_course_standard --reset --confirm
 ```
 
 ## Frontend Setup (Next.js)
@@ -144,7 +144,7 @@ reachable via `/health` — start the backend first if you see "unreachable".
 ## Current Pages
 
 - `/` — Home, backend connectivity status, links to admin and courses
-- `/admin` — Admin Knowledge Center (CRUD + activate fixed Rukn rules)
+- `/admin` — read-only canonical RUKN Course Standard
 - `/courses` — List courses
 - `/courses/new` — Create course brief
 - `/courses/[id]` — Sources + Generate + download Teleprompter DOCX
@@ -204,13 +204,9 @@ extracted-text copy, and any analysis rows.
 **Sources never define Rukn's language, format, lesson/reel structure, or
 style.** That authority comes only from:
 
-- **Rukn Admin Knowledge** - specifically `rukn_writing_style`,
-  `rukn_practical_course_rules`, `rukn_teleprompter_docx_contract`,
-  `rukn_quality_rubric`, `rukn_high_signal_reel_doctrine`,
-  `rukn_creator_critic_loop`, `rukn_student_confusion_layer`, and
-  `rukn_master_mentor_engine`
-  (`app/models/admin_knowledge_item.py`, loaded per stage by
-  `select_rules_for_stage`) - and
+- the complete immutable **RUKN Universal Skill Course Standard v1.3** (all
+  14 Markdown files, loaded whole and in order for every generation stage),
+  and
 - **explicit user instructions** (`user_notes` sources, always passed
   through in full).
 
@@ -226,11 +222,8 @@ naturally talks*, never *what Rukn's course looks like*.
 **Authority priority order** (highest to lowest):
 
 1. Explicit user instructions (`user_notes`)
-2. Rukn Admin Knowledge (`rukn_writing_style`, `rukn_practical_course_rules`,
-   `rukn_teleprompter_docx_contract`, `rukn_quality_rubric`,
-   `rukn_high_signal_reel_doctrine`, `rukn_dynamic_teaching_curve`,
-   `rukn_creator_persona_engine`)
-3. The teleprompter DOCX contract specifically (`rukn_teleprompter_docx_contract`)
+2. The complete canonical RUKN standard
+3. The canonical language, terminology, and teleprompter contract
 4. The course brief / target learner (title, audience, outcome, structure mode)
 5. Scientific/factual sources (`scientific_reference`)
 6. Flow/style mechanics (`flow_reference`)
@@ -244,7 +237,7 @@ field (which stays a secondary signal used only for budget trimming).
 
 **Conflict-resolution rules:**
 
-- Admin Knowledge beats source style/tone, always.
+- The canonical RUKN standard beats source style/tone, always.
 - The teleprompter contract beats a source's own formatting, always.
 - An explicit user instruction beats default source-handling behavior.
 - Scientific facts beat creative/stylistic wording when they conflict.
@@ -265,8 +258,8 @@ for the exact per-category lists.
 
 ## High-signal reel doctrine
 
-`rukn_high_signal_reel_doctrine` (Admin Knowledge; auto-seeded when missing)
-defines Rukn's writing standard against shallow short-form habits:
+The canonical standard defines Rukn's writing rules against shallow
+short-form habits:
 
 - **Viral without bait** — hooks stop because of the idea, not hype
   ("biggest"/"secret no one knows"/forced heat).
@@ -293,8 +286,8 @@ defines Rukn's writing standard against shallow short-form habits:
 
 ## Dynamic teaching curve
 
-`rukn_dynamic_teaching_curve` (Admin Knowledge) plus
-`app/generation/teaching_curves.py` make the course feel like a human teacher,
+The canonical teaching-curve rules plus `app/generation/teaching_curves.py`
+make the course feel like a human teacher,
 not a machine on one fixed line:
 
 - **No fixed course-wide depth, voice, reel length, or energy.**
@@ -313,8 +306,8 @@ not a machine on one fixed line:
 
 ## Synthetic creator persona
 
-`rukn_creator_persona_engine` (Admin Knowledge) plus
-`app/generation/creator_persona.py` give the model a stronger internal state:
+The canonical instructor-profile rules plus `app/generation/creator_persona.py`
+give the model a stronger internal state:
 
 - **Synthetic only** — not a real person, clone, or named-creator imitation.
 - Before generation, plan a compact `course_creator_persona` (domain identity,
@@ -322,8 +315,8 @@ not a machine on one fixed line:
 - Before each module, `module_persona_adjustment` (shift, audience need, feel).
 - Before each lesson, `lesson_persona_state` (real point, heat, viral_intent:
   viral_worthy / quiet_useful / corrective_strong / technical_spine, fake risks).
-- Compact profiles go into map/write/review prompts; full Admin Knowledge is
-  stable stage context (`prompt_compiler` v1.4). Labels never appear in DOCX.
+- Compact profiles go into map/write/review prompts; the full canonical package
+  is stable stage context. Labels never appear in DOCX.
 - Local checks (`app/validators/creator_persona_checker.py`) flag imitation cues,
   fake AI-Egyptian slang, superlative spam, flow-template leaks, and viral heat
   on quiet spine lessons.
@@ -365,8 +358,7 @@ If `source_hash` is unchanged: do not re-extract, do not re-read, reuse memory.
 ### Cost Hygiene + Trusted Knowledge Gate
 
 Quality-first with **no waste**:
-- Compact stage Admin Knowledge packs (`map_planning_rules_pack`,
-  `lesson_writing_rules_pack`, `review_rules_pack`, `final_export_rules_pack`)
+- One stable canonical standard pack containing all 14 source files once
 - Web research per **distinct information need** (Research Need → Research Memory),
   reused unless stale / low-confidence / platform-current freshness requires refresh
 - Factual authority only from trusted educational/official/academic sources —
@@ -451,17 +443,16 @@ completed lessons persist, clear stopped status, partial DOCX downloadable when
 lessons exist; regenerate starts a new job (mid-pipeline pair-resume remains
 unsupported by design).
 
-### Locked multi-agent review loop (Admin Knowledge)
+### Locked multi-agent review loop
 
-`rukn_creator_critic_loop` — the Creator **does not self-criticize**. Roles:
+The Creator **does not self-criticize**. Roles:
 
 1. **Creator Agent** — full first draft, uninterrupted
 2. **Student Agent** — broad ~80% learner confusion on the completed draft
-   (`rukn_student_confusion_layer`)
 3. **Specialist Critic Agent** — accuracy, weakness, filler, realism, language,
    domain problems (harsh domain instructor; not a social commenter)
 4. **Master Mentor Agent** — hook, loop, pacing, creator instinct, subtle
-   academic gaps (`rukn_master_mentor_engine`; synthetic, not a named clone)
+   academic gaps (synthetic, not a named clone)
 5. **Creator Agent** — Final Master Version: absorb valid feedback and rewrite
    naturally (never paste review comments into the script)
 
@@ -495,20 +486,17 @@ one final-rewrite call (prompt_compiler v1.7) — not unbounded multi-agent
 credit burn. Hard limit: one draft / one review bundle / one final rewrite.
 On quota/rate/timeout the run stops cleanly and may offer partial DOCX.
 
-Seed seeds doctrine, curve, persona, critic-loop, student-layer, and mentor
-keys for new installs. Existing DBs get missing keys on next startup. To
-intentionally replace *selected* system defaults, use:
+Startup enforces the exact 14-file package. To intentionally replace every
+existing rules row with the shipped package, use:
 
 ```powershell
 cd backend
-.\.venv\Scripts\python.exe -m app.seed_admin_knowledge --refresh-defaults --confirm
+.\.venv\Scripts\python.exe -m app.seed_course_standard --reset --confirm
 ```
 
-This deactivates the previous active version (kept as an inactive backup row
-with a timestamped title) and creates a new active version from code
-defaults. It never runs on startup and does not touch custom keys or
-`rukn_core_rules` / `rukn_writing_style` / presets. Omitting `--confirm`
-prints the warning and exits without changing anything.
+This permanently deletes previous rows, retired snapshots, and legacy backup
+files before installing the exact package. There are no custom rules,
+inactive versions, or restore path. Omitting `--confirm` exits without change.
 
 Golden doctrine checks (no live AI):
 
@@ -693,15 +681,12 @@ failure no longer loses already-completed work:
 
 ## Prompt compiler
 
-`app/generation/prompt_compiler.py` keeps every AI-provider prompt lean
-instead of dumping everything into every call:
+`app/generation/prompt_compiler.py` keeps course-specific source context
+bounded while preserving the complete canonical standard:
 
-- **Rules per stage** (`select_rules_for_stage`) - each of the 8 pipeline
-  stages (`app/prompts/prompt_registry.py` `PipelineStage`) only receives
-  the admin-knowledge keys actually relevant to it (e.g. a review stage
-  gets the quality rubric and forbidden phrases, not the course-structure
-  rules a map-building stage needs). `rukn_generation_presets` is never
-  sent to any stage - it's for admin visibility only.
+- **Canonical rules** (`select_rules_for_stage`) - every pipeline stage receives
+  all 14 Markdown files whole and in package order. A missing non-empty package
+  fails closed; an empty direct test context loads the shipped package.
 - **Source budget trimming** (`compile_source_context`) - every stage's
   source excerpts are capped at a total character budget (default 6000).
   If sources would exceed it, the lowest-priority excerpts are trimmed
@@ -991,32 +976,25 @@ tar -czf "/tmp/rukn_storage_$(date +%Y%m%d).tar.gz" -C "$STORAGE_DIR" .
 # Do not leave the only copy as `/tmp` on an ephemeral shell session.
 ```
 
-**Admin Knowledge cleanup** — destructive duplicate cleanup is dry-run by
-default and requires an explicit confirm:
+**Canonical standard reset** — permanent replacement requires explicit
+confirmation:
 
 ```bash
-# Preview only (no writes):
-curl -X POST "$API/admin/knowledge/cleanup-duplicates?dry_run=true" -H "Authorization: Bearer $TOKEN"
-
-# Apply (deactivates duplicates; does not delete unique custom keys):
-curl -X POST "$API/admin/knowledge/cleanup-duplicates?dry_run=false&confirm=true" -H "Authorization: Bearer $TOKEN"
+# API:
+curl -X POST "$API/admin/knowledge/reset?confirm=true" -H "Authorization: Bearer $TOKEN"
 
 # CLI:
-cd backend && python -m scripts.dedupe_admin_knowledge --dry-run
-cd backend && python -m scripts.dedupe_admin_knowledge --confirm
+cd backend && python -m app.seed_course_standard --reset --confirm
 ```
 
-`refresh-defaults` / seed paths never overwrite edited Admin Knowledge rows
-for keys that already exist (seed is create-missing-only). **`--refresh-defaults
---confirm` does replace** selected system keys, but keeps prior rows inactive
-and writes a JSON snapshot under `storage/backups/admin_knowledge/` first.
-Custom unique keys are never touched. Always dry-run cleanup (and take a
-Postgres dump) before `--confirm` in production.
+Reset deletes all pre-existing rules rows, retired rules snapshots, and legacy
+rules backups. Take a Postgres dump before `--confirm` if database recovery is
+required outside the application.
 
 ### Production deploy safety checklist (DB / schema / cleanup)
 
 Before any Render production deploy that touches the database, schema helpers,
-Admin Knowledge cleanup/refresh, or storage:
+canonical standard reset, or storage:
 
 1. **Backup Postgres** (`pg_dump` — see above).
 2. **Backup storage** (`uploads/`, `extracted/`, `outputs/`, `backups/`) if
@@ -1042,10 +1020,9 @@ Admin Knowledge cleanup/refresh, or storage:
   `AI_RUNAWAY_HARD_CAP_USD` for emergency spend stop mid-run.
 - **Stop a stuck generation:** `POST /courses/{id}/generate/{job_id}/cancel`
   (auth required) marks the job canceled and releases the lock.
-- **Restore Admin Knowledge after a bad cleanup/refresh:** open the latest
-  file under `STORAGE_DIR/backups/admin_knowledge/*.json` and re-create or
-  re-activate rows from that export (inactive DB backups also remain unless
-  you used `purge=true`). Prefer reactivating archive rows over purge.
+- **Restore the standard after database corruption:** run
+  `python -m app.seed_course_standard --reset --confirm`. The application does
+  not retain editable, inactive, or backup rule versions.
 - **Frontend if backend is down:** the Next.js service can stay up; users
   will see API errors until backend recovers. Do not point
   `NEXT_PUBLIC_API_BASE_URL` at a broken host — fix/redeploy backend first.
@@ -1098,7 +1075,7 @@ On startup, `init_db()` also runs SQLite/Postgres-safe `ALTER TABLE ... ADD
 COLUMN` helpers for newly introduced columns (`_ensure_course_columns`,
 `_ensure_course_source_columns`, `_ensure_source_analysis_columns`,
 `_ensure_generation_job_columns`). **Restart the backend after deploy** so
-ALTERs apply. Existing courses and Admin Knowledge rows are preserved.
+ALTERs apply. Existing courses are preserved; standard rows are synchronized.
 
 - **First deploy against a brand-new database:** no manual step needed -
   `create_all` creates every table automatically the first time the backend
@@ -1126,17 +1103,14 @@ ALTERs apply. Existing courses and Admin Knowledge rows are preserved.
   ADD COLUMN ...` (or just `python -m app.reset_local_db --seed`, if losing
   local data is fine) before/after deploying this code.
 
-### Seed admin knowledge (production)
+### Install the canonical course standard (production)
 
-`python -m app.seed_admin_knowledge` (see [above](#backend-setup-fastapi))
-is idempotent - it skips any `key` that already has a row, so it's always
-safe to re-run, but it is **not** wired into the build/start command, so it
-won't run automatically on deploy. Run it once after the first deploy via a
-Render Shell session on the backend service:
+Startup enforces the exact shipped package automatically. The explicit command
+is idempotent while the database already matches the package:
 
 ```bash
 cd backend  # if the shell doesn't already start there
-python -m app.seed_admin_knowledge
+python -m app.seed_course_standard
 ```
 
 ### Deploy identity (`GET /build-info`)

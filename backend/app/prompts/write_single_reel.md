@@ -64,7 +64,7 @@ Agency hard limit: **one** first draft + Integrated Editorial Review + at most *
 - Do not invent prices/specs without a valid source. Do not turn soft rules into absolute laws.
 - Respect `rukn_phrase_ledger_runtime` when present — do not reuse overused openers/closers/templates.
 - Respect `rukn_voice_profile_runtime` for rhythm only — never copy catchphrases.
-- Follow `rukn_high_signal_reel_doctrine`, teleprompter contract, and every voice/style rule in `rules_context`.
+- Follow the complete canonical RUKN standard in `rules_context`.
 - Length follows delivery mode word ranges (camera / micro / screen / critique / project) — never pad to hit a number; never shrink by removing real teaching.
 - Cover every point in `reel.must_cover`. Avoid every point in `reel.must_avoid` and `already_taught_forbid_repeat`.
 - Knowledge sources = facts. FLOW_REFERENCE / voice profile = spoken calibration only — never facts from style samples, never written style forced onto the lecturer.

@@ -17,7 +17,7 @@ from __future__ import annotations
 import re
 
 # Substrings that must never appear anywhere in a rendered teleprompter
-# DOCX, per the `rukn_teleprompter_docx_contract` admin knowledge item -
+# DOCX, per the canonical language and teleprompter standard -
 # the DOCX must hide every internal-pipeline artifact (review notes,
 # validation notes, quality checks, etc.), never show credit/methodology
 # text, and never address the lecturer with meta-instructions instead of

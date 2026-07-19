@@ -22,13 +22,10 @@ non-secret and safe to eventually return to the frontend (see
 `GenerationJobRead.run_snapshot`): no API key, no `AUTH_SECRET_KEY`, no
 `DATABASE_URL`, ever.
 
-The three specifically-called-out hashes (teleprompter contract, forbidden
-phrases, quality rubric) are not duplicated as separate fields - they are
-simply whichever entries of `admin_knowledge_snapshot` happen to be keyed
-`rukn_teleprompter_docx_contract` / `rukn_forbidden_phrases` /
-`rukn_quality_rubric` (only present if that admin-knowledge item was
-active for this run). Documented here, and in README.md "Prompt/rules
-snapshotting", so this mapping is easy to find.
+The canonical files are not duplicated as separate fields. Each complete
+package entry is represented by its hash in `admin_knowledge_snapshot` for
+the run. Documented here, and in README.md "Prompt/rules snapshotting", so
+this mapping is easy to find.
 """
 
 from __future__ import annotations

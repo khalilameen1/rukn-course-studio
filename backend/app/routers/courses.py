@@ -3,7 +3,7 @@ from sqlmodel import Session
 
 from app.crud import admin_knowledge_items, courses
 from app.db import get_session
-from app.generation.admin_knowledge_cleanup import filter_active_primary
+from app.data.admin_knowledge.seed_loader import canonical_items
 from app.routers.deps import get_course_or_404
 from app.schemas.course import CourseCreate, CourseRead, CourseUpdate
 from app.services.audit import record_audit
@@ -62,7 +62,7 @@ def list_courses(session: Session = Depends(get_session)):
 
 @router.get("/{course_id}/readiness", response_model=dict)
 def course_readiness(course_id: int, session: Session = Depends(get_session)):
-    """Course-safe summary for Start gating — never returns Admin Knowledge bodies."""
+    """Course-safe summary for Start gating — never returns standard bodies."""
     from app.ai.factory import missing_anthropic_config
     from app.config import settings
     from app.crud import course_sources
@@ -81,7 +81,7 @@ def course_readiness(course_id: int, session: Session = Depends(get_session)):
 
     get_course_or_404(session, course_id)
     course = courses.get(session, course_id)
-    primary = filter_active_primary(admin_knowledge_items.list(session))
+    primary = canonical_items(session)
     sources = course_sources.list(session, course_id=course_id)
     included = [
         s
@@ -177,7 +177,7 @@ def course_readiness(course_id: int, session: Session = Depends(get_session)):
     if len(included) == 0:
         warnings.append(
             "No course sources are included for generation. You can still start; "
-            "the run will rely on the brief and Admin Knowledge only."
+            "the run will rely on the brief and canonical RUKN standard only."
         )
 
     password_n = sum(1 for s in sources if s.status == PASSWORD_REQUIRED)
@@ -241,7 +241,7 @@ def course_readiness(course_id: int, session: Session = Depends(get_session)):
         "can_start": can_start,
         "blockers": blockers,
         "warnings": warnings,
-        "message": "Admin Knowledge is global; course sources stay course-scoped.",
+        "message": "The Course Standard is global; sources stay course-scoped.",
     }
 
 

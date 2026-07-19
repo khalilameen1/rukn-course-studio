@@ -130,7 +130,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 {
                     "detail": (
                         f"Missing scope {needed!r} for this route. "
-                        "Sign in with an account that has Admin Knowledge access."
+                        "Sign in with an account that has Course Standard access."
                         if needed.endswith("admin_knowledge:*")
                         else f"Missing scope {needed!r} for this route."
                     )

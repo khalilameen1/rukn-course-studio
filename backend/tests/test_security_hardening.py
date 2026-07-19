@@ -260,10 +260,11 @@ def test_runaway_hard_cap_raises(tmp_path, monkeypatch):
         assert "emergency runaway guard" in str(ei.value).lower()
 
 
-def test_cleanup_dry_run_does_not_mutate(tmp_path, monkeypatch):
+def test_canonical_reset_permanently_removes_legacy_rows(tmp_path, monkeypatch):
     from app import models  # noqa: F401
     from app.crud import admin_knowledge_items
-    from app.generation.admin_knowledge_cleanup import dedupe_admin_knowledge
+    from app.data.admin_knowledge.seed_loader import reset_standard
+    from app.data.course_standard import STANDARD_FILE_NAMES
     from app.models.enums import ItemType
 
     monkeypatch.setattr(settings, "storage_dir", tmp_path / "storage")
@@ -289,12 +290,10 @@ def test_cleanup_dry_run_does_not_mutate(tmp_path, monkeypatch):
             is_active=True,
             version=2,
         )
-        report = dedupe_admin_knowledge(session, dry_run=True, confirm=False)
-        assert report["dry_run"] is True
-        assert report["applied"] is False
-        assert report["would_deactivate_count"] == 1
-        still = [i for i in admin_knowledge_items.list(session) if i.is_active]
-        assert len(still) == 2
+        report = reset_standard(session)
+        assert report["inserted_rows"] == 14
+        rows = admin_knowledge_items.list(session)
+        assert [item.key for item in rows] == list(STANDARD_FILE_NAMES)
 
 
 def test_production_refuses_auth_disabled(monkeypatch):

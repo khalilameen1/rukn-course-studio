@@ -2,6 +2,7 @@
 
 from datetime import datetime, timedelta, timezone
 
+from app.data.course_standard import STANDARD_FILE_NAMES, load_standard_files
 from app.generation.cost_hygiene import IdenticalRetryGuard, build_usage_panel
 from app.generation.knowledge_packs import (
     build_stage_rules_pack,
@@ -207,26 +208,13 @@ def test_prompt_compiler_no_full_pdf_in_lesson_prompts():
 
 
 def test_prompt_compiler_packs_admin_knowledge():
-    big = "Rule line about quality.\n" + ("- bullet detail about writing\n" * 80)
-    all_rules = {
-        "rukn_core_rules": big,
-        "rukn_practical_course_rules": big,
-        "rukn_writing_style": big,
-        "rukn_high_signal_reel_doctrine": big,
-        "rukn_dynamic_teaching_curve": big,
-        "rukn_creator_persona_engine": big,
-        "rukn_creator_critic_loop": big,
-        "rukn_student_confusion_layer": big,
-        "rukn_master_mentor_engine": big,
-        "rukn_teleprompter_docx_contract": big,
-        "rukn_market_evergreen_gates": big,
-        "rukn_originality_rights_gate": big,
-    }
+    all_rules = load_standard_files()
     selected = select_rules_for_stage(all_rules, PipelineStage.WRITE_SINGLE_REEL)
     packed = select_packed_rules_for_stage(all_rules, PipelineStage.WRITE_SINGLE_REEL)
-    assert "lesson_writing_rules_pack" in packed
+    assert tuple(packed) == ("rukn_universal_course_standard",)
     assert pack_is_compact(packed, selected)
-    assert sum(len(v) for v in packed.values()) < sum(len(v) for v in selected.values())
+    body = packed["rukn_universal_course_standard"]
+    assert all(body.count(all_rules[name]) == 1 for name in STANDARD_FILE_NAMES)
 
 
 def test_identical_retry_blocked():
@@ -288,13 +276,8 @@ def test_usage_panel_and_waste_warning():
 def test_stage_pack_builder_keeps_mandatory_core_intact():
     from app.generation.knowledge_packs import mandatory_core_intact
 
-    selected = {
-        "rukn_core_rules": "CORE_RULE_BODY_MUST_SURVIVE " + ("x" * 200),
-        "rukn_writing_style": "STYLE_BODY_MUST_SURVIVE " + ("y" * 200),
-        "rukn_optional_noise": "z" * 8000,
-    }
+    selected = load_standard_files()
     pack = build_stage_rules_pack(selected, PipelineStage.WRITE_SINGLE_REEL)
     body = "\n".join(pack.values())
-    assert "CORE_RULE_BODY_MUST_SURVIVE" in body
-    assert "STYLE_BODY_MUST_SURVIVE" in body
+    assert all(f"### {name}" in body for name in STANDARD_FILE_NAMES)
     assert mandatory_core_intact(pack, selected)

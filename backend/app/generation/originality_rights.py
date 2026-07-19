@@ -95,7 +95,7 @@ class OriginalityReport:
 
 
 def compile_originality_guidance() -> str:
-    """Runtime guidance injected beside Admin Knowledge (never DOCX)."""
+    """Runtime guidance injected beside the canonical standard (never DOCX)."""
     return (
         "ORIGINALITY_RIGHTS: Sources (upload + web) are for facts, concepts, "
         "terminology, field logic, common mistakes, and verified knowledge only. "

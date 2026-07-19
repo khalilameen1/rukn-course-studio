@@ -31,7 +31,7 @@ def test_mission_brief_card_shape():
     assert "Build" in mission["headline"]
     assert mission["confidence"] == "needs_sharpening"
     assert mission["tighten_brief_suggestion"]
-    assert "Admin Knowledge" in mission["grounding"]
+    assert "canonical RUKN standard" in mission["grounding"]
 
 
 def test_tighten_brief_suggestion():

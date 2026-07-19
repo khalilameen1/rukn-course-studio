@@ -260,7 +260,8 @@ def test_active_admin_knowledge_is_loaded_into_context(session):
     job = run_generation(session, course.id)
 
     load_log = next(e for e in job.log_json if e["step"] == "load_context")
-    assert load_log["rules"] == 1
+    assert load_log["rules"] == 14
+    assert not admin_knowledge_items.list(session, key="rukn-core")
 
 
 def test_only_usable_sources_are_counted(session):
@@ -431,11 +432,13 @@ def test_forbidden_phrase_feeds_review_bundle_then_one_final_rewrite(session):
     reel_plan = ReelPlan(reel_id="m1-r1", title="Reel", purpose="p", estimated_length="30s")
     course_map = CourseMap(course_title="Course", main_thread="thread", modules=[module])
     provider = AlwaysForbiddenProvider()
-    rules_context = {
-        "rukn_forbidden_phrases": json.dumps(
+    from app.data.course_standard import load_standard_files
+    from app.validators.forbidden_phrase_checker import FORBIDDEN_PHRASES_KEY
+
+    rules_context = load_standard_files()
+    rules_context[FORBIDDEN_PHRASES_KEY] = json.dumps(
             {"phrases": [{"phrase": "في الريل ده", "severity": "high"}]}
         )
-    }
 
     generated, attempts, caught_locally, needs_review = _write_and_review_reel(
         provider=provider,

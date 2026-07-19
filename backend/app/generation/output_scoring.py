@@ -174,9 +174,8 @@ def score_final_course(
 
     `rules_context` is the active-rules dict (same shape as
     `app/generation/orchestrator.py` `_load_active_rules`'s return value) -
-    used only to look up `rukn_forbidden_phrases` via the existing
-    `check_forbidden_phrases` validator, exactly as the per-reel review
-    path already does.
+    passed to the canonical quality-gates validator, exactly as the per-reel
+    review path already does.
     """
     forbidden_substrings_found = find_forbidden_substrings(document_text)
     forbidden_phrase_matches = check_forbidden_phrases(document_text, rules_context)

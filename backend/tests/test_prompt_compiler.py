@@ -1,5 +1,8 @@
 """Tests for app/generation/prompt_compiler.py - pure, no DB/session."""
 
+import pytest
+
+from app.data.course_standard import STANDARD_FILE_NAMES, load_standard_files
 from app.generation.prompt_compiler import (
     ALLOWED_USE_BY_CATEGORY,
     DEFAULT_MAX_TOTAL_CHARS,
@@ -13,121 +16,27 @@ from app.generation.prompt_compiler import (
 )
 from app.prompts.prompt_registry import PipelineStage
 
-ALL_RULES = {
-    "rukn_core_rules": "core",
-    "rukn_practical_course_rules": "practical",
-    "rukn_writing_style": "style",
-    "rukn_forbidden_phrases": "forbidden",
-    "rukn_quality_rubric": "rubric",
-    "rukn_teleprompter_docx_contract": "contract",
-    "rukn_high_signal_reel_doctrine": "doctrine",
-    "rukn_dynamic_teaching_curve": "curve",
-    "rukn_creator_persona_engine": "persona",
-    "rukn_creator_critic_loop": "critic",
-    "rukn_student_confusion_layer": "student",
-    "rukn_master_mentor_engine": "mentor",
-    "rukn_generation_presets": "presets",
-}
+ALL_RULES = load_standard_files()
 
 
-def test_review_single_reel_includes_forbidden_and_rubric_but_not_core_rules():
-    selected = select_rules_for_stage(ALL_RULES, PipelineStage.REVIEW_SINGLE_REEL)
-    assert "rukn_forbidden_phrases" in selected
-    assert "rukn_quality_rubric" in selected
-    assert "rukn_core_rules" not in selected
-
-
-def test_write_single_reel_includes_teleprompter_contract():
-    selected = select_rules_for_stage(ALL_RULES, PipelineStage.WRITE_SINGLE_REEL)
-    assert "rukn_teleprompter_docx_contract" in selected
-
-
-def test_write_and_review_stages_include_high_signal_doctrine():
-    for stage in (
-        PipelineStage.WRITE_SINGLE_REEL,
-        PipelineStage.REVIEW_SINGLE_REEL,
-        PipelineStage.REVIEW_MODULE,
-        PipelineStage.FINAL_REVIEW,
-    ):
-        selected = select_rules_for_stage(ALL_RULES, stage)
-        assert "rukn_high_signal_reel_doctrine" in selected
-
-
-def test_write_stages_include_dynamic_teaching_curve():
-    for stage in (
-        PipelineStage.BUILD_COURSE_MAP,
-        PipelineStage.WRITE_SINGLE_REEL,
-        PipelineStage.REVIEW_MODULE,
-    ):
-        selected = select_rules_for_stage(ALL_RULES, stage)
-        assert "rukn_dynamic_teaching_curve" in selected
-
-
-def test_write_stages_include_creator_persona_engine():
-    for stage in (
-        PipelineStage.BUILD_COURSE_MAP,
-        PipelineStage.WRITE_SINGLE_REEL,
-        PipelineStage.REVIEW_SINGLE_REEL,
-        PipelineStage.FINAL_REVIEW,
-    ):
-        selected = select_rules_for_stage(ALL_RULES, stage)
-        assert "rukn_creator_persona_engine" in selected
-
-
-def test_write_stages_include_creator_critic_loop():
-    for stage in (
-        PipelineStage.BUILD_COURSE_MAP,
-        PipelineStage.WRITE_SINGLE_REEL,
-        PipelineStage.REVIEW_MODULE,
-        PipelineStage.FINAL_REVIEW,
-    ):
-        selected = select_rules_for_stage(ALL_RULES, stage)
-        assert "rukn_creator_critic_loop" in selected
-
-
-def test_write_stages_include_student_confusion_layer():
-    for stage in (
-        PipelineStage.BUILD_COURSE_MAP,
-        PipelineStage.WRITE_SINGLE_REEL,
-        PipelineStage.REVIEW_MODULE,
-        PipelineStage.FINAL_REVIEW,
-    ):
-        selected = select_rules_for_stage(ALL_RULES, stage)
-        assert "rukn_student_confusion_layer" in selected
-
-
-def test_write_stages_include_master_mentor_engine():
-    for stage in (
-        PipelineStage.BUILD_COURSE_MAP,
-        PipelineStage.WRITE_SINGLE_REEL,
-        PipelineStage.REVIEW_MODULE,
-        PipelineStage.FINAL_REVIEW,
-    ):
-        selected = select_rules_for_stage(ALL_RULES, stage)
-        assert "rukn_master_mentor_engine" in selected
-    selected = select_rules_for_stage(ALL_RULES, PipelineStage.REBUILD_FINAL_COURSE)
-    assert "rukn_teleprompter_docx_contract" in selected
-
-
-def test_final_review_includes_teleprompter_contract():
-    selected = select_rules_for_stage(ALL_RULES, PipelineStage.FINAL_REVIEW)
-    assert "rukn_teleprompter_docx_contract" in selected
-
-
-def test_generation_presets_key_never_included_for_any_stage():
+def test_every_stage_selects_exact_complete_standard_in_order():
     for stage in PipelineStage:
         selected = select_rules_for_stage(ALL_RULES, stage)
-        assert "rukn_generation_presets" not in selected
+        assert tuple(selected) == STANDARD_FILE_NAMES
+        assert selected == ALL_RULES
 
 
-def test_missing_keys_are_just_omitted_not_an_error():
-    partial_rules = {"rukn_core_rules": "core"}
-    selected = select_rules_for_stage(partial_rules, PipelineStage.BUILD_COURSE_MAP)
-    assert selected["rukn_core_rules"] == "core"
-    # Missing admin keys are silently omitted (never an error) - only the
-    # always-injected compact authority hint is added on top.
-    assert "rukn_practical_course_rules" not in selected
-    assert set(selected) == {"rukn_core_rules", "rukn_authority_pack_hint"}
+def test_missing_canonical_file_fails_closed():
+    partial_rules = dict(ALL_RULES)
+    partial_rules.pop(STANDARD_FILE_NAMES[-1])
+    with pytest.raises(ValueError, match="incomplete"):
+        select_rules_for_stage(partial_rules, PipelineStage.BUILD_COURSE_MAP)
+
+
+def test_empty_context_loads_shipped_standard():
+    selected = select_rules_for_stage({}, PipelineStage.BUILD_COURSE_MAP)
+    assert tuple(selected) == STANDARD_FILE_NAMES
+    assert selected == ALL_RULES
 
 
 def test_flow_reference_produces_profile_not_verbatim_excerpt():
@@ -437,18 +346,9 @@ def test_flow_reference_profile_stays_compact_for_long_structured_input():
     assert len(excerpts[0].text) < len(heavily_structured_text) / 10
 
 
-def test_select_rules_for_stage_always_includes_teleprompter_contract_regardless_of_sources():
-    """Regression guard: no source category (flow_reference or otherwise)
-    can ever override Rukn's own format authority - the teleprompter
-    contract is selected purely from `all_rules`/`stage`, never touched by
-    what sources are present in a given run."""
-    for stage in (
-        PipelineStage.WRITE_SINGLE_REEL,
-        PipelineStage.REBUILD_FINAL_COURSE,
-        PipelineStage.FINAL_REVIEW,
-    ):
-        selected = select_rules_for_stage(ALL_RULES, stage)
-        assert "rukn_teleprompter_docx_contract" in selected
+def test_select_rules_is_independent_of_stage_and_sources():
+    for stage in PipelineStage:
+        assert select_rules_for_stage(ALL_RULES, stage) == ALL_RULES
 
 
 def test_compile_source_context_orders_by_authority_hierarchy():

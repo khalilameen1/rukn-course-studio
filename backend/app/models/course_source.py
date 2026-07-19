@@ -22,7 +22,7 @@ class CourseSource(SQLModel, table=True):
     source_category: SourceCategory = Field(
         sa_column=Column(sa_str_enum(SourceCategory), nullable=False)
     )
-    # Display title (filename fallback). Course-specific — never Admin Knowledge.
+    # Display title (filename fallback). Course-specific — never the canonical standard.
     title: Optional[str] = Field(default=None)
     original_filename: Optional[str] = None
     file_path: Optional[str] = None

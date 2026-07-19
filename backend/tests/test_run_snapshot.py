@@ -9,10 +9,12 @@ import hashlib
 from sqlmodel import Session, SQLModel, create_engine
 
 from app.crud import admin_knowledge_items, courses
+from app.data.admin_knowledge.seed_loader import seed
+from app.data.course_standard import STANDARD_FILE_NAMES, load_standard_files
 from app.generation.orchestrator import run_generation
 from app.generation.prompt_compiler import PROMPT_COMPILER_VERSION
 from app.generation.run_snapshot import HASH_LENGTH, build_run_snapshot
-from app.models.enums import ExplanationLevel, ItemType, StructureMode
+from app.models.enums import ExplanationLevel, StructureMode
 from app.version import get_app_commit
 
 
@@ -22,8 +24,8 @@ def _short_hash(text: str) -> str:
 
 def test_build_run_snapshot_shape_and_hashing():
     rules_context = {
-        "rukn_core_rules": "Some core rule text",
-        "rukn_forbidden_phrases": '{"phrases": []}',
+        STANDARD_FILE_NAMES[0]: "Some standard text",
+        STANDARD_FILE_NAMES[1]: "Runtime contract text",
     }
 
     snapshot = build_run_snapshot(
@@ -33,8 +35,8 @@ def test_build_run_snapshot_shape_and_hashing():
     )
 
     assert snapshot["admin_knowledge_snapshot"] == {
-        "rukn_core_rules": _short_hash("Some core rule text"),
-        "rukn_forbidden_phrases": _short_hash('{"phrases": []}'),
+        STANDARD_FILE_NAMES[0]: _short_hash("Some standard text"),
+        STANDARD_FILE_NAMES[1]: _short_hash("Runtime contract text"),
     }
     assert snapshot["prompt_compiler_version"] == PROMPT_COMPILER_VERSION
     assert snapshot["generation_preset"] == "balanced"
@@ -47,7 +49,7 @@ def test_build_run_snapshot_shape_and_hashing():
 
 def test_build_run_snapshot_never_includes_raw_admin_knowledge_text():
     long_secret_looking_text = "AUTH_SECRET_KEY=super-secret-value-should-never-appear"
-    rules_context = {"rukn_core_rules": long_secret_looking_text}
+    rules_context = {STANDARD_FILE_NAMES[0]: long_secret_looking_text}
 
     snapshot = build_run_snapshot(
         rules_context=rules_context, generation_preset="balanced", source_ids_used=[]
@@ -55,7 +57,7 @@ def test_build_run_snapshot_never_includes_raw_admin_knowledge_text():
 
     assert long_secret_looking_text not in str(snapshot)
     # Only a short hex hash for that key, never the content itself.
-    assert len(snapshot["admin_knowledge_snapshot"]["rukn_core_rules"]) == HASH_LENGTH
+    assert len(snapshot["admin_knowledge_snapshot"][STANDARD_FILE_NAMES[0]]) == HASH_LENGTH
 
 
 def test_build_run_snapshot_reports_anthropic_model_only_when_configured(monkeypatch):
@@ -70,7 +72,7 @@ def test_build_run_snapshot_reports_anthropic_model_only_when_configured(monkeyp
     assert snapshot["model"] == "claude-example-model"
 
 
-def test_run_snapshot_is_immutable_after_admin_knowledge_is_later_edited(tmp_path, monkeypatch):
+def test_generation_restores_edited_standard_before_snapshot(tmp_path, monkeypatch):
     import app.generation.orchestrator as orchestrator_module
 
     monkeypatch.setattr(orchestrator_module.settings, "storage_outputs_dir", tmp_path)
@@ -78,8 +80,12 @@ def test_run_snapshot_is_immutable_after_admin_knowledge_is_later_edited(tmp_pat
     engine = create_engine(f"sqlite:///{tmp_path / 'snapshot_test.db'}")
     SQLModel.metadata.create_all(engine)
 
-    original_text = "Original rule text, active during the first run."
     with Session(engine) as session:
+        seed(session)
+        key = STANDARD_FILE_NAMES[0]
+        original_text = load_standard_files()[key]
+        item = admin_knowledge_items.list(session, key=key)[0]
+        admin_knowledge_items.update(session, item.id, content_text="attempted mutation")
         course = courses.create(
             session,
             title="Course",
@@ -88,40 +94,8 @@ def test_run_snapshot_is_immutable_after_admin_knowledge_is_later_edited(tmp_pat
             structure_mode=StructureMode.CONNECTED_NO_MODULES,
             explanation_level=ExplanationLevel.FINAL_ONLY,
         )
-        item = admin_knowledge_items.create(
-            session,
-            key="rukn_core_rules",
-            title="Core rules",
-            item_type=ItemType.MARKDOWN,
-            content_text=original_text,
-            is_active=True,
-        )
-
         job = run_generation(session, course.id)
-        job_id = job.id
-        course_id = course.id
-        original_hash = job.run_snapshot_json["admin_knowledge_snapshot"]["rukn_core_rules"]
+        original_hash = job.run_snapshot_json["admin_knowledge_snapshot"][key]
         assert original_hash == _short_hash(original_text)
-
-        # Edit the admin knowledge item *after* the run completed.
-        admin_knowledge_items.update(session, item.id, content_text="Edited rule text, changed later.")
-
-    # The already-stored job snapshot must still reflect the pre-edit
-    # content - never silently updated by the later edit.
-    with Session(engine) as session:
-        from app.crud import generation_jobs
-
-        reloaded_job = generation_jobs.get(session, job_id)
-        assert (
-            reloaded_job.run_snapshot_json["admin_knowledge_snapshot"]["rukn_core_rules"]
-            == original_hash
-        )
-        assert reloaded_job.run_snapshot_json["admin_knowledge_snapshot"][
-            "rukn_core_rules"
-        ] != _short_hash("Edited rule text, changed later.")
-
-        # A brand-new run, by contrast, must pick up the edited content.
-        new_job = run_generation(session, course_id)
-        assert new_job.run_snapshot_json["admin_knowledge_snapshot"][
-            "rukn_core_rules"
-        ] == _short_hash("Edited rule text, changed later.")
+        restored = admin_knowledge_items.list(session, key=key)[0]
+        assert restored.content_text == original_text

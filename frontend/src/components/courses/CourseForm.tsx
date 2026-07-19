@@ -115,7 +115,7 @@ export default function CourseForm({
     <form onSubmit={handleSubmit} className="flex flex-col gap-6">
       <SectionPanel label="A. Course Brief">
         <p className="mb-3 text-xs text-muted">
-          Basic information for this course. Global ROKN rules live in Admin Knowledge —
+          Basic information for this course. Global ROKN rules live in the Course Standard —
           not here.
         </p>
         <label className="flex flex-col gap-1 text-sm">

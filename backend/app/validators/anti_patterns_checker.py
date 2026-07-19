@@ -27,12 +27,11 @@ TEMPLATE_HOOK_PATTERNS: tuple[str, ...] = (
     r"you will be shocked",
 )
 
-# Admin Knowledge labels that must never leak into teleprompter DOCX.
+# Internal standard labels that must never leak into teleprompter DOCX.
 ADMIN_KNOWLEDGE_LEAK_PHRASES: tuple[str, ...] = (
     "anti-patterns to reject",
     "rejected patterns and diagnostic",
     "quality checks before final rewrite",
-    "rukn_anti_patterns_quality_checks",
     "rejection layer only",
     "do not copy as a style template",
 )
@@ -58,7 +57,7 @@ def check_anti_patterns_script(
     *,
     reel_id: str = "reel",
 ) -> list[AntiPatternIssue]:
-    """Per-script rejection checks aligned with rukn_anti_patterns_quality_checks."""
+    """Per-script rejection checks aligned with the canonical quality gates."""
     text = script_text or ""
     issues: list[AntiPatternIssue] = []
 

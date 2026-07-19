@@ -12,7 +12,7 @@ const FRONTEND_BUILD_TIME =
   "unknown (set NEXT_PUBLIC_BUILD_TIME at build if needed)";
 
 /**
- * Compact deploy visibility card for Admin Knowledge.
+ * Compact deploy visibility card for the canonical course standard.
  * Shows which frontend/backend builds are live — no secrets.
  */
 export default function DeployDiagnostics() {

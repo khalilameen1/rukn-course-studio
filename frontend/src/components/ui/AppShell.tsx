@@ -8,7 +8,7 @@ import { hasScope, SCOPE_ADMIN_KNOWLEDGE, SCOPE_AI_USAGE } from "@/lib/auth";
 
 const NAV_LINKS = [
   { href: "/", label: "Home", scope: null as string | null },
-  { href: "/admin", label: "Admin Knowledge", scope: SCOPE_ADMIN_KNOWLEDGE },
+  { href: "/admin", label: "Course Standard", scope: SCOPE_ADMIN_KNOWLEDGE },
   { href: "/courses", label: "Courses", scope: null },
   { href: "/ai-usage", label: "AI Usage", scope: SCOPE_AI_USAGE },
 ];

@@ -5,13 +5,8 @@ Uses FakeProvider + fixtures only. Network and real providers are blocked.
 
 from __future__ import annotations
 
-import os
-
 import pytest
 from sqlmodel import Session, SQLModel, create_engine
-
-# Activate credit-safe mode before importing factory-dependent modules.
-os.environ["RUKN_CREDIT_SAFE_TESTS"] = "1"
 
 from app.ai.fake_provider import FakeProvider
 from app.ai.provider import CourseBrief
@@ -74,7 +69,8 @@ from app.schemas.generation import (
 
 
 @pytest.fixture(autouse=True)
-def _credit_safe():
+def _credit_safe(monkeypatch):
+    monkeypatch.setenv("RUKN_CREDIT_SAFE_TESTS", "1")
     reset_real_provider_call_count()
     block_network()
     yield

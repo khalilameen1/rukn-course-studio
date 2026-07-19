@@ -160,6 +160,8 @@ def test_build_prompt_includes_template_and_context():
 
 
 def test_message_content_marks_stable_rules_for_cache():
+    from app.data.course_standard import load_standard_files
+
     provider = AnthropicProvider(api_key="test-key")
     input_model = ReviewSingleReelInput(
         reel_plan=ReelPlan(
@@ -168,10 +170,7 @@ def test_message_content_marks_stable_rules_for_cache():
         generated_reel=GeneratedReel(
             reel_id="r1", module_id="m1", title="Reel 1", script_text="hi", self_check_status="pass"
         ),
-        rules_context={
-            "rukn_core_rules": "stable body",
-            "runtime_hint": "dynamic only",
-        },
+        rules_context={**load_standard_files(), "runtime_hint": "dynamic only"},
     )
 
     blocks = provider._build_message_content(
@@ -181,7 +180,7 @@ def test_message_content_marks_stable_rules_for_cache():
     assert len(stable_blocks) == 1
     assert stable_blocks[0]["cache_control"] == {"type": "ephemeral"}
     assert "Stable rules" in stable_blocks[0]["text"]
-    assert "rukn_core_rules" in stable_blocks[0]["text"]
+    assert "00-runtime-contract.md" in stable_blocks[0]["text"]
     assert "runtime_hint" not in stable_blocks[0]["text"]
     flat = "".join(b.get("text", "") for b in blocks if b.get("type") == "text")
     assert "runtime_hint" in flat

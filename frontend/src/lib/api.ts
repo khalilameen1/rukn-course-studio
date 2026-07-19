@@ -1,9 +1,7 @@
 import { API_BASE_URL } from "@/lib/config";
 import { clearToken, getToken } from "@/lib/auth";
 import type {
-  AdminKnowledgeCreateInput,
   AdminKnowledgeItem,
-  AdminKnowledgeUpdateInput,
   BuildInfoResponse,
   Course,
   CourseCreateInput,
@@ -19,6 +17,7 @@ import type {
   SourceCategory,
   AIUsageSummary,
   CourseAIUsage,
+  CourseStandardManifest,
 } from "@/lib/types";
 
 // `status` is set for any real HTTP response (even error ones), so callers
@@ -342,13 +341,8 @@ export const api = {
   diagnosticsFull: () => apiFetch<DiagnosticsResponse>("/auth/diagnostics/full"),
   logout: () => apiFetch<void>("/auth/logout", { method: "POST" }),
 
-  // Admin knowledge (default: active primary only)
-  listKnowledgeItems: (opts?: { includeInactive?: boolean }) =>
-    apiFetch<AdminKnowledgeItem[]>(
-      opts?.includeInactive
-        ? "/admin/knowledge?active_only=false&include_inactive=true"
-        : "/admin/knowledge",
-    ),
+  // Canonical RUKN course standard (read-only; reset restores shipped files).
+  listKnowledgeItems: () => apiFetch<AdminKnowledgeItem[]>("/admin/knowledge"),
   listKnowledgeCatalog: () =>
     apiFetch<
       Array<{
@@ -359,8 +353,26 @@ export const api = {
         refreshable: boolean;
         in_stage_packs: boolean;
         stable: boolean;
+        order: number;
+        file_path: string;
+        standard_version: string;
+        standard_fingerprint: string;
+        read_only: boolean;
       }>
     >("/admin/knowledge/catalog"),
+  getKnowledgeManifest: () =>
+    apiFetch<CourseStandardManifest>("/admin/knowledge/manifest"),
+  resetKnowledgeStandard: () =>
+    apiFetch<
+      CourseStandardManifest & {
+        changed: boolean;
+        removed_rows: number;
+        inserted_rows: number;
+        cleared_course_snapshots: number;
+        cleared_job_snapshots: number;
+        deleted_backup_files: number;
+      }
+    >("/admin/knowledge/reset?confirm=true", { method: "POST" }),
   listAuditLogs: (limit = 50) =>
     apiFetch<
       Array<{
@@ -375,102 +387,6 @@ export const api = {
         details: unknown;
       }>
     >(`/admin/audit?limit=${limit}`),
-  cleanupKnowledgeDuplicates: (opts?: { dryRun?: boolean; confirm?: boolean }) => {
-    const dryRun = opts?.dryRun ?? true;
-    const confirm = opts?.confirm ?? false;
-    const qs = new URLSearchParams({
-      dry_run: String(dryRun),
-      confirm: String(confirm),
-    });
-    return apiFetch<{
-      deactivated_count?: number;
-      would_deactivate_count?: number;
-      message: string;
-      deactivated?: unknown[];
-      would_deactivate?: unknown[];
-      kept_active: unknown[];
-      applied?: boolean;
-      dry_run?: boolean;
-      backup?: { path: string } | null;
-    }>(`/admin/knowledge/cleanup-duplicates?${qs}`, { method: "POST" });
-  },
-  refreshKnowledgeDefaults: (opts?: { dryRun?: boolean; confirm?: boolean }) => {
-    const dryRun = opts?.dryRun ?? true;
-    const confirm = opts?.confirm ?? false;
-    const qs = new URLSearchParams({
-      dry_run: String(dryRun),
-      confirm: String(confirm),
-    });
-    return apiFetch<{
-      applied: boolean;
-      dry_run: boolean;
-      message: string;
-      would_refresh_count?: number;
-      would_refresh?: string[];
-      refreshed_count?: number;
-      refreshed?: string[];
-    }>(`/admin/knowledge/refresh-defaults?${qs}`, { method: "POST" });
-  },
-  listKnowledgeVersions: (key: string) =>
-    apiFetch<AdminKnowledgeItem[]>(
-      `/admin/knowledge/keys/${encodeURIComponent(key)}/versions`,
-    ),
-  listKnowledgeBackups: () =>
-    apiFetch<
-      Array<{ path: string; name: string; size_bytes: number; modified_at: string }>
-    >("/admin/knowledge/backups"),
-  createKnowledgeItem: (
-    payload: AdminKnowledgeCreateInput,
-    opts?: { allowCustomKey?: boolean },
-  ) => {
-    const qs = opts?.allowCustomKey ? "?allow_custom_key=true" : "";
-    return apiFetch<AdminKnowledgeItem>(`/admin/knowledge${qs}`, {
-      method: "POST",
-      body: JSON.stringify(payload),
-    });
-  },
-  updateKnowledgeItem: (
-    id: number,
-    payload: AdminKnowledgeUpdateInput,
-    opts?: { confirm?: boolean; dryRun?: boolean; confirmKey?: string },
-  ) => {
-    const qs = new URLSearchParams({
-      confirm: String(opts?.confirm ?? true),
-      dry_run: String(opts?.dryRun ?? false),
-    });
-    if (opts?.confirmKey) qs.set("confirm_key", opts.confirmKey);
-    return apiFetch<AdminKnowledgeItem | Record<string, unknown>>(
-      `/admin/knowledge/${id}?${qs}`,
-      {
-        method: "PUT",
-        body: JSON.stringify(payload),
-      },
-    );
-  },
-  deleteKnowledgeItem: (
-    id: number,
-    opts?: { dryRun?: boolean; confirm?: boolean; purge?: boolean },
-  ) => {
-    const qs = new URLSearchParams({
-      dry_run: String(opts?.dryRun ?? false),
-      confirm: String(opts?.confirm ?? true),
-      purge: String(opts?.purge ?? false),
-    });
-    return apiFetch<{ message: string; applied?: boolean; action?: string }>(
-      `/admin/knowledge/${id}?${qs}`,
-      { method: "DELETE" },
-    );
-  },
-  activateKnowledgeItem: (id: number) =>
-    apiFetch<{
-      applied: boolean;
-      dry_run: boolean;
-      message: string;
-      item?: AdminKnowledgeItem;
-    }>(`/admin/knowledge/${id}/activate?dry_run=false&confirm=true`, {
-      method: "POST",
-    }),
-
   // Courses
   listCourses: () => apiFetch<Course[]>("/courses"),
   createCourse: (payload: CourseCreateInput, opts?: { idempotencyKey?: string }) =>

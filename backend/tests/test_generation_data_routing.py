@@ -23,7 +23,8 @@ from app.models.enums import (
     SourceCategory,
     StructureMode,
 )
-from app.seed_admin_knowledge import SEED_ITEMS
+from app.data.admin_knowledge.seed_loader import SEED_ITEMS
+from app.data.course_standard import STANDARD_FILE_NAMES
 from app.services.source_analysis import analyze_source_text
 
 
@@ -137,7 +138,7 @@ def test_course_sources_never_appear_in_admin_knowledge(session):
         assert marker not in blob
 
 
-def test_map_stage_excludes_flow_reference_and_uses_packed_admin_rules(session):
+def test_map_stage_excludes_flow_reference_and_uses_complete_standard(session):
     course = courses.create(
         session,
         title="Meta Ads for Egyptian Shops",
@@ -164,14 +165,14 @@ def test_map_stage_excludes_flow_reference_and_uses_packed_admin_rules(session):
 
     rules = {item.key: item.content_text for item in admin_knowledge_items.list(session, is_active=True)}
     packed = select_packed_rules_for_stage(rules, PipelineStage.BUILD_COURSE_MAP)
-    pack_chars = sum(len(v) for v in packed.values())
-    full_chars = sum(len(v) for v in select_rules_for_stage(rules, PipelineStage.BUILD_COURSE_MAP).values())
-    assert pack_chars < full_chars
-    assert pack_chars <= 6000
+    selected = select_rules_for_stage(rules, PipelineStage.BUILD_COURSE_MAP)
+    assert tuple(selected) == STANDARD_FILE_NAMES
+    joined = "\n".join(packed.values())
+    assert all(joined.count(selected[name]) == 1 for name in STANDARD_FILE_NAMES)
 
     assert provider.reel_calls
     reel_rules = select_packed_rules_for_stage(rules, PipelineStage.WRITE_SINGLE_REEL)
-    assert "lesson_writing_rules_pack" in reel_rules
+    assert "rukn_universal_course_standard" in reel_rules
     assert "teleprompter" in " ".join(reel_rules.values()).lower() or any(
         "teleprompter" in k for k in reel_rules
     )
@@ -203,7 +204,7 @@ def test_mixed_draft_memory_not_full_dump_in_map_prompt(session):
     assert len(compact) < len(long_draft) // 2
 
 
-def test_packed_rules_never_include_full_seed_articles():
+def test_packed_rules_include_every_standard_file_whole_once():
     all_rules = {item["key"]: item["content_text"] for item in SEED_ITEMS if item.get("content_text")}
     for stage in (
         PipelineStage.BUILD_COURSE_MAP,
@@ -214,5 +215,4 @@ def test_packed_rules_never_include_full_seed_articles():
         joined = "\n".join(packed.values())
         for item in SEED_ITEMS:
             content = item.get("content_text") or ""
-            if len(content) > 1200:
-                assert content not in joined
+            assert joined.count(content) == 1

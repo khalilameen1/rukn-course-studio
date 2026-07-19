@@ -1,4 +1,4 @@
-"""Local checks for rukn_high_signal_reel_doctrine failures.
+"""Local checks for high-signal lesson failures in the canonical standard.
 
 Plain substring / regex heuristics - no AI. Used before the AI review call
 (see orchestrator `_local_review_single_reel`) and by golden tests.

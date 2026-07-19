@@ -1,6 +1,6 @@
 """Cross-reel anti-template checks (module / five-reel window).
 
-Deterministic heuristics for rukn_high_signal_reel_doctrine course-level
+Deterministic heuristics for canonical course-level quality rules:
 rules: same hook family, same loop move, equal lengths, mechanical devices.
 """
 

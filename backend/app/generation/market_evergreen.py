@@ -161,7 +161,7 @@ class MarketEvergreenReport:
 
 
 def compile_market_guidance(target_market: TargetMarket | str) -> str:
-    """Compact runtime guidance injected beside Admin Knowledge (not DOCX)."""
+    """Compact runtime guidance injected beside the canonical standard."""
     market = (
         target_market
         if isinstance(target_market, TargetMarket)

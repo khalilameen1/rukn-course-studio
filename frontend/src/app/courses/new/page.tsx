@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { EMPTY_COURSE_VALUES, type CourseFormValues } from "@/components/courses/CourseForm";
 import ActionError, { actionErrorFromUnknown } from "@/components/ui/ActionError";
 import { api, ApiError, formatUploadErrorForDisplay } from "@/lib/api";
@@ -66,15 +66,14 @@ export default function NewCoursePage() {
   const [busy, setBusy] = useState(false);
   const [allowLeave, setAllowLeave] = useState(false);
   const [draftSavedNotice, setDraftSavedNotice] = useState<string | null>(null);
-  const createIdempotencyKeyRef = useRef<string>(
-    typeof crypto !== "undefined" && "randomUUID" in crypto
-      ? `new-course-${crypto.randomUUID()}`
-      : `new-course-${Date.now()}`,
-  );
+  const stableRequestId = useId();
+  const createIdempotencyKeyRef = useRef<string>(`new-course-${stableRequestId}`);
 
   useEffect(() => {
     const draft = loadNewCourseDraft();
     if (!draft) return;
+    // Restore the one persisted client draft after hydration.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setValues(draft.values);
     setCourseId(draft.courseId);
     setSavedMapText(draft.values.manual_map_text ?? "");

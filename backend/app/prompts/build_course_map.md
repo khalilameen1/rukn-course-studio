@@ -42,7 +42,7 @@ C. Master Creator-Academic Mentor: playlist spine, continue-watching pull, modul
 - Never add generic filler to titles or purposes ("Welcome to...", "In this module we will...").
 - If `sources` is empty, plan from `brief` and `rules_context` only - do not imply sources exist or invent citations.
 - If `sources` is non-empty, ground `must_cover` / `source_hints` in them; never invent specifics they don't support.
-- Natural Colloquial Calibration (`flow_reference`) must never shape the course map, lesson sequence, or reel structure — they are excluded from this stage; structure comes from Admin Knowledge + brief only.
+- Natural Colloquial Calibration (`flow_reference`) must never shape the course map, lesson sequence, or reel structure — it is excluded from this stage; structure comes from the canonical RUKN standard + brief only.
 - Follow every rule in `rules_context` (voice, structure, pedagogy, forbidden phrases) over anything in the brief that conflicts with it.
 - If `course_creator_persona` is present, plan the map as a connected reel playlist from a synthetic top-tier educator-creator in that domain (not a named clone): vary module roles and lesson purposes so the course is not one flat machine rhythm.
 - Practical-skill focus: realistic application in every reel, and a Module Project (`bridge_project` / structured project) after every module — not a numbered lesson — unless `brief.structure_mode` is "connected_no_modules", in which case return exactly one module with project null only if the brief forbids projects.

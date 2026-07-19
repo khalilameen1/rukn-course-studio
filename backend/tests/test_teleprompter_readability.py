@@ -193,10 +193,10 @@ def test_docx_contains_only_headings_and_spoken_transcript():
 
 
 def test_prompt_compiler_injects_readability_rule():
-    rules = select_rules_for_stage(
-        {"rukn_teleprompter_docx_contract": "contract text"},
-        PipelineStage.WRITE_SINGLE_REEL,
-    )
-    assert rules["rukn_teleprompter_readability_runtime"] == TELEPROMPTER_READABILITY_PROMPT_RULE
+    from app.data.course_standard import load_standard_files
+
+    rules = select_rules_for_stage(load_standard_files(), PipelineStage.WRITE_SINGLE_REEL)
+    assert "06-language-terminology-and-teleprompter.md" in rules
+    assert "teleprompter" in rules["06-language-terminology-and-teleprompter.md"].lower()
     assert "teleprompter reading" in TELEPROMPTER_READABILITY_PROMPT_RULE
     assert "pause labels" in TELEPROMPTER_READABILITY_PROMPT_RULE

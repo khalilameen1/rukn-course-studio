@@ -1,267 +1,118 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { api, formatApiErrorForDisplay } from "@/lib/api";
-import type { AdminKnowledgeItem } from "@/lib/types";
-import KnowledgeItemForm, {
-  type KnowledgeItemFormValues,
-} from "@/components/admin/KnowledgeItemForm";
 import KnowledgeItemGrid, {
   useKnowledgeCatalog,
 } from "@/components/admin/KnowledgeItemGrid";
-import EmptyState from "@/components/ui/EmptyState";
 import PageHeader from "@/components/ui/PageHeader";
-import DeployDiagnostics from "@/components/admin/DeployDiagnostics";
+import { api, formatApiErrorForDisplay } from "@/lib/api";
+import type {
+  AdminKnowledgeItem,
+  CourseStandardManifest,
+} from "@/lib/types";
 
 export default function AdminKnowledgePage() {
   const [items, setItems] = useState<AdminKnowledgeItem[]>([]);
+  const [manifest, setManifest] = useState<CourseStandardManifest | null>(null);
   const [loading, setLoading] = useState(true);
+  const [resetting, setResetting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [editingItem, setEditingItem] = useState<AdminKnowledgeItem | null>(null);
-  const [showInactive, setShowInactive] = useState(false);
-  const [actionBusy, setActionBusy] = useState<string | null>(null);
   const catalog = useKnowledgeCatalog();
 
   const refresh = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      setItems(await api.listKnowledgeItems({ includeInactive: showInactive }));
+      const [rows, packageManifest] = await Promise.all([
+        api.listKnowledgeItems(),
+        api.getKnowledgeManifest(),
+      ]);
+      setItems(rows);
+      setManifest(packageManifest);
     } catch (err) {
       setError(formatApiErrorForDisplay(err));
     } finally {
       setLoading(false);
     }
-  }, [showInactive]);
+  }, []);
 
   useEffect(() => {
+    // Standard fetch-on-mount; refresh is also reused after a confirmed reset.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    refresh();
+    void refresh();
   }, [refresh]);
 
-  async function handleCleanup() {
-    if (actionBusy) return;
-    setActionBusy("cleanup");
-    try {
-      const preview = await api.cleanupKnowledgeDuplicates({ dryRun: true, confirm: false });
-      const count =
-        preview.would_deactivate_count ?? preview.deactivated_count ?? 0;
-      if (
-        !confirm(
-          `${preview.message}\n\nApply and deactivate ${count} duplicate(s)? ` +
-            "A JSON backup snapshot will be written first.",
-        )
-      ) {
-        return;
-      }
-      const report = await api.cleanupKnowledgeDuplicates({
-        dryRun: false,
-        confirm: true,
-      });
-      alert(report.message);
-      await refresh();
-    } catch (err) {
-      setError(formatApiErrorForDisplay(err));
-    } finally {
-      setActionBusy(null);
-    }
-  }
-
-  async function handleRefreshDefaults() {
-    if (actionBusy) return;
-    setActionBusy("refresh-defaults");
-    try {
-      const preview = await api.refreshKnowledgeDefaults({ dryRun: true, confirm: false });
-      const keys = preview.would_refresh ?? [];
-      if (
-        !confirm(
-          `${preview.message}\n\nKeys (${keys.length}):\n${keys.slice(0, 12).join("\n")}` +
-            (keys.length > 12 ? "\n…" : "") +
-            "\n\nApply? Previous active rows are kept inactive as backups.",
-        )
-      ) {
-        return;
-      }
-      const report = await api.refreshKnowledgeDefaults({
-        dryRun: false,
-        confirm: true,
-      });
-      alert(report.message);
-      setShowInactive(true);
-      await refresh();
-    } catch (err) {
-      setError(formatApiErrorForDisplay(err));
-    } finally {
-      setActionBusy(null);
-    }
-  }
-
-  async function handleSubmit(values: KnowledgeItemFormValues) {
-    if (actionBusy) return;
-    setActionBusy(editingItem ? `save-${editingItem.id}` : "create");
-    try {
-      const payload = {
-        key: values.key,
-        title: values.title,
-        item_type: values.item_type,
-        content_text: values.item_type === "docx_template" ? null : values.content_text,
-        file_path: values.item_type === "docx_template" ? values.file_path : null,
-      };
-
-      if (editingItem) {
-        const meta = catalog[editingItem.key];
-        if (meta?.stable) {
-          const preview = (await api.updateKnowledgeItem(editingItem.id, payload, {
-            confirm: false,
-            dryRun: true,
-          })) as Record<string, unknown>;
-          if (
-            !confirm(
-              `${String(preview.message ?? "High-trust key change")}\n\n` +
-                `Fingerprint ${preview.content_fingerprint_before} → ${preview.content_fingerprint_after}\n\n` +
-                "Apply as a new version? A JSON snapshot is written first.",
-            )
-          ) {
-            return;
-          }
-        }
-        await api.updateKnowledgeItem(editingItem.id, payload, {
-          confirm: true,
-          dryRun: false,
-          confirmKey: editingItem.key,
-        });
-        setEditingItem(null);
-      } else {
-        const known = Boolean(catalog[values.key]);
-        await api.createKnowledgeItem(payload, { allowCustomKey: !known });
-      }
-      await refresh();
-    } catch (err) {
-      setError(formatApiErrorForDisplay(err));
-    } finally {
-      setActionBusy(null);
-    }
-  }
-
-  async function handleDelete(item: AdminKnowledgeItem) {
-    if (actionBusy) return;
+  async function handleReset() {
+    if (resetting) return;
     if (
       !confirm(
-        `Archive "${item.title}" (deactivate)? The row is kept as inactive. ` +
-          "Permanent purge is CLI-only with confirm+purge.",
+        "Reset to the shipped RUKN v1.3 package? This permanently deletes " +
+          "all non-canonical rows, retired versions, and old Admin Knowledge snapshots.",
       )
     ) {
       return;
     }
-    setActionBusy(`delete-${item.id}`);
+    setResetting(true);
+    setError(null);
     try {
-      await api.deleteKnowledgeItem(item.id, {
-        confirm: true,
-        dryRun: false,
-        purge: false,
-      });
-      if (editingItem?.id === item.id) setEditingItem(null);
+      await api.resetKnowledgeStandard();
       await refresh();
     } catch (err) {
       setError(formatApiErrorForDisplay(err));
     } finally {
-      setActionBusy(null);
-    }
-  }
-
-  async function handleActivate(item: AdminKnowledgeItem) {
-    if (actionBusy) return;
-    if (
-      !confirm(
-        `Activate "${item.title}" (${item.key})?\n\nThis will deactivate other versions of the same key.`,
-      )
-    ) {
-      return;
-    }
-    setActionBusy(`activate-${item.id}`);
-    try {
-      await api.activateKnowledgeItem(item.id);
-      await refresh();
-    } catch (err) {
-      setError(formatApiErrorForDisplay(err));
-    } finally {
-      setActionBusy(null);
+      setResetting(false);
     }
   }
 
   return (
     <div className="flex flex-col gap-8">
       <PageHeader
-        title="Admin Knowledge"
-        description="Admin Knowledge is global ROKN behavior used across all courses. Course-specific sources, transcripts, and maps belong on each course page — not here."
+        title="RUKN Course Standard"
+        description="The immutable control system used by every course-generation stage."
       />
 
-      <div className="rounded-xl border border-border bg-surface-muted/50 px-4 py-3 text-sm text-muted">
-        <p className="font-medium text-foreground">Global rules only</p>
-        <p className="mt-1">
-          Edit writing rules, quality gates, and teleprompter contract here. Upload PDFs, transcripts,
-          and course maps from the course workspace Sources tab.
-        </p>
-      </div>
-
-      <DeployDiagnostics />
+      <section className="rounded-xl border border-border bg-surface-muted/50 p-4">
+        <div className="grid gap-3 text-sm sm:grid-cols-3">
+          <div>
+            <p className="text-muted">Standard version</p>
+            <p className="mt-1 font-mono text-foreground">
+              {manifest?.standard_version ?? "—"}
+            </p>
+          </div>
+          <div>
+            <p className="text-muted">Canonical files</p>
+            <p className="mt-1 font-medium text-foreground">
+              {manifest ? `${items.length}/${manifest.file_count}` : "—"}
+            </p>
+          </div>
+          <div className="min-w-0">
+            <p className="text-muted">Fingerprint</p>
+            <p className="mt-1 truncate font-mono text-xs text-foreground" title={manifest?.fingerprint}>
+              {manifest?.fingerprint ?? "—"}
+            </p>
+          </div>
+        </div>
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
+          <p className="max-w-2xl text-sm text-muted">
+            Read-only by design. Custom knowledge, inactive archives, and parallel rule paths are disabled.
+          </p>
+          <button
+            type="button"
+            className="btn-secondary"
+            disabled={resetting}
+            onClick={handleReset}
+          >
+            {resetting ? "Resetting…" : "Reset canonical package"}
+          </button>
+        </div>
+      </section>
 
       {error ? <p className="text-sm text-red-600 dark:text-red-400">{error}</p> : null}
-
-      <div className="flex flex-wrap items-center gap-3 text-sm">
-        <label className="flex items-center gap-2 text-muted">
-          <input
-            type="checkbox"
-            checked={showInactive}
-            onChange={(e) => setShowInactive(e.target.checked)}
-          />
-          Show inactive / archived versions
-        </label>
-        <button
-          type="button"
-          className="btn-secondary"
-          disabled={Boolean(actionBusy)}
-          onClick={handleCleanup}
-        >
-          {actionBusy === "cleanup" ? "Working…" : "Clean duplicate active items"}
-        </button>
-        <button
-          type="button"
-          className="btn-secondary"
-          disabled={Boolean(actionBusy)}
-          onClick={handleRefreshDefaults}
-        >
-          {actionBusy === "refresh-defaults"
-            ? "Refreshing…"
-            : "Refresh system defaults from code"}
-        </button>
-      </div>
-
       {loading ? (
-        <p className="text-sm text-muted">Loading...</p>
-      ) : items.length === 0 ? (
-        <EmptyState
-          title="Admin knowledge not seeded yet"
-          description="This normally seeds automatically when the backend starts. If it's still empty, run `python -m app.seed_admin_knowledge` from backend/, or restart the backend - or add an item manually below."
-        />
+        <p className="text-sm text-muted">Loading canonical package…</p>
       ) : (
-        <KnowledgeItemGrid
-          items={items}
-          catalog={catalog}
-          onEdit={setEditingItem}
-          onDelete={handleDelete}
-          onActivate={handleActivate}
-          actionBusy={actionBusy}
-        />
+        <KnowledgeItemGrid items={items} catalog={catalog} />
       )}
-
-      <KnowledgeItemForm
-        key={editingItem?.id ?? "new"}
-        editingItem={editingItem}
-        onSubmit={handleSubmit}
-        onCancel={() => setEditingItem(null)}
-        onActivateVersion={handleActivate}
-      />
     </div>
   );
 }

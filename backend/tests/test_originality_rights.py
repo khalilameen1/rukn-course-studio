@@ -198,9 +198,9 @@ def test_final_docx_original_spoken_only():
     assert any(i.gate == "originality" for i in report.issues) or True
 
 
-def test_originality_admin_key_in_prompt_stages():
-    selected = select_rules_for_stage(
-        {"rukn_originality_rights_gate": "orig rules"},
-        PipelineStage.WRITE_SINGLE_REEL,
-    )
-    assert "rukn_originality_rights_gate" in selected
+def test_originality_rules_are_in_the_canonical_prompt_package():
+    from app.data.course_standard import STANDARD_FILE_NAMES, load_standard_files
+
+    selected = select_rules_for_stage(load_standard_files(), PipelineStage.WRITE_SINGLE_REEL)
+    assert tuple(selected) == STANDARD_FILE_NAMES
+    assert "original" in "\n".join(selected.values()).lower()

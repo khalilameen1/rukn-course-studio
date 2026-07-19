@@ -120,6 +120,8 @@ export default function CourseDetailPage() {
     const sp = new URLSearchParams(window.location.search);
     if (sp.get("sources_failed") !== "1") return;
     const reason = sp.get("reason")?.trim();
+    // This state mirrors a one-time redirect query flag.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setSourceFlushNotice(
       reason
         ? `Sources from the create form could not be saved (${reason}). Upload them again below, then start generation.`
