@@ -99,7 +99,8 @@ def test_distinctive_source_example_replaced():
     out = rewrite_script_originality(
         script, source_texts=[SOURCE_BLOCK], target_market=TargetMarket.EGYPT
     )
-    assert "خلّينا نشرح" in out or "صياغة المصدر" in out
+    assert "صياغة المصدر" not in out
+    assert "رُكن" not in out
 
 
 def test_named_creator_catchphrase_rejected():
@@ -157,11 +158,13 @@ def test_paraphrased_article_like_output_flagged():
     assert "it is worth noting" not in out.lower()
 
 
-def test_egypt_replaces_imported_examples():
+def test_egypt_strips_imported_examples_without_inventing_stock_local_one():
     text = "Your Silicon Valley Series A client with a $10,000 ad budget."
     out = rewrite_script_originality(text, target_market=TargetMarket.EGYPT)
     assert "silicon valley" not in out.lower()
-    assert "واتساب" in out or "محل" in out or "عيادة" in out
+    assert "واتساب" not in out
+    assert "محل" not in out
+    assert "عيادة" not in out
 
 
 def test_final_docx_original_spoken_only():

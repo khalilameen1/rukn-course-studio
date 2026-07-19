@@ -161,7 +161,8 @@ ALLOWED_USE_BY_CATEGORY: dict[str, list[str]] = {
         "list_expressions_not_to_imitate",
     ],
     SourceCategory.OLD_COURSE.value: [
-        "reuse_useful_structure_or_content",
+        "extract_still_valid_facts_and_concepts_as_candidates",
+        "verify_current_claims_before_use",
         "identify_strengths_and_weaknesses",
     ],
     SourceCategory.MIXED_QUALITY_AI_COURSE_DRAFT.value: [
@@ -259,6 +260,8 @@ DISALLOWED_USE_BY_CATEGORY: dict[str, list[str]] = {
         "treat_whole_draft_as_worthless",
         "ground_claims_from_draft_alone",
         "use_old_map_as_final_map",
+        "reuse_old_course_structure_or_workflow",
+        "let_old_course_impose_section_order",
     ],
     SourceCategory.MIXED_QUALITY_AI_COURSE_DRAFT.value: [
         "blindly_summarize",
@@ -333,7 +336,8 @@ STYLE_CONTAMINATION_WARNING_BY_CATEGORY: dict[str, str | None] = {
 # independent of the `priority` field. Reflects: user instructions > Rukn
 # The canonical RUKN standard (handled separately, always present - see
 # `select_rules_for_stage`) > course brief (handled elsewhere in the
-# orchestrator) > scientific facts > flow mechanics > old course structure.
+# orchestrator) > scientific facts > transcript candidates > language-only
+# calibration > old-course candidates. Old course structure has no authority.
 _CATEGORY_AUTHORITY_RANK: dict[str, int] = {
     SourceCategory.USER_NOTES.value: 0,
     SourceCategory.SCIENTIFIC_REFERENCE.value: 1,

@@ -820,7 +820,12 @@ def run_generation(
                 continue
         map_rules = {
             **map_rules,
-            "rukn_target_market_runtime": compile_market_guidance(brief.target_market),
+            "rukn_target_market_runtime": compile_market_guidance(
+                brief.target_market,
+                special_notes=brief.special_notes,
+                realistic_student_budget=brief.realistic_student_budget,
+                available_tools=brief.available_tools,
+            ),
             "rukn_originality_runtime": compile_originality_guidance(),
             "rukn_educational_transform_runtime": compile_educational_transform_guidance(),
             "rukn_official_tool_docs_runtime": compile_official_tool_guidance(tool_store),
@@ -990,14 +995,7 @@ def run_generation(
             course_map=course_map,
             source_ids=[item.course_source.id for item in usable_sources],
             source_fingerprints=source_fingerprints,
-            source_metadata={
-                str(item.course_source.id): {
-                    "category": item.course_source.source_category.value,
-                    "priority": item.course_source.priority.value,
-                    "include_in_generation": item.course_source.include_in_generation,
-                }
-                for item in usable_sources
-            },
+            source_metadata=_source_snapshot_metadata(usable_sources),
             research_blob=research_identity,
             admin_rules=rules_context,
             provider_name=provider_name,
@@ -1188,6 +1186,9 @@ def run_generation(
                     total_reels=total_reels,
                     quality_mode=quality_mode,
                     target_market=brief.target_market,
+                    market_special_notes=brief.special_notes,
+                    realistic_student_budget=brief.realistic_student_budget,
+                    available_tools=brief.available_tools,
                     phrase_ledger=phrase_ledger,
                     voice_profile=voice_profile,
                     address_form=address_form,
@@ -1969,6 +1970,27 @@ def _usable_memory(usable: UsableSource) -> dict | None:
     if usable.analysis and usable.analysis.source_memory_json:
         return coerce_json_dict(usable.analysis.source_memory_json)
     return None
+
+
+def _source_snapshot_metadata(
+    usable_sources: list[UsableSource],
+) -> dict[str, dict[str, object]]:
+    """Safe internal provenance for the frozen ledger; never source prose."""
+    metadata: dict[str, dict[str, object]] = {}
+    for item in usable_sources:
+        source = item.course_source
+        memory = _usable_memory(item) or {}
+        row: dict[str, object] = {
+            "category": source.source_category.value,
+            "priority": source.priority.value,
+            "include_in_generation": source.include_in_generation,
+        }
+        for key in ("source_origin", "file_format", "source_origin_version"):
+            value = memory.get(key)
+            if value:
+                row[key] = value
+        metadata[str(source.id)] = row
+    return metadata
 
 
 def _load_usable_sources_with_memory(
@@ -2792,6 +2814,9 @@ def _write_and_review_reel(
     total_reels: int = 1,
     quality_mode: GenerationQualityMode = GenerationQualityMode.PREMIUM,
     target_market: TargetMarket = TargetMarket.EGYPT,
+    market_special_notes: str | None = None,
+    realistic_student_budget: str | None = None,
+    available_tools: list[str] | None = None,
     phrase_ledger: PhraseLedger | None = None,
     voice_profile: VoiceProfile | None = None,
     address_form: AddressForm = AddressForm.MASCULINE,
@@ -2845,12 +2870,18 @@ def _write_and_review_reel(
         update={"lesson_semantic_contract": semantic_contract}
     )
 
+    market_guidance = compile_market_guidance(
+        target_market,
+        special_notes=market_special_notes,
+        realistic_student_budget=realistic_student_budget,
+        available_tools=available_tools,
+    )
     write_rules = select_packed_rules_for_stage(rules_context, PipelineStage.WRITE_SINGLE_REEL)
     review_rules = select_packed_rules_for_stage(rules_context, PipelineStage.REVIEW_SINGLE_REEL)
     review_rules_full = select_rules_for_stage(rules_context, PipelineStage.REVIEW_SINGLE_REEL)
     write_rules = {
         **write_rules,
-        "rukn_target_market_runtime": compile_market_guidance(target_market),
+        "rukn_target_market_runtime": market_guidance,
         "rukn_originality_runtime": compile_originality_guidance(),
         "rukn_educational_transform_runtime": compile_educational_transform_guidance(),
         "rukn_knowledge_priority_runtime": compile_knowledge_priority_guidance(),
@@ -2861,14 +2892,14 @@ def _write_and_review_reel(
         write_rules["rukn_voice_profile_runtime"] = voice_profile.compact_for_prompt()
     review_rules = {
         **review_rules,
-        "rukn_target_market_runtime": compile_market_guidance(target_market),
+        "rukn_target_market_runtime": market_guidance,
         "rukn_originality_runtime": compile_originality_guidance(),
         "rukn_educational_transform_runtime": compile_educational_transform_guidance(),
         "rukn_knowledge_priority_runtime": compile_knowledge_priority_guidance(),
     }
     review_rules_local = {
         **review_rules_full,
-        "rukn_target_market_runtime": compile_market_guidance(target_market),
+        "rukn_target_market_runtime": market_guidance,
         "rukn_originality_runtime": compile_originality_guidance(),
     }
 

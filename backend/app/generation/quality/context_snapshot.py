@@ -18,7 +18,13 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from app.data.course_standard import STANDARD_VERSION, standard_manifest
-from app.generation.prompt_compiler import PROMPT_COMPILER_VERSION
+from app.generation.knowledge_priority_ladder import authority_type_for_category
+from app.generation.market_evergreen import build_market_pack
+from app.generation.prompt_compiler import (
+    ALLOWED_USE_BY_CATEGORY,
+    DISALLOWED_USE_BY_CATEGORY,
+    PROMPT_COMPILER_VERSION,
+)
 from app.generation.presets import GenerationPreset, resolve_generation_settings
 from app.generation.quality.contract import CourseQualityContract
 from app.prompts.prompt_registry import PROMPT_SPECS, load_prompt
@@ -128,11 +134,40 @@ def source_ledger_from_fingerprints(
     metadata = dict(source_metadata or {})
     rows: list[dict[str, Any]] = []
     for source_id in ids:
+        supplied = _jsonable(metadata.get(str(source_id)) or {})
+        # The frozen ledger records provenance/policy, never raw source content,
+        # summaries, filenames, URLs, paths, or provider prompt snippets.
+        safe_metadata = {
+            key: supplied[key]
+            for key in (
+                "category",
+                "priority",
+                "include_in_generation",
+                "source_origin",
+                "file_format",
+                "source_origin_version",
+            )
+            if key in supplied
+        }
+        category = str(safe_metadata.get("category") or "")
         row = {
             "source_id": source_id,
             "content_sha256": fingerprints.get(str(source_id), ""),
         }
-        row.update(_jsonable(metadata.get(str(source_id)) or {}))
+        row.update(safe_metadata)
+        if category:
+            authority = authority_type_for_category(category)
+            row.update(
+                {
+                    "authority_type": authority.value,
+                    "source_intent": category,
+                    "allowed_use": list(ALLOWED_USE_BY_CATEGORY.get(category, [])),
+                    "disallowed_use": list(
+                        DISALLOWED_USE_BY_CATEGORY.get(category, [])
+                    ),
+                    "provenance_policy": "internal_trace_only_never_lecturer_text",
+                }
+            )
         rows.append(row)
     return rows
 
@@ -337,6 +372,12 @@ def build_generation_context_snapshot(
     brief_data = _jsonable(brief or {})
     thesis_data = _jsonable(thesis or {})
     map_data = _jsonable(course_map) if course_map else None
+    market_pack = build_market_pack(
+        brief_data.get("target_market"),
+        special_notes=brief_data.get("special_notes"),
+        realistic_student_budget=brief_data.get("realistic_student_budget"),
+        available_tools=brief_data.get("available_tools") or [],
+    )
     active_rule_pack = build_active_rule_pack(admin_rules)
     source_ledger = source_ledger_from_fingerprints(
         source_ids,
@@ -413,8 +454,8 @@ def build_generation_context_snapshot(
         COVERAGE_MATRIX=coverage,
         BENCHMARK_MATRIX=dict(benchmark_matrix or {}),
         MARKET_PACK={
-            "target_market": brief_data.get("target_market", ""),
-            "market_guidance_sha256": fingerprint_value(brief_data.get("target_market", "")),
+            **market_pack,
+            "market_guidance_sha256": fingerprint_value(market_pack),
         },
         SOURCE_LEDGER=source_ledger,
         TERM_LEDGER=dict(term_ledger or {}),

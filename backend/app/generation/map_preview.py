@@ -38,6 +38,7 @@ from app.generation.orchestrator import (
     _load_active_rules,
     _load_usable_sources_with_memory,
     _map_source_excerpts,
+    _source_snapshot_metadata,
     _usable_memory,
     _web_facts_as_excerpts,
 )
@@ -284,7 +285,10 @@ def build_map_preview(
         {
             **map_rules,
             "rukn_target_market_runtime": compile_market_guidance(
-                brief.target_market
+                brief.target_market,
+                special_notes=brief.special_notes,
+                realistic_student_budget=brief.realistic_student_budget,
+                available_tools=brief.available_tools,
             ),
             "rukn_originality_runtime": compile_originality_guidance(),
             "rukn_educational_transform_runtime": (
@@ -338,14 +342,7 @@ def build_map_preview(
         course_map=course_map,
         source_ids=[item.course_source.id for item in usable],
         source_fingerprints=source_fps,
-        source_metadata={
-            str(item.course_source.id): {
-                "category": item.course_source.source_category.value,
-                "priority": item.course_source.priority.value,
-                "include_in_generation": item.course_source.include_in_generation,
-            }
-            for item in usable
-        },
+        source_metadata=_source_snapshot_metadata(usable),
         research_blob=research_identity_payload(
             research_result.upload_memory,
             research_result.web_memory,
@@ -491,14 +488,7 @@ def assert_approved_map_ready(
         course_map=course_map,
         source_ids=[item.course_source.id for item in usable],
         source_fingerprints=source_fingerprints,
-        source_metadata={
-            str(item.course_source.id): {
-                "category": item.course_source.source_category.value,
-                "priority": item.course_source.priority.value,
-                "include_in_generation": item.course_source.include_in_generation,
-            }
-            for item in usable
-        },
+        source_metadata=_source_snapshot_metadata(usable),
         research_blob=research_identity_payload(
             upload_memory,
             coerce_json_dict(getattr(course, "web_source_memory_json", None)),
