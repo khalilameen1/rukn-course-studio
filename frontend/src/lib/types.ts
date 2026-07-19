@@ -31,6 +31,18 @@ export type WebResearchMode = "disabled" | "autonomous_gap_fill";
 
 export type TargetMarket = "egypt" | "arab_market" | "global" | "custom";
 
+export type CourseFamily =
+  | "general_skill"
+  | "creative_production"
+  | "analytical_operational"
+  | "programming_technical"
+  | "languages_communication"
+  | "sales_marketing_business"
+  | "professional_service"
+  | "high_stakes_authority_sensitive";
+
+export type AddressForm = "masculine" | "feminine" | "neutral";
+
 export type Priority = "high" | "medium" | "low";
 
 export type JobStatus =
@@ -78,6 +90,9 @@ export interface Course {
   special_notes: string | null;
   course_type: string;
   course_domain?: string | null;
+  course_specialty?: string | null;
+  primary_course_family: CourseFamily;
+  secondary_course_families: CourseFamily[];
   structure_mode: StructureMode;
   manual_map_text: string | null;
   explanation_level: ExplanationLevel;
@@ -85,6 +100,19 @@ export interface Course {
   generation_quality_mode?: GenerationQualityMode;
   web_research_mode?: WebResearchMode;
   target_market?: TargetMarket;
+  student_language: string;
+  spoken_variety: string;
+  address_form: AddressForm;
+  learner_starting_state: string;
+  required_final_performance: string;
+  required_independence_level: string;
+  instructor_responsibility_boundaries: string[];
+  verified_instructor_experience: string[];
+  forbidden_first_person_claims: string[];
+  realistic_student_budget?: string | null;
+  available_tools: string[];
+  professional_constraints: string[];
+  high_stakes_constraints: string[];
   status: string;
   created_at: string;
   updated_at: string;
@@ -96,12 +124,30 @@ export interface CourseCreateInput {
   outcome: string;
   special_notes?: string | null;
   course_domain?: string | null;
+  course_specialty?: string | null;
+  course_type?: string;
+  primary_course_family?: CourseFamily;
+  secondary_course_families?: CourseFamily[];
   structure_mode: StructureMode;
   manual_map_text?: string | null;
   explanation_level?: ExplanationLevel;
   generation_preset?: GenerationPreset;
   generation_quality_mode?: GenerationQualityMode;
+  web_research_mode?: WebResearchMode;
   target_market?: TargetMarket;
+  student_language?: string;
+  spoken_variety?: string;
+  address_form?: AddressForm;
+  learner_starting_state?: string;
+  required_final_performance?: string;
+  required_independence_level?: string;
+  instructor_responsibility_boundaries?: string[];
+  verified_instructor_experience?: string[];
+  forbidden_first_person_claims?: string[];
+  realistic_student_budget?: string | null;
+  available_tools?: string[];
+  professional_constraints?: string[];
+  high_stakes_constraints?: string[];
 }
 
 export type CourseUpdateInput = Partial<CourseCreateInput> & { status?: string };

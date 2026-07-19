@@ -216,6 +216,7 @@ from app.generation.teaching_curves import (
 from app.models.course import Course
 from app.models.course_source import CourseSource
 from app.models.enums import (
+    CourseFamily,
     AddressForm,
     ExplanationLevel,
     GenerationQualityMode,
@@ -2196,12 +2197,55 @@ def _build_course_brief(course: Course) -> CourseBrief:
         audience=course.audience,
         outcome=course.outcome,
         special_notes=course.special_notes,
+        course_type=getattr(course, "course_type", None) or "practical_skill",
         structure_mode=course.structure_mode,
         explanation_level=course.explanation_level,
         generation_preset=course.generation_preset,
         manual_map_text=manual_map,
         target_market=getattr(course, "target_market", None) or TargetMarket.EGYPT,
         course_domain=getattr(course, "course_domain", None),
+        course_specialty=getattr(course, "course_specialty", None),
+        primary_course_family=getattr(
+            course, "primary_course_family", CourseFamily.GENERAL_SKILL
+        ),
+        secondary_course_families=getattr(
+            course, "secondary_course_families", []
+        )
+        or [],
+        student_language=getattr(course, "student_language", None) or "ar",
+        spoken_variety=getattr(course, "spoken_variety", None)
+        or "egyptian_colloquial",
+        address_form=getattr(course, "address_form", AddressForm.MASCULINE),
+        learner_starting_state=getattr(course, "learner_starting_state", None)
+        or course.audience,
+        required_final_performance=getattr(
+            course, "required_final_performance", None
+        )
+        or course.outcome,
+        required_independence_level=getattr(
+            course, "required_independence_level", None
+        )
+        or "independent_with_checklist",
+        instructor_responsibility_boundaries=getattr(
+            course, "instructor_responsibility_boundaries", []
+        )
+        or [],
+        verified_instructor_experience=getattr(
+            course, "verified_instructor_experience", []
+        )
+        or [],
+        forbidden_first_person_claims=getattr(
+            course, "forbidden_first_person_claims", []
+        )
+        or [],
+        realistic_student_budget=getattr(
+            course, "realistic_student_budget", None
+        ),
+        available_tools=getattr(course, "available_tools", []) or [],
+        professional_constraints=getattr(course, "professional_constraints", [])
+        or [],
+        high_stakes_constraints=getattr(course, "high_stakes_constraints", [])
+        or [],
     )
 
 
@@ -2445,8 +2489,8 @@ def _build_and_review_course_map(
     if thesis is None:
         thesis = build_course_thesis_from_brief(
             brief,
-            course_type="practical_skill",
-            address_form=AddressForm.MASCULINE,
+            course_type=brief.course_type,
+            address_form=brief.address_form,
         )
     thesis_check = validate_course_thesis(thesis)
     thesis_check.raise_if_invalid()

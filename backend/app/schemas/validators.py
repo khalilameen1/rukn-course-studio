@@ -7,6 +7,8 @@ from typing import Annotated, Any
 from pydantic import BeforeValidator
 
 from app.models.enums import (
+    AddressForm,
+    CourseFamily,
     ExplanationLevel,
     GenerationPreset,
     GenerationQualityMode,
@@ -56,6 +58,8 @@ WebResearchModeLoose = Annotated[
     WebResearchMode, BeforeValidator(_enum(WebResearchMode))
 ]
 TargetMarketLoose = Annotated[TargetMarket, BeforeValidator(_enum(TargetMarket))]
+CourseFamilyLoose = Annotated[CourseFamily, BeforeValidator(_enum(CourseFamily))]
+AddressFormLoose = Annotated[AddressForm, BeforeValidator(_enum(AddressForm))]
 ItemTypeLoose = Annotated[ItemType, BeforeValidator(_enum(ItemType))]
 
 JsonObjectLoose = Annotated[dict[str, Any] | None, BeforeValidator(coerce_json_dict)]

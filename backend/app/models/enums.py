@@ -185,6 +185,24 @@ class TargetMarket(str, Enum):
     CUSTOM = "custom"
 
 
+class CourseFamily(str, Enum):
+    """Canonical pedagogy family selected during course intake.
+
+    ``GENERAL_SKILL`` is a migration-safe fallback for legacy courses. New
+    product flows expose the seven concrete families below and should ask the
+    creator to choose one explicitly.
+    """
+
+    GENERAL_SKILL = "general_skill"
+    CREATIVE_PRODUCTION = "creative_production"
+    ANALYTICAL_OPERATIONAL = "analytical_operational"
+    PROGRAMMING_TECHNICAL = "programming_technical"
+    LANGUAGES_COMMUNICATION = "languages_communication"
+    SALES_MARKETING_BUSINESS = "sales_marketing_business"
+    PROFESSIONAL_SERVICE = "professional_service"
+    HIGH_STAKES_AUTHORITY_SENSITIVE = "high_stakes_authority_sensitive"
+
+
 class LessonDeliveryMode(str, Enum):
     """How a lesson is delivered on camera / screen (internal blueprint).
 

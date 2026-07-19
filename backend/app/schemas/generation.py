@@ -14,7 +14,7 @@ from enum import Enum
 
 from pydantic import BaseModel, Field, model_validator
 
-from app.models.enums import AddressForm, CourseMixType, LessonDeliveryMode
+from app.models.enums import AddressForm, CourseFamily, CourseMixType, LessonDeliveryMode
 
 
 class ReviewScope(str, Enum):
@@ -54,6 +54,25 @@ class CourseThesis(BaseModel):
     in_scope: list[str] = Field(default_factory=list)
     out_of_scope: list[str] = Field(default_factory=list)
     course_type: str = "practical_skill"
+    course_domain: str = ""
+    course_specialty: str = ""
+    primary_course_family: CourseFamily = CourseFamily.GENERAL_SKILL
+    secondary_course_families: list[CourseFamily] = Field(default_factory=list)
+    target_market: str = "egypt"
+    student_language: str = "ar"
+    spoken_variety: str = "egyptian_colloquial"
+    learner_starting_state: str = ""
+    required_final_performance: str = ""
+    required_independence_level: str = "independent_with_checklist"
+    instructor_responsibility_boundaries: list[str] = Field(default_factory=list)
+    verified_instructor_experience: list[str] = Field(default_factory=list)
+    forbidden_first_person_claims: list[str] = Field(default_factory=list)
+    realistic_student_budget: str = ""
+    available_tools: list[str] = Field(default_factory=list)
+    professional_constraints: list[str] = Field(default_factory=list)
+    high_stakes_constraints: list[str] = Field(default_factory=list)
+    beginner_assumption_policy: str = "no_undeclared_prerequisites"
+    experienced_learner_policy: str = "respect_existing_competence"
     mix_type: CourseMixType = CourseMixType.PRACTICAL
     target_theory_ratio: float = 0.25
     target_practice_ratio: float = 0.60

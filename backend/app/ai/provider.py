@@ -17,6 +17,8 @@ from abc import ABC, abstractmethod
 from pydantic import BaseModel, Field
 
 from app.models.enums import (
+    AddressForm,
+    CourseFamily,
     ExplanationLevel,
     GenerationPreset,
     StructureMode,
@@ -39,12 +41,30 @@ class CourseBrief(BaseModel):
     audience: str
     outcome: str
     special_notes: str | None = None
+    course_type: str = "practical_skill"
     structure_mode: StructureMode
     explanation_level: ExplanationLevel
     generation_preset: GenerationPreset = GenerationPreset.BALANCED
     manual_map_text: str | None = None
     target_market: TargetMarket = TargetMarket.EGYPT
     course_domain: str | None = None
+    course_specialty: str | None = None
+    primary_course_family: CourseFamily | None = None
+    secondary_course_families: list[CourseFamily] = Field(default_factory=list)
+    student_language: str = "ar"
+    spoken_variety: str = "egyptian_colloquial"
+    address_form: AddressForm = AddressForm.MASCULINE
+    learner_starting_state: str = ""
+    required_final_performance: str = ""
+    required_independence_level: str = "independent_with_checklist"
+    instructor_responsibility_boundaries: list[str] = Field(default_factory=list)
+    # Only explicit, verified statements from intake. Never infer from sources/title.
+    verified_instructor_experience: list[str] = Field(default_factory=list)
+    forbidden_first_person_claims: list[str] = Field(default_factory=list)
+    realistic_student_budget: str | None = None
+    available_tools: list[str] = Field(default_factory=list)
+    professional_constraints: list[str] = Field(default_factory=list)
+    high_stakes_constraints: list[str] = Field(default_factory=list)
 
 
 class SourceExcerpt(BaseModel):
