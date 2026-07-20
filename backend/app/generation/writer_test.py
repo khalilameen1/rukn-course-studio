@@ -453,6 +453,14 @@ def run_writer_test_3_reels(
                 reel_results.append(prior)
                 continue
 
+        reel_usage_in = 0
+        reel_usage_out = 0
+
+        def capture_usage(usage: dict[str, object]) -> None:
+            nonlocal reel_usage_in, reel_usage_out
+            reel_usage_in += int(usage.get("input_tokens") or 0)
+            reel_usage_out += int(usage.get("output_tokens") or 0)
+
         generated, _writes, _local, needs_review = _write_and_review_reel(
             provider=provider,
             course_map=course_map,
@@ -471,6 +479,7 @@ def run_writer_test_3_reels(
             voice_profile=voice_profile,
             address_form=contract.language.address_form or AddressForm.MASCULINE,
             language_profile=contract.language.model_dump(mode="json"),
+            on_usage=capture_usage,
         )
 
         text = generated.script_text or ""
@@ -491,9 +500,8 @@ def run_writer_test_3_reels(
                     "self_check_status": ReviewStatus.NEEDS_REVISION,
                 }
             )
-        usage = getattr(provider, "last_usage", None) or {}
-        usage_total_in += int(usage.get("input_tokens") or 0)
-        usage_total_out += int(usage.get("output_tokens") or 0)
+        usage_total_in += reel_usage_in
+        usage_total_out += reel_usage_out
         words = count_spoken_words(generated.script_text)
         seconds = (
             estimate_spoken_minutes(
@@ -507,8 +515,8 @@ def run_writer_test_3_reels(
             "word_count": words,
             "estimated_seconds": round(seconds, 1),
             "quality_status": "needs_review" if needs_review else generated.quality_status,
-            "input_tokens": int(usage.get("input_tokens") or 0),
-            "output_tokens": int(usage.get("output_tokens") or 0),
+            "input_tokens": reel_usage_in,
+            "output_tokens": reel_usage_out,
             "script_text_final_master": None
             if needs_review
             else generated.script_text,

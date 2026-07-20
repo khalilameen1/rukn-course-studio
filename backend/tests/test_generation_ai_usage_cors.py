@@ -9,6 +9,8 @@ preflight is blocked on Authorization-bearing POSTs/GETs.
 import pytest
 from fastapi.testclient import TestClient
 
+from app.auth.scopes import ADMIN_SCOPES
+from app.auth.tokens import create_token
 from app.config import settings
 from app.main import app
 
@@ -26,9 +28,9 @@ def _configure_auth(monkeypatch):
 
 
 def _auth_header() -> dict[str, str]:
-    login = client.post("/auth/login", json={"username": "admin", "password": "s3cret"})
-    assert login.status_code == 200
-    token = login.json()["access_token"]
+    token = create_token(
+        "admin", settings.auth_secret_key, scopes=list(ADMIN_SCOPES)
+    )
     return {"Authorization": f"Bearer {token}"}
 
 
@@ -66,13 +68,10 @@ def test_generate_authenticated_post_returns_real_backend_status_with_cors():
     even on 500 (see unhandled_exception_handler in app/main.py).
     """
     soft_client = TestClient(app, raise_server_exceptions=False)
-    login = soft_client.post("/auth/login", json={"username": "admin", "password": "s3cret"})
-    assert login.status_code == 200
-    token = login.json()["access_token"]
     response = soft_client.post(
         "/courses/999999/generate",
         json={"generation_quality_mode": "premium"},
-        headers={"Authorization": f"Bearer {token}", "Origin": ORIGIN},
+        headers={**_auth_header(), "Origin": ORIGIN},
     )
     assert response.status_code != 401
     assert response.headers["access-control-allow-origin"] == ORIGIN
@@ -86,22 +85,23 @@ def test_unhandled_500_still_carries_cors_headers():
         raise RuntimeError("forced failure for cors regression")
         yield  # pragma: no cover
 
+    soft_client = TestClient(app, raise_server_exceptions=False)
     app.dependency_overrides[get_session] = _failing_session
     try:
-        soft_client = TestClient(app, raise_server_exceptions=False)
-        login = soft_client.post("/auth/login", json={"username": "admin", "password": "s3cret"})
-        assert login.status_code == 200
-        token = login.json()["access_token"]
         response = soft_client.get(
             "/ai-usage/summary",
-            headers={"Authorization": f"Bearer {token}", "Origin": ORIGIN},
+            headers={**_auth_header(), "Origin": ORIGIN},
         )
     finally:
         app.dependency_overrides.pop(get_session, None)
 
     assert response.status_code == 500
     assert response.headers["access-control-allow-origin"] == ORIGIN
-    assert response.json()["detail"] == "Internal server error"
+    body = response.json()
+    assert body["detail"].startswith("Internal server error. Reference ID: ")
+    assert body["correlation_id"] == response.headers["X-Correlation-ID"]
+    assert "error_type" not in body
+    assert "forced failure" not in response.text
 
 
 def test_ai_usage_summary_options_preflight_returns_cors_headers():

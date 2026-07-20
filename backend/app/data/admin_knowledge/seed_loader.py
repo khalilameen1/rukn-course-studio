@@ -20,7 +20,8 @@ from app.data.course_standard import (
     standard_fingerprint,
     standard_seed_items,
 )
-from app.db import engine, init_db
+import app.db as db_pkg
+from app.db import init_db
 from app.models.admin_knowledge import AdminKnowledgeItem
 from app.models.course import Course
 from app.models.generation_job import GenerationJob
@@ -149,7 +150,7 @@ def main(argv: list[str] | None = None) -> int:
         print("Refusing destructive reset without --confirm")
         return 2
     init_db()
-    with Session(engine) as session:
+    with Session(db_pkg.engine) as session:
         report = reset_standard(session) if args.reset else seed(session)
     print(report)
     return 0

@@ -107,7 +107,6 @@ def test_unsupported_extension_rejected(tmp_path, monkeypatch):
     engine = create_engine(f"sqlite:///{tmp_path / 'up.db'}")
     SQLModel.metadata.create_all(engine)
     monkeypatch.setattr(db_module, "engine", engine)
-    monkeypatch.setattr(orch, "engine", engine)
     monkeypatch.setattr(orch.settings, "storage_uploads_dir", tmp_path / "uploads")
     monkeypatch.setattr(orch.settings, "storage_extracted_dir", tmp_path / "extracted")
 
@@ -141,7 +140,6 @@ def test_oversized_upload_rejected(tmp_path, monkeypatch):
     engine = create_engine(f"sqlite:///{tmp_path / 'big.db'}")
     SQLModel.metadata.create_all(engine)
     monkeypatch.setattr(db_module, "engine", engine)
-    monkeypatch.setattr(orch, "engine", engine)
     monkeypatch.setattr(orch.settings, "storage_uploads_dir", tmp_path / "uploads")
     monkeypatch.setattr(orch.settings, "storage_extracted_dir", tmp_path / "extracted")
     monkeypatch.setattr(app_settings, "max_upload_bytes", 64)
@@ -175,7 +173,6 @@ def test_generate_reuses_active_job_instead_of_duplicate(tmp_path, monkeypatch):
     engine = create_engine(f"sqlite:///{tmp_path / 'lock.db'}")
     SQLModel.metadata.create_all(engine)
     monkeypatch.setattr(db_module, "engine", engine)
-    monkeypatch.setattr(orch, "engine", engine)
 
     from app.main import app
 
@@ -216,7 +213,6 @@ def test_cancel_releases_lock(tmp_path, monkeypatch):
     engine = create_engine(f"sqlite:///{tmp_path / 'cancel.db'}")
     SQLModel.metadata.create_all(engine)
     monkeypatch.setattr(db_module, "engine", engine)
-    monkeypatch.setattr(orch, "engine", engine)
 
     from app.main import app
 
@@ -270,7 +266,6 @@ def test_fake_acceptance_course_to_clean_docx(tmp_path, monkeypatch):
     engine = create_engine(f"sqlite:///{tmp_path / 'acc.db'}")
     SQLModel.metadata.create_all(engine)
     monkeypatch.setattr(db_module, "engine", engine)
-    monkeypatch.setattr(orch, "engine", engine)
     monkeypatch.setattr(orch.settings, "storage_outputs_dir", tmp_path / "out")
     (tmp_path / "out").mkdir(parents=True, exist_ok=True)
 

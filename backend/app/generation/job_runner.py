@@ -6,7 +6,7 @@ import logging
 
 from app.ai.factory import AIProviderConfigError
 from app.crud import generation_jobs
-from app.db import engine
+import app.db as db_pkg
 from app.generation.errors import classify_provider_error, error_message_for
 from app.generation.orchestrator import run_generation_job
 from app.models.enums import GenerationQualityMode, JobStatus, WebResearchMode
@@ -57,7 +57,7 @@ def _fail_job(
     category: str,
     detail: str | None = None,
 ) -> None:
-    with Session(engine) as session:
+    with Session(db_pkg.engine) as session:
         job = generation_jobs.get(session, job_id)
         if job is None:
             return

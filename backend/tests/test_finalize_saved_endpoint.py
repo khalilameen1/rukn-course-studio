@@ -198,12 +198,9 @@ def _run_snapshot(course, course_map: dict) -> dict:
 
 def _client(tmp_path, monkeypatch):
     import app.db as db_module
-    import app.generation.orchestrator as orchestrator_module
-
     engine = create_engine(f"sqlite:///{tmp_path / 'finalize_ep.db'}")
     SQLModel.metadata.create_all(engine)
     monkeypatch.setattr(db_module, "engine", engine)
-    monkeypatch.setattr(orchestrator_module, "engine", engine)
     monkeypatch.setattr(
         "app.services.finalize_saved_job.settings.storage_dir", tmp_path / "storage"
     )

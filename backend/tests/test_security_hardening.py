@@ -141,14 +141,12 @@ def test_content_mime_rejects_exe_as_pdf():
 
 def test_cross_course_source_isolation(tmp_path, monkeypatch):
     import app.db as db_module
-    import app.generation.orchestrator as orch
     from app.crud import course_sources, courses
     from app.models.enums import ExplanationLevel, Priority, SourceCategory, StructureMode
 
     engine = create_engine(f"sqlite:///{tmp_path / 'iso.db'}")
     SQLModel.metadata.create_all(engine)
     monkeypatch.setattr(db_module, "engine", engine)
-    monkeypatch.setattr(orch, "engine", engine)
     monkeypatch.setattr(settings, "auth_enabled", False)
 
     with Session(engine) as session:

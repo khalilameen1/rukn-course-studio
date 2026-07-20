@@ -7,7 +7,7 @@ import logging
 from sqlmodel import Session, inspect
 
 from app.config import settings
-from app.db import engine
+import app.db as db_pkg
 from app.generation.map_lock import clear_all_process_map_busy, clear_stale_map_locks
 from app.generation.generation_preflight import check_storage_disk
 from app.services.generation_maintenance import release_stale_active_jobs
@@ -41,7 +41,7 @@ def verify_generation_job_columns() -> list[str]:
     except Exception as exc:  # noqa: BLE001
         logger.warning("generation_job column patch failed: %s", exc)
     try:
-        insp = inspect(engine)
+        insp = inspect(db_pkg.engine)
         if "generation_jobs" not in insp.get_table_names():
             return ["generation_jobs table missing"]
         existing = {c["name"] for c in insp.get_columns("generation_jobs")}
@@ -63,7 +63,7 @@ def run_generation_boot_safety() -> dict:
 
     released_jobs = 0
     released_maps = 0
-    with Session(engine) as session:
+    with Session(db_pkg.engine) as session:
         try:
             released_jobs = release_stale_active_jobs(session, max_age_minutes=90.0)
         except Exception as exc:  # noqa: BLE001

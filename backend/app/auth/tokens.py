@@ -53,7 +53,7 @@ def create_token(
     now = int(time.time())
     payload = {
         "sub": username,
-        "exp": now + max(1, expiry_days) * 86400,
+        "exp": now + expiry_days * 86400,
         "iat": now,
         "jti": uuid.uuid4().hex,
         "scopes": normalize_scopes(scopes),

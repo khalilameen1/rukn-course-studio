@@ -57,7 +57,7 @@ from app.crud import (
     generation_jobs,
     source_analyses,
 )
-from app.db import engine
+import app.db as db_pkg
 from app.generation.budget_guard import (
     EmergencyRunawayGuard,
     check_runaway_hard_cap,
@@ -365,7 +365,11 @@ def _record_usage_event(
     provider_name = (settings.ai_provider or "fake").strip().lower()
     model_name = usage.get("model") or ("fake" if provider_name == "fake" else settings.ai_model_name)
     estimated_cost = 0.0 if provider_name == "fake" else estimate_cost_usd(
-        model_name, usage.get("input_tokens"), usage.get("output_tokens")
+        model_name,
+        usage.get("input_tokens"),
+        usage.get("output_tokens"),
+        usage.get("cache_read_input_tokens"),
+        usage.get("cache_creation_input_tokens"),
     )
 
     ai_usage_events.create(
@@ -1967,7 +1971,7 @@ def run_generation_job(
     `existing_job_id` is the PENDING slot claimed by the router under the
     generation start lock — avoids a second create after the TOCTOU window.
     """
-    with Session(engine) as session:
+    with Session(db_pkg.engine) as session:
         return run_generation(
             session,
             course_id,
@@ -2834,6 +2838,7 @@ def _write_and_review_reel(
     job: GenerationJob | None = None,
     preset: str | None = None,
     on_progress: Callable[[str], None] | None = None,
+    on_usage: Callable[[dict[str, object]], None] | None = None,
     lesson_n: int = 1,
     total_reels: int = 1,
     quality_mode: GenerationQualityMode = GenerationQualityMode.PREMIUM,
@@ -2998,6 +3003,8 @@ def _write_and_review_reel(
         generated = ensure_spoken_beats(generated)
         if session is not None and job is not None and preset is not None:
             _record_usage_event(session, job, provider, PipelineStage.WRITE_SINGLE_REEL, preset)
+        if on_usage is not None:
+            on_usage(dict(getattr(provider, "last_usage", None) or {}))
         return generated
 
     # --- 1. First draft ---------------------------------------------------
@@ -3025,6 +3032,8 @@ def _write_and_review_reel(
         )
         if session is not None and job is not None and preset is not None:
             _record_usage_event(session, job, provider, PipelineStage.REVIEW_SINGLE_REEL, preset)
+        if on_usage is not None:
+            on_usage(dict(getattr(provider, "last_usage", None) or {}))
 
     editorial = run_integrated_editorial_review(
         reel_plan=reel_plan,
