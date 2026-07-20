@@ -11,7 +11,7 @@ Status: **done** (credit-safe implementation). No real provider / web / full pai
 | 3 | Terminology / Claim / Protected Spans + language QA routing | done |
 | 4 | Teleprompter blocks + layout checks + DOCX verify helper | done |
 | 5 | Disable no-op reviews + export blockers + mutation guard | done |
-| 6 | Unify preview/snapshot + API/UI wiring + deprecate generate-map | done |
+| 6 | Unify preview/snapshot + API/UI wiring; remove the retired map route | done |
 | 7 | Fixtures, capacity(90), network guard, docs | done |
 
 ## Credit safety

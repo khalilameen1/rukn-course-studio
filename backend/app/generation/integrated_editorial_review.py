@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from app.generation.egyptian_arabic_gate import run_egyptian_arabic_gate
+from app.generation.egyptian_arabic_gate import run_spoken_variety_integrity_gate
 from app.generation.master_mentor import mentor_advice_hints_for_script
 from app.generation.specialist_critic import CRITIC_LEAK_SUBSTRINGS
 from app.generation.student_confusion import student_clarity_hints_for_script
@@ -86,6 +86,8 @@ def run_integrated_editorial_review(
     address_form: AddressForm = AddressForm.MASCULINE,
     quality_mode: GenerationQualityMode = GenerationQualityMode.PREMIUM,
     provider_review: ReviewResult | None = None,
+    language_profile: dict | None = None,
+    course_domain: str = "",
 ) -> IntegratedEditorialReport:
     """Deterministic + optional provider notes → one structured report."""
     notes: list[EditorialNote] = []
@@ -101,17 +103,24 @@ def run_integrated_editorial_review(
             )
         )
 
-    arabic = run_egyptian_arabic_gate(text, address_form=address_form)
-    for issue in arabic.issues:
-        notes.append(
-            EditorialNote(
-                issue.code,
-                issue.severity,
-                issue.detail,
-                f"Rewrite in natural spoken Egyptian: {issue.detail}",
-                requires_rewrite=issue.severity != "minor",
-            )
+    profile = dict(language_profile or {})
+    if bool(profile.get("apply_egyptian_spoken_qa", True)):
+        arabic = run_spoken_variety_integrity_gate(
+            text,
+            address_form=address_form,
+            spoken_variety=str(profile.get("presenter_dialect") or "egyptian"),
+            course_domain=course_domain,
         )
+        for issue in arabic.issues:
+            notes.append(
+                EditorialNote(
+                    issue.code,
+                    issue.severity,
+                    issue.detail,
+                    f"Rewrite in natural spoken Egyptian while preserving every semantic contract field: {issue.detail}",
+                    requires_rewrite=issue.severity != "minor",
+                )
+            )
 
     awkward = default_terminology_map().find_awkward_literals(text)
     for term in awkward:

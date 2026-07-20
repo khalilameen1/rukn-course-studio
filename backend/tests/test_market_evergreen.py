@@ -5,6 +5,7 @@ from app.generation.course_map_quality import local_map_review_feedback
 from app.generation.course_quality_gates import run_course_quality_gates
 from app.generation.market_evergreen import (
     MARKET_EVERGREEN_DOCX_LEAKS,
+    build_market_pack,
     compile_market_guidance,
     map_market_evergreen_feedback,
     rewrite_script_market_evergreen,
@@ -81,18 +82,40 @@ def test_translated_us_market_content_is_flagged_and_rebuilt():
     assert "translated_tone" in codes or "foreign_market_assumption" in codes
     cleaned = rewrite_script_market_evergreen(dirty, target_market=TargetMarket.EGYPT)
     assert "silicon valley" not in cleaned.lower()
-    assert "whatsapp" in cleaned.lower() or "واتساب" in cleaned or "محل" in cleaned
+    assert "محل أو عيادة" not in cleaned
 
 
-def test_egypt_target_market_guidance_and_local_examples():
-    guide = compile_market_guidance(TargetMarket.EGYPT)
+def test_egypt_target_market_guidance_uses_brief_without_stock_examples():
+    guide = compile_market_guidance(
+        TargetMarket.EGYPT,
+        realistic_student_budget="500 EGP/month",
+        available_tools=["Canva"],
+    )
     assert "TARGET_MARKET=egypt" in guide
-    assert "WhatsApp" in guide or "whatsapp" in guide.lower()
+    assert "500 EGP/month" in guide
+    assert "Canva" in guide
+    assert "WhatsApp" not in guide
+    assert "shops, freelancers, clinics" not in guide
     out = rewrite_script_market_evergreen(
         "Leverage synergies with American clients in Silicon Valley.",
         target_market=TargetMarket.EGYPT,
     )
-    assert "محل" in out or "عيادة" in out or "واتساب" in out or "whatsapp" in out.lower()
+    assert "silicon valley" not in out.lower()
+    assert "محل أو عيادة" not in out
+
+
+def test_global_and_custom_market_packs_never_force_egypt():
+    global_pack = build_market_pack(TargetMarket.GLOBAL)
+    custom_pack = build_market_pack(
+        TargetMarket.CUSTOM,
+        special_notes="Kenyan B2B procurement teams",
+    )
+    assert global_pack["selected_market"] == "global"
+    assert global_pack["custom_context"] == ""
+    assert "WhatsApp" not in str(global_pack)
+    assert custom_pack["custom_context"] == "Kenyan B2B procurement teams"
+    assert custom_pack["selected_market"] == "custom"
+    assert "Use Egyptian realities" not in str(custom_pack)
 
 
 def test_expensive_foreign_tool_assumption_flagged():
@@ -182,14 +205,12 @@ def test_course_map_fragile_ui_triggers_rebuild_feedback():
 
 
 def test_target_market_passed_to_prompt_compiler_runtime():
-    assert PROMPT_COMPILER_VERSION.startswith("2.")
+    from app.data.course_standard import STANDARD_FILE_NAMES, load_standard_files
+
+    assert PROMPT_COMPILER_VERSION == "3.0-rukn-standard-v1.3"
     guide = compile_market_guidance(TargetMarket.GLOBAL)
     assert "TARGET_MARKET=global" in guide
-    # Stage key mapping includes market/evergreen admin knowledge when seeded.
-    selected = select_rules_for_stage(
-        {"rukn_market_evergreen_gates": "market rules here"},
-        PipelineStage.WRITE_SINGLE_REEL,
-    )
-    assert "rukn_market_evergreen_gates" in selected
+    selected = select_rules_for_stage(load_standard_files(), PipelineStage.WRITE_SINGLE_REEL)
+    assert tuple(selected) == STANDARD_FILE_NAMES
     brief = _brief(target_market=TargetMarket.ARAB_MARKET)
     assert brief.target_market == TargetMarket.ARAB_MARKET

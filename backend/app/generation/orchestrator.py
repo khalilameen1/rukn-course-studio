@@ -1,7 +1,7 @@
 """The internal generation pipeline orchestrator (docs/ARCHITECTURE.md §6).
 
 `run_generation(session, course_id)` is the only entry point. It runs the
-full 8-stage pipeline synchronously against an `AIProvider` (defaulting to
+full effectful pipeline synchronously against an `AIProvider` (defaulting to
 whatever `app/ai/factory.py get_ai_provider()` selects via `AI_PROVIDER` -
 `FakeProvider` unless real AI is explicitly configured) and returns the
 finished `GenerationJob`.
@@ -23,12 +23,8 @@ it's appended - so a mid-run failure never loses already-completed work.
 On failure, `except Exception` below classifies the error
 (app/generation/errors.py) and, if any of that persisted state exists,
 builds and saves a partial DOCX and ends the job `PARTIAL` instead of
-`FAILED`. There is deliberately no `resume_generation`: the two-module
-review pairing (`pending_pair` below) can't be safely reconstructed from
-`completed_reels_json` alone (a crash between a module's own review and
-its pairing review would look identical, on resume, to one where the pairing
-already ran) - see README.md's "Generation resilience" section. Partial
-DOCX download is the supported recovery path for now.
+`FAILED`. Recovery always resumes from the frozen run snapshot and persisted
+lesson ledger; no retired review checkpoint is reconstructed from memory.
 """
 
 from dataclasses import dataclass
@@ -45,13 +41,9 @@ from app.ai.provider import (
     BuildCourseMapInput,
     CourseBrief,
     FinalReviewInput,
-    ModuleWithReels,
     PriorReelSummary,
     RebuildFinalCourseInput,
-    ReviewFiveReelsInput,
-    ReviewModuleInput,
     ReviewSingleReelInput,
-    ReviewTwoModulesInput,
     SourceExcerpt,
     WriteSingleReelInput,
 )
@@ -65,7 +57,7 @@ from app.crud import (
     generation_jobs,
     source_analyses,
 )
-from app.db import engine
+import app.db as db_pkg
 from app.generation.budget_guard import (
     EmergencyRunawayGuard,
     check_runaway_hard_cap,
@@ -97,7 +89,18 @@ from app.generation.prompt_compiler import (
     select_packed_rules_for_stage,
     select_rules_for_stage,
 )
-from app.generation.run_snapshot import build_run_snapshot
+from app.generation.quality.context_snapshot import (
+    SnapshotMismatchError,
+    active_prompt_versions,
+    assert_snapshot_compatible,
+    build_active_rule_pack,
+    build_generation_context_snapshot,
+    fingerprint_value,
+    snapshot_with_config_overrides,
+    source_ledger_from_fingerprints,
+)
+from app.generation.domain_adapters import build_course_quality_contract
+from app.generation.quality.coverage_matrix import evaluate_coverage_matrix
 from app.generation.course_map_quality import (
     PROGRESS_MAP_CRITIC,
     PROGRESS_MAP_FIRST_DRAFT,
@@ -114,9 +117,21 @@ from app.generation.contracts.course_thesis import (
     validate_course_thesis,
 )
 from app.generation.contracts.lesson_blueprint import ensure_reel_blueprint_defaults
+from app.generation.contracts.lesson_semantic import (
+    attach_lesson_semantic_contracts,
+    build_lesson_semantic_contract,
+    inspect_script_against_semantic_contract,
+    remove_safe_semantic_filler,
+    validate_lesson_semantic_contract,
+)
 from app.generation.contracts.spoken_final_master import (
     ensure_spoken_beats,
     strip_punctuation_from_spoken_body,
+    validate_spoken_export_text,
+)
+from app.generation.egyptian_arabic_gate import (
+    compile_language_profile_guidance,
+    run_spoken_variety_integrity_gate,
 )
 from app.generation.course_quality_gates import (
     format_handoff_status,
@@ -130,6 +145,8 @@ from app.generation.integrated_editorial_review import (
 )
 from app.generation.map_compression import enforce_map_hard_limits
 from app.generation.phrase_ledger import PhraseLedger
+from app.generation.presets import resolve_generation_settings
+from app.version import get_app_commit
 from app.generation.voice_profile import (
     VoiceProfile,
     build_voice_profile_from_calibration_texts,
@@ -189,6 +206,7 @@ from app.generation.web_research import (
     PROGRESS_READING_UPLOADS,
     SourceMemoryItem,
     mark_research_failure,
+    research_identity_payload,
     run_autonomous_gap_fill,
     strip_research_leaks_from_script,
 )
@@ -199,9 +217,15 @@ from app.generation.teaching_curves import (
     plan_lesson_curve,
     plan_module_curve,
 )
+from app.generation.terminology_map import (
+    build_term_ledger,
+    compile_term_ledger_guidance,
+    default_terminology_map,
+)
 from app.models.course import Course
 from app.models.course_source import CourseSource
 from app.models.enums import (
+    CourseFamily,
     AddressForm,
     ExplanationLevel,
     GenerationQualityMode,
@@ -220,6 +244,7 @@ from app.schemas.generation import (
     FinalModule,
     FinalReel,
     GeneratedReel,
+    LessonSemanticContract,
     ModulePlan,
     ModuleProject,
     ReelPlan,
@@ -271,6 +296,7 @@ _FATAL_REASON_CODES = frozenset(
         "critic_fatal",
         "empty_script",
         "empty_teaching",
+        "semantic_contract_missing",
         "review_leak",
         "msa_article_tone",
         "literal_translation",
@@ -339,7 +365,11 @@ def _record_usage_event(
     provider_name = (settings.ai_provider or "fake").strip().lower()
     model_name = usage.get("model") or ("fake" if provider_name == "fake" else settings.ai_model_name)
     estimated_cost = 0.0 if provider_name == "fake" else estimate_cost_usd(
-        model_name, usage.get("input_tokens"), usage.get("output_tokens")
+        model_name,
+        usage.get("input_tokens"),
+        usage.get("output_tokens"),
+        usage.get("cache_read_input_tokens"),
+        usage.get("cache_creation_input_tokens"),
     )
 
     ai_usage_events.create(
@@ -426,6 +456,11 @@ def run_generation(
         if job is None or job.course_id != course_id:
             raise ValueError(
                 f"Generation job {existing_job_id} not found for course {course_id}"
+            )
+        if job.run_snapshot_json:
+            assert_snapshot_compatible(
+                job.run_snapshot_json,
+                action="resume generation",
             )
         job = generation_jobs.update(
             session,
@@ -537,6 +572,7 @@ def run_generation(
             memory_items.append(
                 SourceMemoryItem(
                     title=(mem or {}).get("title")
+                    or u.course_source.title
                     or u.course_source.original_filename
                     or f"source-{u.course_source.id}",
                     kind="upload",
@@ -745,14 +781,6 @@ def run_generation(
         # app/generation/run_snapshot.py for exactly what's stored (hashes
         # only, never raw admin-knowledge/source text) and why this lives
         # on GenerationJob rather than Course.
-        run_snapshot = build_run_snapshot(
-            rules_context=rules_context,
-            generation_preset=preset_value,
-            source_ids_used=[u.course_source.id for u in usable_sources],
-            generation_quality_mode=quality_mode.value,
-            web_research_mode=research_mode.value,
-        )
-        flush(run_snapshot_json=run_snapshot)
         flush(
             current_stage="building_map",
             progress_percent=5,
@@ -806,7 +834,12 @@ def run_generation(
                 continue
         map_rules = {
             **map_rules,
-            "rukn_target_market_runtime": compile_market_guidance(brief.target_market),
+            "rukn_target_market_runtime": compile_market_guidance(
+                brief.target_market,
+                special_notes=brief.special_notes,
+                realistic_student_budget=brief.realistic_student_budget,
+                available_tools=brief.available_tools,
+            ),
             "rukn_originality_runtime": compile_originality_guidance(),
             "rukn_educational_transform_runtime": compile_educational_transform_guidance(),
             "rukn_official_tool_docs_runtime": compile_official_tool_guidance(tool_store),
@@ -822,22 +855,78 @@ def run_generation(
                     "conflicts": list(tool_store.authority_conflicts)[:20],
                 }
             )
-        course_map, map_meta = _build_and_review_course_map(
-            provider=provider,
-            brief=brief,
-            sources=map_sources,
-            rules_context=map_rules,
-            course_creator_persona=course_persona_compact,
-            quality_mode=quality_mode,
-            on_progress=lambda msg: flush(
-                current_stage="building_map",
-                last_progress_message=msg,
-            ),
-            session=session,
-            job=job,
-            preset=preset_value,
-            official_tool_store=tool_store,
-        )
+        approved_snapshot = None
+        approved_map_data = None
+        if job.run_snapshot_json:
+            approved_snapshot = assert_snapshot_compatible(
+                job.run_snapshot_json,
+                action="load approved course map",
+            )
+            approved_map_data = approved_snapshot.approved_course_map
+        if approved_map_data:
+            course_map = CourseMap.model_validate(approved_map_data)
+            if course_map.thesis is None:
+                course_map = course_map.model_copy(
+                    update={
+                        "thesis": CourseThesis.model_validate(
+                            approved_snapshot.COURSE_THESIS
+                        )
+                    }
+                )
+            try:
+                semantic_map = attach_lesson_semantic_contracts(course_map)
+            except ValueError as exc:
+                raise SnapshotMismatchError(
+                    f"Approved map has an invalid lesson semantic contract: {exc}"
+                ) from exc
+            if semantic_map.model_dump(mode="json") != course_map.model_dump(
+                mode="json"
+            ):
+                raise SnapshotMismatchError(
+                    "Approved map is missing frozen lesson semantic contracts; "
+                    "build a new preview"
+                )
+            compressed_map, compression = enforce_map_hard_limits(
+                course_map,
+                thesis=course_map.thesis,
+            )
+            if not compression.ok:
+                raise UnusableOutputError(
+                    "; ".join(compression.errors)
+                    or "Approved map exceeds hard limits"
+                )
+            # Compression must be a no-op here. A changed map would violate
+            # the exact preview the user approved.
+            if compressed_map.model_dump(mode="json") != course_map.model_dump(
+                mode="json"
+            ):
+                raise SnapshotMismatchError(
+                    "Approved map would change during compression; build a new preview"
+                )
+            map_meta = {
+                "source": "approved_snapshot",
+                "map_builds": 0,
+                "compressed": False,
+            }
+            progress_message = "Using approved course map"
+            flush(last_progress_message=progress_message)
+        else:
+            course_map, map_meta = _build_and_review_course_map(
+                provider=provider,
+                brief=brief,
+                sources=map_sources,
+                rules_context=map_rules,
+                course_creator_persona=course_persona_compact,
+                quality_mode=quality_mode,
+                on_progress=lambda msg: flush(
+                    current_stage="building_map",
+                    last_progress_message=msg,
+                ),
+                session=session,
+                job=job,
+                preset=preset_value,
+                official_tool_store=tool_store,
+            )
         tool_store.tool_dependencies = annotate_dependencies_from_map(
             tool_store.tool_dependencies, course_map
         )
@@ -849,7 +938,11 @@ def run_generation(
         logs.append(
             {
                 "step": "build_map",
-                "source": "manual" if brief.manual_map_text else "generated",
+                "source": (
+                    "approved_snapshot"
+                    if approved_map_data
+                    else ("manual" if brief.manual_map_text else "generated")
+                ),
                 "modules": len(course_map.modules),
                 "reels": sum(len(m.reels) for m in course_map.modules),
                 **map_meta,
@@ -865,6 +958,85 @@ def run_generation(
                     "Retry; try Preview if Premium keeps failing."
                 ),
             )
+
+        # Freeze exactly one context snapshot after thesis/map approval and
+        # before the first lesson write. Later stages never mutate this value.
+        thesis = course_map.thesis
+        if thesis is None:
+            raise UnusableOutputError("Course Thesis missing before snapshot freeze")
+        approved_generation_settings = (
+            dict(approved_snapshot.CONFIG_INPUTS.get("GENERATION_SETTINGS") or {})
+            if approved_snapshot is not None
+            else {}
+        )
+        delivery_pattern = str(
+            approved_generation_settings.get("delivery_pattern")
+            or "teleprompter_standard"
+        )
+        human_override_hard_limits = bool(
+            approved_generation_settings.get("human_override_hard_limits", False)
+        )
+        quality_contract = build_course_quality_contract(
+            brief,
+            course_domain=getattr(course, "course_domain", None),
+            course_type=getattr(course, "course_type", None) or "practical_skill",
+            address_form=thesis.address_form,
+            delivery_pattern=delivery_pattern,
+            human_override_hard_limits=human_override_hard_limits,
+        )
+        coverage_report = evaluate_coverage_matrix(
+            course_map,
+            thesis=thesis,
+            contract=quality_contract,
+        )
+        source_fingerprints = {
+            str(item.course_source.id): fingerprint_value(
+                item.course_source.extracted_text or ""
+            )
+            for item in usable_sources
+        }
+        research_identity = research_identity_payload(
+            coerce_json_dict(job.source_memory_json),
+            coerce_json_dict(job.web_source_memory_json),
+        )
+        provider_name = (settings.ai_provider or "fake").strip().lower()
+        model_name = "fake" if provider_name == "fake" else (settings.ai_model_name or "")
+        run_snapshot_model = build_generation_context_snapshot(
+            course_id=course_id,
+            brief=brief,
+            contract=quality_contract,
+            thesis=thesis,
+            course_map=course_map,
+            source_ids=[item.course_source.id for item in usable_sources],
+            source_fingerprints=source_fingerprints,
+            source_metadata=_source_snapshot_metadata(usable_sources),
+            research_blob=research_identity,
+            admin_rules=rules_context,
+            provider_name=provider_name,
+            model_name=model_name,
+            quality_mode=quality_mode.value,
+            web_research_mode=research_mode.value,
+            map_preview_confirmed=approved_snapshot is not None,
+            human_override_hard_limits=human_override_hard_limits,
+            instructor_profile=course_persona.model_dump(mode="json"),
+            coverage_matrix=coverage_report.model_dump(mode="json"),
+            benchmark_matrix={"map_review": map_meta},
+            claim_ledger=coerce_json_dict(job.evidence_ledger_json),
+            generation_settings={
+                "generation_preset": preset_value,
+                "structure_mode": brief.structure_mode.value,
+                "explanation_level": brief.explanation_level.value,
+                "delivery_pattern": delivery_pattern,
+            },
+        )
+        if job.run_snapshot_json:
+            assert_snapshot_compatible(
+                job.run_snapshot_json,
+                current_config_inputs=run_snapshot_model.CONFIG_INPUTS,
+                action="resume lesson generation",
+            )
+        else:
+            flush(run_snapshot_json=run_snapshot_model.model_dump(mode="json"))
         from app.generation.research_synthesis import format_architecture_summary
 
         architecture = format_architecture_summary(
@@ -884,7 +1056,6 @@ def run_generation(
 
         # --- Steps 6-11: generate reel by reel, with layered review -----
         all_reels: list[GeneratedReel] = []
-        pending_pair: tuple[ModulePlan, list[GeneratedReel]] | None = None
         reels_done = 0
         modules_done = 0
         previous_module_curve: ModuleCurve | None = None
@@ -1029,9 +1200,13 @@ def run_generation(
                     total_reels=total_reels,
                     quality_mode=quality_mode,
                     target_market=brief.target_market,
+                    market_special_notes=brief.special_notes,
+                    realistic_student_budget=brief.realistic_student_budget,
+                    available_tools=brief.available_tools,
                     phrase_ledger=phrase_ledger,
                     voice_profile=voice_profile,
                     address_form=address_form,
+                    language_profile=quality_contract.language.model_dump(mode="json"),
                 )
                 # Final script only — strip accidental research / meta leaks before persist.
                 cleaned = strip_research_leaks_from_script(generated.script_text)
@@ -1080,17 +1255,6 @@ def run_generation(
                 )
                 _abort_if_canceled()
 
-                if reels_done % 5 == 0:
-                    # Disabled: was log-only AI cost with no script/map effect.
-                    logs.append(
-                        {
-                            "step": "review_5reels",
-                            "status": "disabled",
-                            "reason": "no_effect_ai_review_removed",
-                        }
-                    )
-                    flush()
-
             # Internal curve variation checks (logged only — never DOCX).
             flat_issues = check_anti_flatness(
                 module_lesson_curves, module_id=module.module_id
@@ -1116,7 +1280,7 @@ def run_generation(
             module_result = review_module_structure(module=module, reels=module_reels)
             logs.append(
                 {
-                    "step": "review_module",
+                    "step": "structural_module_gate",
                     "id": module.module_id,
                     "status": module_result.status.value,
                     "failing_reels": [
@@ -1125,41 +1289,65 @@ def run_generation(
                     "mode": "structural",
                 }
             )
-            for action in module_result.actions:
-                if action.reason_code == "needs_map_revision":
-                    logs.append(
-                        {
-                            "step": "needs_map_revision",
-                            "id": module.module_id,
-                            "detail": action.instruction,
+            reel_findings = {
+                action.target_id: action
+                for action in module_result.actions
+                if action.target_id
+                and action.target_id != module.module_id
+                and action.requires_rewrite
+            }
+            if reel_findings:
+                newly_flagged = {
+                    reel.reel_id
+                    for reel in module_reels
+                    if reel.reel_id in reel_findings
+                    and (reel.quality_status or "").lower() != "needs_review"
+                }
+
+                def _apply_module_finding(reel: GeneratedReel) -> GeneratedReel:
+                    action = reel_findings.get(reel.reel_id)
+                    if action is None:
+                        return reel
+                    quality_report = dict(reel.quality_report or {})
+                    quality_report["structural_module_gate"] = {
+                        "reason_code": action.reason_code,
+                        "instruction": action.instruction,
+                    }
+                    return reel.model_copy(
+                        update={
+                            "quality_status": "needs_review",
+                            "self_check_status": ReviewStatus.NEEDS_REVISION,
+                            "quality_report": quality_report,
                         }
                     )
+
+                module_reels = [_apply_module_finding(reel) for reel in module_reels]
+                all_reels = [_apply_module_finding(reel) for reel in all_reels]
+                needs_review_total += len(newly_flagged)
+                flush(
+                    completed_reels_json=[
+                        reel.model_dump(mode="json") for reel in all_reels
+                    ],
+                    needs_review_count=needs_review_total,
+                )
+
+            map_findings = [
+                action
+                for action in module_result.actions
+                if action.affects_map_or_other_lessons
+                or action.reason_code == "needs_map_revision"
+            ]
+            if map_findings:
+                raise UnusableOutputError(
+                    "Structural module gate requires a real map revision: "
+                    + "; ".join(action.instruction for action in map_findings)
+                )
             modules_done += 1
             previous_module_curve = module_curve
             flush(
                 completed_modules_count=modules_done,
                 last_completed_step=f"module:{module.module_id}",
             )
-
-            if pending_pair is None:
-                pending_pair = (module, module_reels)
-            else:
-                prev_module, prev_reels = pending_pair
-                # Disabled: two-module AI review was log-only.
-                logs.append(
-                    {
-                        "step": "review_2modules",
-                        "ids": [prev_module.module_id, module.module_id],
-                        "status": "disabled",
-                        "reason": "no_effect_ai_review_removed",
-                    }
-                )
-                flush()
-                pending_pair = None
-
-        if pending_pair is not None:
-            logs.append({"step": "review_2modules", "skipped": "unpaired trailing module"})
-            flush()
 
         _abort_if_canceled()
 
@@ -1233,18 +1421,27 @@ def run_generation(
                 _record_usage_event(
                     session, job, provider, PipelineStage.REBUILD_FINAL_COURSE, preset_value
                 )
+                _assert_final_review_actions_applied(
+                    course_map=course_map,
+                    original_reels=all_reels,
+                    final_review=final_result,
+                    rebuilt_course=final_course,
+                )
                 logs.append({"step": "rebuild_final_course", "triggered": True})
             except Exception as rebuild_exc:  # noqa: BLE001
                 logs.append(
                     {
                         "step": "rebuild_final_course",
                         "triggered": False,
-                        "fallback": "assemble_saved",
+                        "fallback": "blocked_unapplied_review",
                         "error_type": type(rebuild_exc).__name__,
                         "message": redact_secrets(str(rebuild_exc)[:200]),
                     }
                 )
-                final_course = _assemble_final_course(course_map, all_reels)
+                raise UnusableOutputError(
+                    "Final review required changes, but the Creator rebuild did "
+                    "not apply them; export remains blocked"
+                ) from rebuild_exc
         else:
             # No AI call needed: everything already passed, so assemble the
             # already-approved content directly.
@@ -1285,6 +1482,16 @@ def run_generation(
             else r
             for r in all_reels
         ]
+        final_course, all_reels, phrase_ledger = (
+            _revalidate_after_course_gate_mutations(
+                course_map=course_map,
+                final_course=final_course,
+                generated_reels=all_reels,
+                quality_contract=quality_contract,
+                address_form=address_form,
+                term_ledger=run_snapshot_model.TERM_LEDGER,
+            )
+        )
         duration_summary = (
             f"~{int(round(gate_report.estimated_duration_minutes))} min"
             if gate_report.estimated_duration_minutes
@@ -1312,6 +1519,9 @@ def run_generation(
             generated_reels=all_reels,
             phrase_ledger=phrase_ledger,
             address_form=address_form,
+            quality_contract=quality_contract,
+            evidence_ledger=coerce_json_dict(job.evidence_ledger_json),
+            expected_config_fingerprint=run_snapshot_model.CONFIG_FINGERPRINT,
         )
         logs.append(
             {
@@ -1322,6 +1532,96 @@ def run_generation(
         )
         if not export_report.ok:
             assert_export_allowed(export_report)
+
+        # Export is a hard identity boundary. Recompute only the compact
+        # output-affecting inputs; never rebuild or mutate the frozen snapshot.
+        frozen_snapshot = assert_snapshot_compatible(
+            job.run_snapshot_json,
+            action="export course",
+        )
+        session.refresh(course)
+        current_brief = _build_course_brief(course)
+        current_generation_settings = dict(
+            frozen_snapshot.CONFIG_INPUTS.get("GENERATION_SETTINGS") or {}
+        )
+        current_contract = build_course_quality_contract(
+            current_brief,
+            course_domain=getattr(course, "course_domain", None),
+            course_type=getattr(course, "course_type", None) or "practical_skill",
+            address_form=thesis.address_form,
+            delivery_pattern=str(
+                current_generation_settings.get("delivery_pattern")
+                or "teleprompter_standard"
+            ),
+            human_override_hard_limits=bool(
+                current_generation_settings.get(
+                    "human_override_hard_limits", False
+                )
+            ),
+        )
+        current_sources = [
+            source
+            for source in course_sources.list(session, course_id=course_id)
+            if source.include_in_generation and source.status in USABLE_SOURCE_STATUSES
+        ]
+        current_source_ledger = source_ledger_from_fingerprints(
+            [source.id for source in current_sources],
+            {
+                str(source.id): fingerprint_value(source.extracted_text or "")
+                for source in current_sources
+            },
+            {
+                str(source.id): {
+                    "category": source.source_category.value,
+                    "priority": source.priority.value,
+                    "include_in_generation": source.include_in_generation,
+                }
+                for source in current_sources
+            },
+        )
+        current_generation_settings.update(
+            {
+                "generation_preset": current_brief.generation_preset.value,
+                "resolved_generation_settings": resolve_generation_settings(
+                    current_brief.generation_preset
+                ),
+                "structure_mode": current_brief.structure_mode.value,
+                "explanation_level": current_brief.explanation_level.value,
+                "web_research_mode": research_mode.value,
+                "prompt_versions": active_prompt_versions(),
+                "app_commit": get_app_commit(),
+            }
+        )
+        current_research_identity = research_identity_payload(
+            coerce_json_dict(job.source_memory_json),
+            coerce_json_dict(job.web_source_memory_json),
+        )
+        current_config_inputs = snapshot_with_config_overrides(
+            frozen_snapshot,
+            STANDARD_PACKAGE=build_active_rule_pack(),
+            BRIEF=current_brief.model_dump(mode="json"),
+            COURSE_THESIS=thesis.model_dump(mode="json"),
+            SELECTED_SOURCES=current_source_ledger,
+            RESEARCH_RESULT_SHA256=fingerprint_value(current_research_identity),
+            MARKET=current_brief.target_market.value,
+            COURSE_TYPE=current_contract.pedagogy.course_type,
+            LANGUAGE_PROFILE=current_contract.language.model_dump(mode="json"),
+            ADDRESS_FORM=thesis.address_form.value,
+            QUALITY_MODE=quality_mode.value,
+            PROVIDER=(settings.ai_provider or "fake").strip().lower(),
+            MODEL=(
+                "fake"
+                if (settings.ai_provider or "fake").strip().lower() == "fake"
+                else (settings.ai_model_name or "")
+            ),
+            GENERATION_SETTINGS=current_generation_settings,
+            APPROVED_MAP=coerce_json_dict(job.course_map_json),
+        )
+        assert_snapshot_compatible(
+            frozen_snapshot,
+            current_config_inputs=current_config_inputs,
+            action="export course",
+        )
 
         # --- Step 14: save the final internal course JSON ---------------
         json_path = _save_internal_course_json(course_id, job.id, final_course)
@@ -1548,8 +1848,15 @@ def run_generation(
 
         partial_docx_path: str | None = None
         partial_score_report: OutputScoreReport | None = None
-        if has_saved_work:
+        if has_saved_work and not isinstance(exc, SnapshotMismatchError):
             try:
+                from app.services.finalize_saved_job import assert_job_snapshot_current
+
+                assert_job_snapshot_current(
+                    session,
+                    job,
+                    action="export partial course",
+                )
                 partial_course = build_partial_course_from_job(
                     job.course_map_json, job.completed_reels_json
                 )
@@ -1598,7 +1905,11 @@ def run_generation(
             inspect_saved_lessons,
         )
 
-        if inspect_saved_lessons(job).ok and not job.output_docx_path:
+        if (
+            not isinstance(exc, SnapshotMismatchError)
+            and inspect_saved_lessons(job).ok
+            and not job.output_docx_path
+        ):
             recovered = finalize_job_from_saved_lessons(session, job, force=True)
             if recovered is not None and recovered.status == JobStatus.COMPLETED:
                 return recovered
@@ -1660,7 +1971,7 @@ def run_generation_job(
     `existing_job_id` is the PENDING slot claimed by the router under the
     generation start lock — avoids a second create after the TOCTOU window.
     """
-    with Session(engine) as session:
+    with Session(db_pkg.engine) as session:
         return run_generation(
             session,
             course_id,
@@ -1672,23 +1983,42 @@ def run_generation_job(
 
 
 def _load_active_rules(session: Session) -> dict[str, str]:
-    """key -> content_text for every active primary admin knowledge item.
+    """Load the one canonical standard in immutable file order."""
+    from app.data.admin_knowledge.seed_loader import canonical_items, seed
 
-    Uses filter_active_primary so duplicate active rows per key cannot
-    nondeterministically override generation rules. docx_template items
-    have no content_text and are skipped.
-    """
-    from app.generation.admin_knowledge_cleanup import filter_active_primary
-
-    items = admin_knowledge_items.list(session, is_active=True)
-    primary = filter_active_primary(items)
-    return {item.key: item.content_text for item in primary if item.content_text}
+    seed(session)
+    return {
+        item.key: item.content_text
+        for item in canonical_items(session)
+        if item.content_text
+    }
 
 
 def _usable_memory(usable: UsableSource) -> dict | None:
     if usable.analysis and usable.analysis.source_memory_json:
         return coerce_json_dict(usable.analysis.source_memory_json)
     return None
+
+
+def _source_snapshot_metadata(
+    usable_sources: list[UsableSource],
+) -> dict[str, dict[str, object]]:
+    """Safe internal provenance for the frozen ledger; never source prose."""
+    metadata: dict[str, dict[str, object]] = {}
+    for item in usable_sources:
+        source = item.course_source
+        memory = _usable_memory(item) or {}
+        row: dict[str, object] = {
+            "category": source.source_category.value,
+            "priority": source.priority.value,
+            "include_in_generation": source.include_in_generation,
+        }
+        for key in ("source_origin", "file_format", "source_origin_version"):
+            value = memory.get(key)
+            if value:
+                row[key] = value
+        metadata[str(source.id)] = row
+    return metadata
 
 
 def _load_usable_sources_with_memory(
@@ -2024,12 +2354,55 @@ def _build_course_brief(course: Course) -> CourseBrief:
         audience=course.audience,
         outcome=course.outcome,
         special_notes=course.special_notes,
+        course_type=getattr(course, "course_type", None) or "practical_skill",
         structure_mode=course.structure_mode,
         explanation_level=course.explanation_level,
         generation_preset=course.generation_preset,
         manual_map_text=manual_map,
         target_market=getattr(course, "target_market", None) or TargetMarket.EGYPT,
         course_domain=getattr(course, "course_domain", None),
+        course_specialty=getattr(course, "course_specialty", None),
+        primary_course_family=getattr(
+            course, "primary_course_family", CourseFamily.GENERAL_SKILL
+        ),
+        secondary_course_families=getattr(
+            course, "secondary_course_families", []
+        )
+        or [],
+        student_language=getattr(course, "student_language", None) or "ar",
+        spoken_variety=getattr(course, "spoken_variety", None)
+        or "egyptian_colloquial",
+        address_form=getattr(course, "address_form", AddressForm.MASCULINE),
+        learner_starting_state=getattr(course, "learner_starting_state", None)
+        or course.audience,
+        required_final_performance=getattr(
+            course, "required_final_performance", None
+        )
+        or course.outcome,
+        required_independence_level=getattr(
+            course, "required_independence_level", None
+        )
+        or "independent_with_checklist",
+        instructor_responsibility_boundaries=getattr(
+            course, "instructor_responsibility_boundaries", []
+        )
+        or [],
+        verified_instructor_experience=getattr(
+            course, "verified_instructor_experience", []
+        )
+        or [],
+        forbidden_first_person_claims=getattr(
+            course, "forbidden_first_person_claims", []
+        )
+        or [],
+        realistic_student_budget=getattr(
+            course, "realistic_student_budget", None
+        ),
+        available_tools=getattr(course, "available_tools", []) or [],
+        professional_constraints=getattr(course, "professional_constraints", [])
+        or [],
+        high_stakes_constraints=getattr(course, "high_stakes_constraints", [])
+        or [],
     )
 
 
@@ -2040,6 +2413,7 @@ def _local_review_single_reel(
     lesson_persona: LessonPersonaState | None = None,
     target_market: TargetMarket = TargetMarket.EGYPT,
     source_texts: list[str] | None = None,
+    semantic_contract: LessonSemanticContract | None = None,
 ) -> ReviewResult | None:
     """Collect local validator / student / mentor signals for a completed draft.
 
@@ -2219,6 +2593,38 @@ def _local_review_single_reel(
             )
         )
 
+    if semantic_contract is not None:
+        semantic_report = inspect_script_against_semantic_contract(
+            generated.script_text,
+            semantic_contract,
+        )
+        for field_name in semantic_report.missing_fields:
+            actions.append(
+                ReviewAction(
+                    action=ReviewActionType.REWRITE,
+                    target_id=generated.reel_id,
+                    reason_code="semantic_contract_missing",
+                    instruction=(
+                        f"Restore the lesson-specific meaning for {field_name}: "
+                        f"{getattr(semantic_contract, field_name)}"
+                    ),
+                )
+            )
+        if semantic_report.filler_lines:
+            actions.append(
+                ReviewAction(
+                    action=ReviewActionType.REWRITE,
+                    target_id=generated.reel_id,
+                    reason_code="removable_filler",
+                    instruction=(
+                        "Delete removable lines that carry no claim, condition, "
+                        "exception, cause, sequence, contrast, example, action, "
+                        "or continuation dependency: "
+                        + " | ".join(semantic_report.filler_lines[:3])
+                    ),
+                )
+            )
+
     if not actions:
         return None
     return ReviewResult(scope=ReviewScope.REEL, status=ReviewStatus.NEEDS_REVISION, actions=actions)
@@ -2273,8 +2679,8 @@ def _build_and_review_course_map(
     if thesis is None:
         thesis = build_course_thesis_from_brief(
             brief,
-            course_type="practical_skill",
-            address_form=AddressForm.MASCULINE,
+            course_type=brief.course_type,
+            address_form=brief.address_form,
         )
     thesis_check = validate_course_thesis(thesis)
     thesis_check.raise_if_invalid()
@@ -2329,6 +2735,15 @@ def _build_and_review_course_map(
                         brief=f"طبّق مهارات موديول {mod.title} في تسليم قصير",
                         deliverable_shape="ملف أو لقطة شاشة",
                         pass_criteria=["يستخدم مهارات الموديول"],
+                        skills_tested=[
+                            reel.new_skill_or_decision
+                            or reel.distinct_teaching_outcome
+                            for reel in reels
+                            if (
+                                reel.new_skill_or_decision
+                                or reel.distinct_teaching_outcome
+                            )
+                        ],
                     )
                 }
             )
@@ -2343,9 +2758,26 @@ def _build_and_review_course_map(
                 brief=thesis.final_project or thesis.practical_deliverable,
                 deliverable_shape="مشروع نهائي",
                 pass_criteria=["يغطي نتيجة الكورس"],
+                skills_tested=[
+                    reel.new_skill_or_decision
+                    or reel.distinct_teaching_outcome
+                    for module in modules
+                    for reel in module.reels
+                    if (
+                        reel.new_skill_or_decision
+                        or reel.distinct_teaching_outcome
+                    )
+                ],
             ),
         }
     )
+
+    try:
+        final_map = attach_lesson_semantic_contracts(final_map)
+    except ValueError as exc:
+        raise UnusableOutputError(
+            f"Lesson semantic contract rejected before writing: {exc}"
+        ) from exc
 
     compressed, creport = enforce_map_hard_limits(final_map, thesis=thesis)
     if not creport.ok:
@@ -2354,6 +2786,17 @@ def _build_and_review_course_map(
             or "Course map exceeds hard limits after compression"
         )
     final_map = compressed
+    try:
+        # Compression can merge lessons and change their capability/coverage.
+        # Rebuild every contract against the exact map that will be frozen.
+        final_map = attach_lesson_semantic_contracts(
+            final_map,
+            force_rebuild=True,
+        )
+    except ValueError as exc:
+        raise UnusableOutputError(
+            f"Compressed lesson semantic contract rejected before writing: {exc}"
+        ) from exc
 
     report = analyze_map_duration(
         final_map, quality_mode=quality_mode, relax_floor=relax, thesis=thesis
@@ -2395,13 +2838,18 @@ def _write_and_review_reel(
     job: GenerationJob | None = None,
     preset: str | None = None,
     on_progress: Callable[[str], None] | None = None,
+    on_usage: Callable[[dict[str, object]], None] | None = None,
     lesson_n: int = 1,
     total_reels: int = 1,
     quality_mode: GenerationQualityMode = GenerationQualityMode.PREMIUM,
     target_market: TargetMarket = TargetMarket.EGYPT,
+    market_special_notes: str | None = None,
+    realistic_student_budget: str | None = None,
+    available_tools: list[str] | None = None,
     phrase_ledger: PhraseLedger | None = None,
     voice_profile: VoiceProfile | None = None,
     address_form: AddressForm = AddressForm.MASCULINE,
+    language_profile: dict[str, object] | None = None,
 ) -> tuple[GeneratedReel, int, bool, bool]:
     """Lesson path: First Draft → checks → Integrated Editorial → Rewrite(s) → Final Master.
 
@@ -2412,16 +2860,87 @@ def _write_and_review_reel(
     premium = quality_mode == GenerationQualityMode.PREMIUM
     source_texts = [s.text for s in sources if (s.text or "").strip()]
     reel_plan = ensure_reel_blueprint_defaults(reel_plan)
+    flat_plans = [reel for item in course_map.modules for reel in item.reels]
+    current_index = next(
+        (
+            index
+            for index, candidate in enumerate(flat_plans)
+            if candidate.reel_id == reel_plan.reel_id
+        ),
+        0,
+    )
+    semantic_contract = build_lesson_semantic_contract(
+        course_map,
+        module,
+        reel_plan,
+        previous_reel=(
+            flat_plans[current_index - 1] if current_index > 0 else None
+        ),
+        next_reel=(
+            flat_plans[current_index + 1]
+            if current_index + 1 < len(flat_plans)
+            else None
+        ),
+    )
+    semantic_validation = validate_lesson_semantic_contract(
+        semantic_contract,
+        reel_plan,
+        peer_contracts=[
+            peer.lesson_semantic_contract
+            for peer in flat_plans[:current_index]
+            if peer.lesson_semantic_contract is not None
+        ],
+    )
+    if not semantic_validation.ok:
+        raise UnusableOutputError(
+            "Lesson semantic contract rejected before prose: "
+            + "; ".join(semantic_validation.errors)
+        )
+    reel_plan = reel_plan.model_copy(
+        update={"lesson_semantic_contract": semantic_contract}
+    )
 
+    market_guidance = compile_market_guidance(
+        target_market,
+        special_notes=market_special_notes,
+        realistic_student_budget=realistic_student_budget,
+        available_tools=available_tools,
+    )
+    thesis = course_map.thesis
+    active_language_profile = dict(language_profile or {})
+    if not active_language_profile:
+        fallback_variety = getattr(thesis, "spoken_variety", "none")
+        active_language_profile = {
+            "presenter_language": getattr(thesis, "student_language", "ar"),
+            "presenter_dialect": fallback_variety,
+            "address_form": address_form.value,
+            "bilingual_policy": "presenter_primary",
+            "apply_egyptian_spoken_qa": bool(
+                thesis is not None
+                and str(fallback_variety).lower()
+                in {"egyptian", "egyptian_colloquial", "ar-eg", "arz"}
+            ),
+        }
+    term_ledger = build_term_ledger(
+        language_profile=active_language_profile,
+        course_domain=getattr(thesis, "course_domain", "") or "generic",
+        target_market=(target_market.value if hasattr(target_market, "value") else str(target_market)),
+        available_tools=available_tools
+        or list(getattr(thesis, "available_tools", []) or []),
+    )
+    language_guidance = compile_language_profile_guidance(active_language_profile)
+    term_guidance = compile_term_ledger_guidance(term_ledger)
     write_rules = select_packed_rules_for_stage(rules_context, PipelineStage.WRITE_SINGLE_REEL)
     review_rules = select_packed_rules_for_stage(rules_context, PipelineStage.REVIEW_SINGLE_REEL)
     review_rules_full = select_rules_for_stage(rules_context, PipelineStage.REVIEW_SINGLE_REEL)
     write_rules = {
         **write_rules,
-        "rukn_target_market_runtime": compile_market_guidance(target_market),
+        "rukn_target_market_runtime": market_guidance,
         "rukn_originality_runtime": compile_originality_guidance(),
         "rukn_educational_transform_runtime": compile_educational_transform_guidance(),
         "rukn_knowledge_priority_runtime": compile_knowledge_priority_guidance(),
+        "rukn_language_profile_runtime": language_guidance,
+        "rukn_term_ledger_runtime": term_guidance,
     }
     if phrase_ledger is not None:
         write_rules["rukn_phrase_ledger_runtime"] = phrase_ledger.compact_summary_for_writer()
@@ -2429,15 +2948,19 @@ def _write_and_review_reel(
         write_rules["rukn_voice_profile_runtime"] = voice_profile.compact_for_prompt()
     review_rules = {
         **review_rules,
-        "rukn_target_market_runtime": compile_market_guidance(target_market),
+        "rukn_target_market_runtime": market_guidance,
         "rukn_originality_runtime": compile_originality_guidance(),
         "rukn_educational_transform_runtime": compile_educational_transform_guidance(),
         "rukn_knowledge_priority_runtime": compile_knowledge_priority_guidance(),
+        "rukn_language_profile_runtime": language_guidance,
+        "rukn_term_ledger_runtime": term_guidance,
     }
     review_rules_local = {
         **review_rules_full,
-        "rukn_target_market_runtime": compile_market_guidance(target_market),
+        "rukn_target_market_runtime": market_guidance,
         "rukn_originality_runtime": compile_originality_guidance(),
+        "rukn_language_profile_runtime": language_guidance,
+        "rukn_term_ledger_runtime": term_guidance,
     }
 
     prior_summaries = [
@@ -2474,11 +2997,14 @@ def _write_and_review_reel(
             module_persona_adjustment=module_persona_adjustment or {},
             lesson_persona_state=lesson_persona_state or {},
             target_market=target_market,
+            lesson_semantic_contract=semantic_contract,
         )
         generated = provider.write_single_reel(write_input)
         generated = ensure_spoken_beats(generated)
         if session is not None and job is not None and preset is not None:
             _record_usage_event(session, job, provider, PipelineStage.WRITE_SINGLE_REEL, preset)
+        if on_usage is not None:
+            on_usage(dict(getattr(provider, "last_usage", None) or {}))
         return generated
 
     # --- 1. First draft ---------------------------------------------------
@@ -2506,6 +3032,8 @@ def _write_and_review_reel(
         )
         if session is not None and job is not None and preset is not None:
             _record_usage_event(session, job, provider, PipelineStage.REVIEW_SINGLE_REEL, preset)
+        if on_usage is not None:
+            on_usage(dict(getattr(provider, "last_usage", None) or {}))
 
     editorial = run_integrated_editorial_review(
         reel_plan=reel_plan,
@@ -2514,6 +3042,8 @@ def _write_and_review_reel(
         address_form=address_form,
         quality_mode=quality_mode,
         provider_review=provider_review,
+        language_profile=active_language_profile,
+        course_domain=getattr(thesis, "course_domain", "") or "generic",
     )
     local_result = _local_review_single_reel(
         draft,
@@ -2522,6 +3052,7 @@ def _write_and_review_reel(
         lesson_persona=lesson_persona_model,
         target_market=target_market,
         source_texts=source_texts,
+        semantic_contract=semantic_contract,
     )
     feedback: list[str] = [n.required_repair for n in editorial.notes if n.requires_rewrite]
     if local_result is not None:
@@ -2559,6 +3090,8 @@ def _write_and_review_reel(
             address_form=address_form,
             quality_mode=quality_mode,
             provider_review=None,
+            language_profile=active_language_profile,
+            course_domain=getattr(thesis, "course_domain", "") or "generic",
         )
         sanity = _local_review_single_reel(
             master,
@@ -2567,6 +3100,7 @@ def _write_and_review_reel(
             lesson_persona=lesson_persona_model,
             target_market=target_market,
             source_texts=source_texts,
+            semantic_contract=semantic_contract,
         )
         if sanity is not None:
             caught_locally = True
@@ -2612,6 +3146,8 @@ def _write_and_review_reel(
         prior_scripts=[r.script_text for r in all_reels_so_far],
         address_form=address_form,
         quality_mode=quality_mode,
+        language_profile=active_language_profile,
+        course_domain=getattr(thesis, "course_domain", "") or "generic",
     )
     final_sanity = _local_review_single_reel(
         master,
@@ -2620,6 +3156,7 @@ def _write_and_review_reel(
         lesson_persona=lesson_persona_model,
         target_market=target_market,
         source_texts=source_texts,
+        semantic_contract=semantic_contract,
     )
     if unresolved_fatal_or_serious(final_editorial) or final_sanity is not None:
         needs_review = True
@@ -2654,7 +3191,87 @@ def _write_and_review_reel(
     cleaned = strip_conflict_notes_from_script(cleaned)
     cleaned = strip_meta_instruction_lines(cleaned)
     cleaned = strip_punctuation_from_spoken_body(cleaned)
-    master = master.model_copy(update={"script_text": cleaned})
+    cleaned, removed_filler = remove_safe_semantic_filler(
+        cleaned,
+        semantic_contract,
+    )
+    semantic_post = inspect_script_against_semantic_contract(
+        cleaned,
+        semantic_contract,
+    )
+    if semantic_post.missing_fields or semantic_post.filler_lines:
+        needs_review = True
+    if bool(active_language_profile.get("apply_egyptian_spoken_qa", True)):
+        spoken_variety_post = run_spoken_variety_integrity_gate(
+            cleaned,
+            address_form=address_form,
+            spoken_variety=str(
+                active_language_profile.get("presenter_dialect") or "egyptian"
+            ),
+            course_domain=getattr(thesis, "course_domain", "") or "generic",
+        )
+    else:
+        from app.generation.egyptian_arabic_gate import ArabicGateReport
+
+        spoken_variety_post = ArabicGateReport()
+    teleprompter_post = validate_spoken_export_text(cleaned)
+    terminology_failures = default_terminology_map().find_awkward_literals(cleaned)
+    if not spoken_variety_post.ok or not teleprompter_post.ok or terminology_failures:
+        needs_review = True
+    quality_report = dict(master.quality_report or {})
+    quality_report["semantic_contract"] = {
+        "missing_fields": list(semantic_post.missing_fields),
+        "removed_filler_count": len(removed_filler),
+        "remaining_filler_count": len(semantic_post.filler_lines),
+    }
+    quality_report["spoken_variety_integrity"] = {
+        "passed_after_final_semantic_rewrite": spoken_variety_post.ok,
+        "issues": [
+            {
+                "code": issue.code,
+                "severity": issue.severity,
+                "detail": issue.detail,
+            }
+            for issue in spoken_variety_post.issues
+        ],
+        "teleprompter_recheck_passed": teleprompter_post.ok,
+        "semantic_recheck_passed": not semantic_post.missing_fields,
+    }
+    accepted_text_fingerprint = fingerprint_value(cleaned)
+    quality_report["language_rewrite_record"] = {
+        "before_text_fingerprint": fingerprint_value(master.script_text or ""),
+        "after_text_fingerprint": accepted_text_fingerprint,
+        "text_changed": (master.script_text or "") != cleaned,
+        "semantic_preserved": not semantic_post.missing_fields,
+    }
+    quality_report["final_text_acceptance"] = {
+        "text_fingerprint": accepted_text_fingerprint,
+        "semantic_gate_passed": not semantic_post.missing_fields
+        and not semantic_post.filler_lines,
+        "terminology_gate_passed": not terminology_failures,
+        "terminology_failures": list(terminology_failures),
+        "spoken_variety_gate_passed": spoken_variety_post.ok,
+        "teleprompter_gate_passed": teleprompter_post.ok,
+        "term_ledger_fingerprint": fingerprint_value(term_ledger),
+        "phrase_ledger_before_fingerprint": fingerprint_value(
+            phrase_ledger.model_dump() if phrase_ledger is not None else {}
+        ),
+        "accepted": not needs_review,
+    }
+    master = master.model_copy(
+        update={
+            "script_text": cleaned,
+            # Deterministic language/meaning cleanup changed the body. Drop
+            # stale provider beats so ensure_spoken_beats derives them from the
+            # exact text that just passed semantic + language + teleprompter QA.
+            "spoken_beats": [],
+            "quality_status": "needs_review" if needs_review else "pass",
+            "self_check_status": (
+                ReviewStatus.NEEDS_REVISION if needs_review else ReviewStatus.PASS
+            ),
+            "quality_report": quality_report,
+        }
+    )
     master = ensure_spoken_beats(master)
 
     if not (master.script_text or "").strip():
@@ -2665,6 +3282,13 @@ def _write_and_review_reel(
 
     if phrase_ledger is not None and not needs_review:
         phrase_ledger.record_reel(master)
+        quality_report = dict(master.quality_report or {})
+        acceptance = dict(quality_report.get("final_text_acceptance") or {})
+        acceptance["phrase_ledger_after_fingerprint"] = fingerprint_value(
+            phrase_ledger.model_dump()
+        )
+        quality_report["final_text_acceptance"] = acceptance
+        master = master.model_copy(update={"quality_report": quality_report})
 
     return master, write_count, caught_locally, needs_review
 
@@ -2717,6 +3341,190 @@ def _assemble_final_course(course_map: CourseMap, all_reels: list[GeneratedReel]
     )
 
 
+def _revalidate_after_course_gate_mutations(
+    *,
+    course_map: CourseMap,
+    final_course: FinalCourse,
+    generated_reels: list[GeneratedReel],
+    quality_contract,
+    address_form: AddressForm,
+    term_ledger: dict,
+) -> tuple[FinalCourse, list[GeneratedReel], PhraseLedger]:
+    """Refreeze only the exact post-gate text; no provider or semantic rewrite."""
+    final_text_by_id = {
+        reel.reel_id: reel.script_text
+        for module in final_course.modules
+        for reel in module.reels
+    }
+    plan_by_id = {
+        reel.reel_id: reel
+        for module in course_map.modules
+        for reel in module.reels
+    }
+    rebuilt_ledger = PhraseLedger()
+    updated: list[GeneratedReel] = []
+    for reel in generated_reels:
+        text = final_text_by_id.get(reel.reel_id, reel.script_text or "")
+        plan = plan_by_id.get(reel.reel_id)
+        semantic = (
+            inspect_script_against_semantic_contract(
+                text,
+                plan.lesson_semantic_contract,
+            )
+            if plan is not None and plan.lesson_semantic_contract is not None
+            else None
+        )
+        semantic_ok = bool(
+            semantic is not None
+            and not semantic.missing_fields
+            and not semantic.filler_lines
+        )
+        language_profile = quality_contract.language.model_dump(mode="json")
+        if quality_contract.language.apply_egyptian_spoken_qa:
+            spoken_ok = run_spoken_variety_integrity_gate(
+                text,
+                address_form=address_form,
+                spoken_variety=str(
+                    language_profile.get("presenter_dialect") or "egyptian"
+                ),
+                course_domain=quality_contract.pedagogy.course_domain,
+            ).ok
+        elif quality_contract.language.apply_english_spoken_qa:
+            from app.generation.quality.english_spoken_gate import run_english_spoken_gate
+
+            spoken_ok = run_english_spoken_gate(text).ok
+        else:
+            spoken_ok = True
+        teleprompter_ok = validate_spoken_export_text(text).ok
+        terminology_ok = not default_terminology_map().find_awkward_literals(text)
+        accepted = bool(
+            text.strip()
+            and semantic_ok
+            and spoken_ok
+            and teleprompter_ok
+            and terminology_ok
+        )
+        before_acceptance = dict(
+            (reel.quality_report or {}).get("final_text_acceptance") or {}
+        )
+        text_fingerprint = fingerprint_value(text)
+        quality_report = dict(reel.quality_report or {})
+        quality_report["language_rewrite_record"] = {
+            "before_text_fingerprint": before_acceptance.get("text_fingerprint")
+            or fingerprint_value(reel.script_text or ""),
+            "after_text_fingerprint": text_fingerprint,
+            "text_changed": (reel.script_text or "") != text,
+            "semantic_preserved": semantic_ok,
+            "course_gate_revalidation": True,
+        }
+        quality_report["final_text_acceptance"] = {
+            "text_fingerprint": text_fingerprint,
+            "semantic_gate_passed": semantic_ok,
+            "terminology_gate_passed": terminology_ok,
+            "spoken_variety_gate_passed": spoken_ok,
+            "teleprompter_gate_passed": teleprompter_ok,
+            "term_ledger_fingerprint": fingerprint_value(term_ledger),
+            "phrase_ledger_before_fingerprint": fingerprint_value(
+                rebuilt_ledger.model_dump()
+            ),
+            "accepted": accepted,
+        }
+        refreshed = ensure_spoken_beats(
+            reel.model_copy(
+                update={
+                    "script_text": text,
+                    "spoken_beats": [],
+                    "quality_status": "pass" if accepted else "needs_review",
+                    "self_check_status": (
+                        ReviewStatus.PASS
+                        if accepted
+                        else ReviewStatus.NEEDS_REVISION
+                    ),
+                    "quality_report": quality_report,
+                }
+            )
+        )
+        if accepted:
+            rebuilt_ledger.record_reel(refreshed)
+            quality_report = dict(refreshed.quality_report or {})
+            final_acceptance = dict(
+                quality_report.get("final_text_acceptance") or {}
+            )
+            final_acceptance["phrase_ledger_after_fingerprint"] = fingerprint_value(
+                rebuilt_ledger.model_dump()
+            )
+            quality_report["final_text_acceptance"] = final_acceptance
+            refreshed = refreshed.model_copy(update={"quality_report": quality_report})
+        updated.append(refreshed)
+
+    refreshed_course = _assemble_final_course(course_map, updated)
+    return refreshed_course, updated, rebuilt_ledger
+
+
+def _assert_final_review_actions_applied(
+    *,
+    course_map: CourseMap,
+    original_reels: list[GeneratedReel],
+    final_review: ReviewResult,
+    rebuilt_course: FinalCourse,
+) -> None:
+    """Fail closed when a requested final repair leaves its target unchanged."""
+    required_actions = [
+        action
+        for action in final_review.actions
+        if action.requires_rewrite or action.action != ReviewActionType.KEEP
+    ]
+    if final_review.status == ReviewStatus.NEEDS_REVISION and not required_actions:
+        raise UnusableOutputError(
+            "Final review requested revision without an actionable repair"
+        )
+
+    original_course = _assemble_final_course(course_map, original_reels)
+    original_reel_by_id = {
+        reel.reel_id: reel
+        for module in original_course.modules
+        for reel in module.reels
+    }
+    rebuilt_reel_by_id = {
+        reel.reel_id: reel
+        for module in rebuilt_course.modules
+        for reel in module.reels
+    }
+    original_module_by_id = {
+        module.module_id: module for module in original_course.modules
+    }
+    rebuilt_module_by_id = {
+        module.module_id: module for module in rebuilt_course.modules
+    }
+
+    unapplied: list[str] = []
+    for action in required_actions:
+        target = action.target_id
+        if target in original_reel_by_id:
+            before = original_reel_by_id[target].model_dump(mode="json")
+            after_reel = rebuilt_reel_by_id.get(target)
+            changed = after_reel is None or after_reel.model_dump(mode="json") != before
+        elif target in original_module_by_id:
+            before = original_module_by_id[target].model_dump(mode="json")
+            after_module = rebuilt_module_by_id.get(target)
+            changed = (
+                after_module is None
+                or after_module.model_dump(mode="json") != before
+            )
+        else:
+            changed = rebuilt_course.model_dump(mode="json") != original_course.model_dump(
+                mode="json"
+            )
+        if not changed:
+            unapplied.append(f"{target}:{action.reason_code}")
+
+    if unapplied:
+        raise UnusableOutputError(
+            "Final review actions were not applied to accepted text: "
+            + ", ".join(unapplied)
+        )
+
+
 def _build_course_summary(
     course_map: CourseMap, all_reels: list[GeneratedReel], logs: list[dict]
 ) -> str:
@@ -2744,7 +3552,7 @@ def _build_course_report(
     review_steps = [
         e
         for e in logs
-        if e.get("step") in ("review_5reels", "review_module", "review_2modules", "final_review")
+        if e.get("step") in ("structural_module_gate", "final_review")
     ]
     flagged_needing_revision = sum(1 for e in review_steps if e.get("status") == "needs_revision")
     lines.append("")

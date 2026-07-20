@@ -5,13 +5,8 @@ Uses FakeProvider + fixtures only. Network and real providers are blocked.
 
 from __future__ import annotations
 
-import os
-
 import pytest
 from sqlmodel import Session, SQLModel, create_engine
-
-# Activate credit-safe mode before importing factory-dependent modules.
-os.environ["RUKN_CREDIT_SAFE_TESTS"] = "1"
 
 from app.ai.fake_provider import FakeProvider
 from app.ai.provider import CourseBrief
@@ -74,7 +69,8 @@ from app.schemas.generation import (
 
 
 @pytest.fixture(autouse=True)
-def _credit_safe():
+def _credit_safe(monkeypatch):
+    monkeypatch.setenv("RUKN_CREDIT_SAFE_TESTS", "1")
     reset_real_provider_call_count()
     block_network()
     yield
@@ -120,12 +116,15 @@ def test_domain_adapters_do_not_cross_contaminate():
     religious = build_course_quality_contract(_brief(title="فقه", course_domain="religious"))
     health = build_course_quality_contract(_brief(title="medical finance law", course_domain="health"))
 
-    assert lang.adapter_id == "language_learning"
-    assert tool.adapter_id == "software_and_tools"
+    assert lang.adapter_id == "languages_communication"
+    assert tool.adapter_id == "programming_technical"
     assert "screen_plan_when_needed" in tool.pedagogy.domain_specific_validators
     assert "screen_plan_when_needed" not in lang.pedagogy.domain_specific_validators
     assert "no_guaranteed_income" in income.pedagogy.domain_specific_validators
-    assert "no_invented_texts" in religious.pedagogy.domain_specific_validators
+    assert religious.adapter_id == "high_stakes_authority_sensitive"
+    assert "no_invented_authority_or_personal_experience" in (
+        religious.pedagogy.domain_specific_validators
+    )
     assert health.evidence.require_expert_review_before_export is True
     # Egyptian QA only when presenter Arabic Egyptian
     en = build_course_quality_contract(

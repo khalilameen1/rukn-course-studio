@@ -65,7 +65,12 @@ def _soften_punctuation(text: str) -> str:
 
 
 def _split_long_thought(thought: str) -> list[str]:
-    """Break a long thought into readable teleprompter lines (~breath units)."""
+    """Split only at an explicit spoken connector, never at a word-count wall.
+
+    If no semantic connector exists, the long thought stays intact and the
+    export/layout gate must request a real sentence-level rewrite. Arbitrary
+    equal-length wrapping would silently sever claim/condition/cause/sequence.
+    """
     words = thought.split()
     if len(words) <= _MAX_LINE_WORDS:
         return [thought] if thought.strip() else []
@@ -78,14 +83,11 @@ def _split_long_thought(thought: str) -> list[str]:
         "and", "but", "because", "so", "then", "which",
     }
     for w in words:
-        if buf and len(buf) >= _TARGET_LINE_WORDS and w.lower() in soft_starts:
+        if buf and len(buf) >= 7 and w.lower() in soft_starts:
             lines.append(" ".join(buf).rstrip(" ،,"))
             buf = [w]
             continue
         buf.append(w)
-        if len(buf) >= _MAX_LINE_WORDS:
-            lines.append(" ".join(buf).rstrip(" ،,"))
-            buf = []
     if buf:
         # Avoid orphan 1–2 word lines: merge into previous if tiny.
         if len(buf) < _MIN_LINE_WORDS and lines:

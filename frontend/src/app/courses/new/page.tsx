@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { EMPTY_COURSE_VALUES, type CourseFormValues } from "@/components/courses/CourseForm";
 import ActionError, { actionErrorFromUnknown } from "@/components/ui/ActionError";
 import { api, ApiError, formatUploadErrorForDisplay } from "@/lib/api";
@@ -66,15 +66,14 @@ export default function NewCoursePage() {
   const [busy, setBusy] = useState(false);
   const [allowLeave, setAllowLeave] = useState(false);
   const [draftSavedNotice, setDraftSavedNotice] = useState<string | null>(null);
-  const createIdempotencyKeyRef = useRef<string>(
-    typeof crypto !== "undefined" && "randomUUID" in crypto
-      ? `new-course-${crypto.randomUUID()}`
-      : `new-course-${Date.now()}`,
-  );
+  const stableRequestId = useId();
+  const createIdempotencyKeyRef = useRef<string>(`new-course-${stableRequestId}`);
 
   useEffect(() => {
     const draft = loadNewCourseDraft();
     if (!draft) return;
+    // Restore the one persisted client draft after hydration.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setValues(draft.values);
     setCourseId(draft.courseId);
     setSavedMapText(draft.values.manual_map_text ?? "");
@@ -180,6 +179,11 @@ export default function NewCoursePage() {
         generation_preset: values.generation_preset,
         generation_quality_mode: values.generation_quality_mode,
         target_market: values.target_market,
+        primary_course_family: values.primary_course_family,
+        web_research_mode: values.web_research_mode,
+        student_language: values.student_language,
+        spoken_variety: values.spoken_variety,
+        address_form: values.address_form,
       });
       return courseId;
     }
@@ -196,6 +200,11 @@ export default function NewCoursePage() {
         generation_preset: values.generation_preset,
         generation_quality_mode: values.generation_quality_mode,
         target_market: values.target_market,
+        primary_course_family: values.primary_course_family,
+        web_research_mode: values.web_research_mode,
+        student_language: values.student_language,
+        spoken_variety: values.spoken_variety,
+        address_form: values.address_form,
       },
       {
         idempotencyKey: createIdempotencyKeyRef.current,
@@ -341,9 +350,15 @@ export default function NewCoursePage() {
       await flushPendingSources(id);
       setMapStatus("Checking course sources…");
       setMapStatus("Building course map…");
-      const updated = await api.generateCourseMap(id);
+      const preview = await api.mapPreview(id, {
+        generation_quality_mode: values.generation_quality_mode,
+        web_research_mode: values.web_research_mode,
+        address_form: values.address_form,
+        presenter_language: values.student_language,
+        presenter_dialect: values.spoken_variety,
+      });
       setMapStatus("Reviewing map…");
-      const map = updated.manual_map_text ?? "";
+      const map = preview.map_text ?? "";
       setValues((v) => ({ ...v, manual_map_text: map }));
       setSavedMapText(map);
       setMapStatus("Map ready to edit — review below before full generation.");

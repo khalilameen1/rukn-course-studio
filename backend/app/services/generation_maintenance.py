@@ -8,6 +8,8 @@ from sqlmodel import Session, select
 
 from app.crud import generation_jobs
 from app.generation.generation_state import ACTIVE_LOCK_STATUSES
+from app.generation.export_blockers import ExportBlockedError
+from app.generation.quality.context_snapshot import SnapshotMismatchError
 from app.models.enums import JobStatus
 from app.models.generation_job import GenerationJob
 from app.services.finalize_saved_job import (
@@ -54,6 +56,40 @@ def release_stale_active_jobs(
         GenerationJob.status.in_(tuple(ACTIVE_LOCK_STATUSES)),
     )
     released = 0
+
+    def _finalize_or_fail_mismatch(job: GenerationJob) -> GenerationJob | None:
+        nonlocal released
+        try:
+            return finalize_job_from_saved_lessons(session, job)
+        except SnapshotMismatchError:
+            generation_jobs.update(
+                session,
+                job.id,
+                status=JobStatus.FAILED,
+                current_stage="failed",
+                cancel_requested=False,
+                error_message=(
+                    "Run configuration changed; saved lessons cannot be resumed or exported."
+                ),
+                error_category="config_fingerprint_mismatch",
+                last_progress_message="Run stopped because its configuration changed",
+            )
+            released += 1
+            return None
+        except ExportBlockedError:
+            generation_jobs.update(
+                session,
+                job.id,
+                status=JobStatus.PARTIAL,
+                current_stage="blocked",
+                cancel_requested=False,
+                error_message="Saved lessons still have unresolved export blockers.",
+                error_category="export_blocked",
+                last_progress_message="Saved lessons require review before export",
+            )
+            released += 1
+            return None
+
     for job in list(session.exec(statement)):
         heartbeat = max(_as_utc(job.updated_at), _as_utc(job.last_saved_at))
         stage = (job.current_stage or "").lower()
@@ -61,7 +97,9 @@ def release_stale_active_jobs(
 
         # Prefer no-AI finalization when all lessons are already on disk/DB.
         if job_eligible_for_saved_finalize(job) and heartbeat < finalize_cutoff:
-            finalized = finalize_job_from_saved_lessons(session, job)
+            finalized = _finalize_or_fail_mismatch(job)
+            if finalized is None and job.status == JobStatus.FAILED:
+                continue
             if finalized is not None and finalized.status == JobStatus.COMPLETED:
                 released += 1
                 continue
@@ -72,7 +110,9 @@ def release_stale_active_jobs(
 
         # Last chance: if lessons are complete, finalize instead of failing.
         if job_eligible_for_saved_finalize(job):
-            finalized = finalize_job_from_saved_lessons(session, job)
+            finalized = _finalize_or_fail_mismatch(job)
+            if finalized is None and job.status == JobStatus.FAILED:
+                continue
             if finalized is not None and finalized.status == JobStatus.COMPLETED:
                 released += 1
                 continue

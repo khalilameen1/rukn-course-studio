@@ -18,7 +18,6 @@ from app.models.enums import JobStatus
 from app.models.generation_job import GenerationJob
 from app.routers.deps import get_course_or_404
 from app.schemas.ai_usage import CourseAIUsage
-from app.schemas.course import CourseRead
 from app.schemas.course_version import CourseVersionRead
 from app.schemas.generation_job import (
     GenerateCourseRequest,
@@ -56,78 +55,6 @@ def _actor(request: Request) -> str | None:
     return getattr(request.state, "username", None)
 
 
-@router.post("/generate-map", response_model=CourseRead, deprecated=True)
-def generate_course_map(course_id: int, session: Session = Depends(get_session)):
-    """DEPRECATED: prefer POST /courses/{id}/map-preview.
-
-    Kept for backward compatibility with the create-course map workspace.
-    New UI should use map-preview (same sources + GenerationContextSnapshot).
-    """
-    get_course_or_404(session, course_id)
-    _release_stale_active_jobs(session)
-    from app.generation.map_lock import clear_stale_map_locks
-
-    clear_stale_map_locks(session)
-
-    if is_map_busy(course_id):
-        raise HTTPException(
-            status_code=409,
-            detail="A course map build is already in progress for this course.",
-        )
-
-    try:
-        with generation_start_guard(course_id):
-            if _get_active_job(session, course_id) is not None:
-                raise HTTPException(
-                    status_code=409,
-                    detail=(
-                        "A generation run is already active for this course. "
-                        "Wait for it to finish before building the map."
-                    ),
-                )
-            if getattr(settings, "generation_global_lock", True):
-                other = session.exec(
-                    select(GenerationJob).where(
-                        GenerationJob.status.in_(tuple(ACTIVE_LOCK_STATUSES)),
-                    )
-                ).first()
-                if other is not None and other.course_id != course_id:
-                    raise HTTPException(
-                        status_code=409,
-                        detail=(
-                            f"Another course (id={other.course_id}) already has an "
-                            "active generation run. Wait for it to finish."
-                        ),
-                    )
-            if not try_begin_map(course_id, session):
-                raise HTTPException(
-                    status_code=409,
-                    detail="A course map build is already in progress for this course.",
-                )
-    except HTTPException:
-        raise
-    except RuntimeError as exc:
-        detail = str(exc)
-        if detail.startswith("GLOBAL_LOCK:"):
-            raise HTTPException(
-                status_code=409,
-                detail=detail.removeprefix("GLOBAL_LOCK:").strip(),
-            ) from exc
-        raise
-
-    from app.generation.course_map_generate import generate_and_save_course_map
-
-    try:
-        course, _map_text = generate_and_save_course_map(session, course_id)
-        return course
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except AIProviderConfigError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    finally:
-        end_map(course_id, session)
-
-
 @router.post("/generate", response_model=GenerationJobRead, status_code=201)
 def generate_course(
     course_id: int,
@@ -155,6 +82,27 @@ def generate_course(
             detail="A course map build is in progress. Wait for it to finish.",
         )
 
+    # Idempotent retries for an already claimed run never need to repeat the
+    # approval body. Return the existing same-course job before new-run gates.
+    active_job = _get_active_job(session, course_id)
+    if active_job is not None:
+        response.status_code = 200
+        return active_job
+    if getattr(settings, "generation_global_lock", True):
+        other_active = session.exec(
+            select(GenerationJob).where(
+                GenerationJob.status.in_(tuple(ACTIVE_LOCK_STATUSES)),
+            )
+        ).first()
+        if other_active is not None and other_active.course_id != course_id:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Another course (id={other_active.course_id}) already has an "
+                    "active generation run. Wait for it to finish."
+                ),
+            )
+
     min_interval = float(getattr(settings, "generate_min_interval_seconds", 3.0) or 0)
     if min_interval > 0 and not can_generate_start(
         course_id, min_interval_seconds=min_interval
@@ -170,13 +118,28 @@ def generate_course(
 
     course = get_course_or_404(session, course_id)
     request_body = body or GenerateCourseRequest()
-    updates: dict = {}
-    if course.generation_quality_mode != request_body.generation_quality_mode:
-        updates["generation_quality_mode"] = request_body.generation_quality_mode
-    if getattr(course, "web_research_mode", None) != request_body.web_research_mode:
-        updates["web_research_mode"] = request_body.web_research_mode
-    if updates:
-        courses.update(session, course_id, **updates)
+    if not request_body.map_preview_confirmed:
+        raise HTTPException(
+            status_code=409,
+            detail="Confirm the approved map preview before full generation.",
+        )
+
+    from app.generation.map_preview import assert_approved_map_ready
+    from app.generation.quality.context_snapshot import SnapshotMismatchError
+
+    try:
+        approved_snapshot = assert_approved_map_ready(
+            session,
+            course_id,
+            approved_snapshot_fingerprint=(
+                request_body.approved_snapshot_fingerprint
+            ),
+            quality_mode=request_body.generation_quality_mode,
+            web_research_mode=request_body.web_research_mode,
+            human_override_hard_limits=request_body.human_override_hard_limits,
+        )
+    except SnapshotMismatchError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     try:
         # Fail fast before claiming a slot if the provider cannot run.
@@ -225,6 +188,18 @@ def generate_course(
     if not created:
         response.status_code = 200
         return claimed
+
+    stage_state = dict(approved_snapshot.get("STAGE_CONTRACT_STATE") or {})
+    stage_state["map_preview_confirmed"] = True
+    approved_snapshot["STAGE_CONTRACT_STATE"] = stage_state
+    claimed = generation_jobs.update(
+        session,
+        job_id,
+        run_snapshot_json=approved_snapshot,
+        course_map_json=approved_snapshot.get("CONFIG_INPUTS", {}).get(
+            "APPROVED_MAP"
+        ),
+    ) or claimed
 
     record_generate_start(course_id)
     background_tasks.add_task(
@@ -346,7 +321,23 @@ def finalize_saved_generation(
             ),
         )
 
-    updated = finalize_job_from_saved_lessons(session, job, force=True)
+    try:
+        updated = finalize_job_from_saved_lessons(session, job, force=True)
+    except Exception as exc:
+        from app.generation.export_blockers import ExportBlockedError
+        from app.generation.quality.context_snapshot import SnapshotMismatchError
+
+        if isinstance(exc, SnapshotMismatchError):
+            raise HTTPException(
+                status_code=409,
+                detail="Run configuration changed; saved lessons cannot be resumed or exported.",
+            ) from exc
+        if isinstance(exc, ExportBlockedError):
+            raise HTTPException(
+                status_code=409,
+                detail="Saved lessons still have unresolved quality or export blockers.",
+            ) from exc
+        raise
     if updated is None or updated.status != JobStatus.COMPLETED:
         raise HTTPException(
             status_code=500,
@@ -436,7 +427,10 @@ def download_latest_version(course_id: int, session: Session = Depends(get_sessi
 
 def _writer_test_job_read(job) -> WriterTestJobRead:
     snap = job.run_snapshot_json or {}
-    raw_reels = snap.get("writer_test_results") or job.completed_reels_json or []
+    generation_settings = (
+        (snap.get("CONFIG_INPUTS") or {}).get("GENERATION_SETTINGS") or {}
+    )
+    raw_reels = job.completed_reels_json or []
     public: list[WriterTestReelPublic] = []
     for raw in raw_reels:
         if not isinstance(raw, dict):
@@ -473,9 +467,23 @@ def _writer_test_job_read(job) -> WriterTestJobRead:
         )
     return WriterTestJobRead(
         job=GenerationJobRead.model_validate(job),
-        job_kind=str(snap.get("job_kind") or "writer_test_3_reels"),
-        settings_fingerprint=snap.get("settings_fingerprint"),
-        series_linked=bool(snap.get("series_linked")),
+        job_kind=str(generation_settings.get("job_kind") or "writer_test_3_reels"),
+        config_fingerprint=snap.get("CONFIG_FINGERPRINT"),
+        production_context_fingerprint=generation_settings.get(
+            "writer_test_shared_context_fingerprint"
+        ),
+        reference_context_fingerprint=generation_settings.get(
+            "reference_shared_context_fingerprint"
+        ),
+        context_matches_course=bool(
+            generation_settings.get("reference_shared_context_fingerprint")
+            and not generation_settings.get("context_mismatch_fields")
+        ),
+        context_mismatch_fields=list(
+            generation_settings.get("context_mismatch_fields") or []
+        ),
+        limitations=list(generation_settings.get("writer_test_limitations") or []),
+        series_linked=bool(generation_settings.get("series_linked")),
         reels=public,
     )
 
@@ -523,7 +531,10 @@ def get_writer_test_job(
     if job is None or job.course_id != course_id:
         raise HTTPException(status_code=404, detail="Writer test job not found")
     snap = job.run_snapshot_json or {}
-    if snap.get("job_kind") != "writer_test_3_reels":
+    generation_settings = (
+        (snap.get("CONFIG_INPUTS") or {}).get("GENERATION_SETTINGS") or {}
+    )
+    if generation_settings.get("job_kind") != "writer_test_3_reels":
         raise HTTPException(status_code=404, detail="Not a writer-test job")
     return _writer_test_job_read(job)
 
@@ -536,23 +547,52 @@ def map_preview(
 ):
     """Build Course Thesis + compressed Course Map only; return cost/size preview."""
     get_course_or_404(session, course_id)
+    _release_stale_active_jobs(session)
+    from app.generation.map_lock import clear_stale_map_locks
+
+    clear_stale_map_locks(session)
+    try:
+        with generation_start_guard(course_id):
+            if _get_active_job(session, course_id) is not None:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "A generation run is active. Wait before rebuilding "
+                        "the approved map."
+                    ),
+                )
+            if not try_begin_map(course_id, session):
+                raise HTTPException(
+                    status_code=409,
+                    detail="A course map preview is already in progress.",
+                )
+    except HTTPException:
+        raise
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
     request_body = body or MapPreviewRequest()
     from app.generation.map_preview import build_map_preview
     from app.generation.errors import UnusableOutputError
 
     try:
-        from app.models.enums import AddressForm
-
-        try:
-            address = AddressForm(request_body.address_form)
-        except ValueError:
-            address = AddressForm.MASCULINE
+        updates: dict = {
+            "generation_quality_mode": request_body.generation_quality_mode,
+            "web_research_mode": request_body.web_research_mode,
+        }
+        if request_body.address_form is not None:
+            updates["address_form"] = request_body.address_form
+        if request_body.presenter_language:
+            updates["student_language"] = request_body.presenter_language.strip()
+        if request_body.presenter_dialect:
+            updates["spoken_variety"] = request_body.presenter_dialect.strip()
+        courses.update(session, course_id, **updates)
         stats = build_map_preview(
             session,
             course_id,
             quality_mode=request_body.generation_quality_mode,
             human_override_hard_limits=request_body.human_override_hard_limits,
-            address_form=address,
+            address_form=request_body.address_form,
             presenter_language=request_body.presenter_language,
             presenter_dialect=request_body.presenter_dialect,
             delivery_pattern=request_body.delivery_pattern,
@@ -564,4 +604,6 @@ def map_preview(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    finally:
+        end_map(course_id, session)
     return stats.model_dump()

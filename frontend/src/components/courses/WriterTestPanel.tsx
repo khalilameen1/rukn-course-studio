@@ -45,7 +45,7 @@ export default function WriterTestPanel({ courseId, courseFingerprintHint }: Pro
       STORAGE_KEY(courseId),
       JSON.stringify({
         jobId: job.job.id,
-        fingerprint: job.settings_fingerprint,
+        fingerprint: job.config_fingerprint,
       }),
     );
   }
@@ -104,10 +104,13 @@ export default function WriterTestPanel({ courseId, courseFingerprintHint }: Pro
     });
   }
 
-  const fingerprintMismatch =
-    result?.settings_fingerprint &&
-    courseFingerprintHint &&
-    result.settings_fingerprint !== courseFingerprintHint;
+  const fingerprintMismatch = Boolean(
+    result &&
+      (!result.context_matches_course ||
+        (result.config_fingerprint &&
+          courseFingerprintHint &&
+          result.config_fingerprint !== courseFingerprintHint)),
+  );
 
   return (
     <section className="space-y-3 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4">
@@ -163,9 +166,17 @@ export default function WriterTestPanel({ courseId, courseFingerprintHint }: Pro
 
       {error ? <p className="text-sm text-red-600">{error}</p> : null}
       {fingerprintMismatch ? (
-        <p className="text-sm text-amber-700">
-          تنبيه: تجربة الثلاثة ريلز لم تعد ممثلة تمامًا لإعدادات الكورس الحالي.
-        </p>
+        <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-200">
+          <p className="font-medium">Fingerprint mismatch</p>
+          <p className="mt-1">
+            This three-reel result no longer represents the current production course context.
+          </p>
+          {result?.context_mismatch_fields?.length ? (
+            <p className="mt-1 text-xs">
+              Changed context: {result.context_mismatch_fields.join(", ")}.
+            </p>
+          ) : null}
+        </div>
       ) : null}
 
       {result ? (
@@ -174,6 +185,16 @@ export default function WriterTestPanel({ courseId, courseFingerprintHint }: Pro
             Job #{result.job.id} · {result.job.status} ·{" "}
             {result.job.estimated_usage_summary || "—"}
           </p>
+          {result.limitations.length > 0 ? (
+            <div className="rounded-lg border border-border bg-surface-muted/40 p-3 text-xs text-muted">
+              <p className="font-medium text-foreground">Writer Test limitations</p>
+              <ul className="mt-1 list-disc space-y-1 pl-5">
+                {result.limitations.map((limitation) => (
+                  <li key={limitation}>{limitation}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
           {result.reels.map((reel) => (
             <article
               key={reel.reel_id}

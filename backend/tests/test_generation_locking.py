@@ -4,7 +4,7 @@
 Runs through the real FastAPI app (same pattern as
 test_scenario_meta_ads_no_sources.py's `test_download_latest_docx_via_real_
 api_endpoints`: a fresh temp-file engine monkeypatched onto both
-`app.db.engine` and `app.generation.orchestrator.engine`) rather than
+`app.db.engine`) rather than
 literally racing two concurrent HTTP requests - `run_generation_job` is
 fully synchronous today, so there is no way to have two requests both
 mid-flight in the same test process; instead this directly seeds a
@@ -35,7 +35,6 @@ def _make_client(tmp_path, monkeypatch):
     engine = create_engine(f"sqlite:///{tmp_path / 'locking_test.db'}")
     SQLModel.metadata.create_all(engine)
     monkeypatch.setattr(db_module, "engine", engine)
-    monkeypatch.setattr(orchestrator_module, "engine", engine)
     monkeypatch.setattr(orchestrator_module.settings, "storage_outputs_dir", tmp_path)
 
     from app.main import app

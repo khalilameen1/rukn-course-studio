@@ -36,6 +36,16 @@ def test_estimate_cost_usd_handles_missing_token_counts_gracefully():
     assert estimate_cost_usd("claude-sonnet-5", None, 1_000_000) == 15.0
 
 
+def test_estimate_cost_usd_accounts_for_prompt_cache_usage():
+    assert estimate_cost_usd(
+        "claude-sonnet-5",
+        0,
+        0,
+        cache_read_tokens=1_000_000,
+        cache_write_tokens=1_000_000,
+    ) == 4.05
+
+
 def test_estimate_cost_usd_scales_linearly_with_smaller_token_counts():
     # 1,000 tokens instead of 1,000,000 -> 1/1000th the cost.
     full = estimate_cost_usd("claude-sonnet-5", 1_000_000, 0)
@@ -132,7 +142,6 @@ def test_ai_usage_summary_empty_table_returns_zero_summary(tmp_path, monkeypatch
 
     engine = create_engine(f"sqlite:///{tmp_path / 'empty_usage.db'}")
     monkeypatch.setattr(db_module, "engine", engine)
-    monkeypatch.setattr(db_module.settings, "auth_enabled", False)
     init_db()
 
     def override():
@@ -155,7 +164,6 @@ def test_ai_usage_summary_empty_table_returns_zero_summary(tmp_path, monkeypatch
 def test_ai_usage_summary_missing_table_returns_zero_summary_not_500(tmp_path, monkeypatch):
     import app.db as db_module
 
-    monkeypatch.setattr(db_module.settings, "auth_enabled", False)
     engine = create_engine(f"sqlite:///{tmp_path / 'no_usage_table.db'}")
     monkeypatch.setattr(db_module, "engine", engine)
 
@@ -249,13 +257,10 @@ def test_init_db_creates_ai_usage_events_table(tmp_path, monkeypatch):
 
 def test_course_ai_usage_endpoint_totals_only_that_course(tmp_path, monkeypatch):
     import app.db as db_module
-    import app.generation.orchestrator as orchestrator_module
 
     engine = create_engine(f"sqlite:///{tmp_path / 'course_ai_usage_test.db'}")
     SQLModel.metadata.create_all(engine)
     monkeypatch.setattr(db_module, "engine", engine)
-    monkeypatch.setattr(orchestrator_module, "engine", engine)
-    monkeypatch.setattr(orchestrator_module.settings, "storage_outputs_dir", tmp_path)
 
     from app.main import app
 
@@ -273,9 +278,21 @@ def test_course_ai_usage_endpoint_totals_only_that_course(tmp_path, monkeypatch)
         },
     )
     course_id = create_response.json()["id"]
-
-    generate_response = client.post(f"/courses/{course_id}/generate")
-    assert generate_response.status_code == 201
+    # Endpoint aggregation does not need to generate a course. Insert a
+    # deterministic synthetic provider event so this remains credit-safe and
+    # avoids a complete-course fixture run.
+    with Session(engine) as session:
+        ai_usage_events.create(
+            session,
+            course_id=course_id,
+            stage=PipelineStage.WRITE_SINGLE_REEL.value,
+            provider="fake",
+            model="fake",
+            input_tokens=120,
+            output_tokens=80,
+            estimated_cost_usd=0.0,
+            status="ok",
+        )
 
     usage_response = client.get(f"/courses/{course_id}/ai-usage")
 

@@ -11,7 +11,7 @@ const WORKFLOW = ["Inputs", "Generate", "Teleprompter-ready DOCX"] as const;
 const SECTIONS = [
   {
     href: "/admin",
-    title: "Admin Knowledge Center",
+    title: "RUKN Course Standard",
     description: "Fixed ROKN rules used by every generation run.",
     scope: SCOPE_ADMIN_KNOWLEDGE as string | null,
   },

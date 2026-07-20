@@ -5,8 +5,6 @@ from app.generation.prompt_compiler import (
     PROMPT_COMPILER_VERSION,
     SourceForCompiler,
     compile_source_context,
-    select_packed_rules_for_stage,
-    select_rules_for_stage,
 )
 from app.generation.source_distillation import DISTILLED_LABEL
 from app.generation.source_memory_store import (
@@ -20,13 +18,7 @@ from app.generation.transcript_relevance import (
     UNCLEAR_TRANSCRIPT_LABEL,
     classify_transcript_topic_relevance,
 )
-from app.prompts.prompt_registry import PipelineStage
 from app.schemas.generation import FinalCourse, FinalModule, FinalReel
-from app.seed_admin_knowledge import (
-    REQUIRED_KEYS,
-    SEED_ITEMS,
-    TRANSCRIPT_TOPIC_RELEVANCE_GATE,
-)
 from app.services.docx_export import extract_plain_text, render_final_course_docx
 
 META_ADS_PROMISE = CoursePromise(
@@ -72,25 +64,6 @@ GOOD_SPOKEN_SCRIPT = """\
 """
 
 
-def test_gate_in_seed_and_required_keys():
-    assert "rukn_transcript_topic_relevance_gate" in REQUIRED_KEYS
-    keys = {item["key"] for item in SEED_ITEMS}
-    assert "rukn_transcript_topic_relevance_gate" in keys
-    item = next(i for i in SEED_ITEMS if i["key"] == "rukn_transcript_topic_relevance_gate")
-    assert item["content_text"] == TRANSCRIPT_TOPIC_RELEVANCE_GATE
-
-
-def test_prompt_compiler_includes_transcript_gate():
-    rules = {"rukn_transcript_topic_relevance_gate": TRANSCRIPT_TOPIC_RELEVANCE_GATE}
-    selected = select_rules_for_stage(rules, PipelineStage.WRITE_SINGLE_REEL)
-    assert "rukn_transcript_topic_relevance_gate" in selected
-    packed = select_packed_rules_for_stage(rules, PipelineStage.WRITE_SINGLE_REEL)
-    body = " ".join(packed.values()).lower()
-    assert "same_topic" in body
-    assert TRANSCRIPT_TOPIC_RELEVANCE_GATE not in body
-    assert PROMPT_COMPILER_VERSION == "2.21"
-
-
 def test_same_topic_transcript_provides_distilled_raw_material():
     relevance = classify_transcript_topic_relevance(
         SAME_TOPIC_TRANSCRIPT,
@@ -133,20 +106,6 @@ def test_same_topic_outdated_claims_flagged_for_verification():
     assert "official" in snippet.lower() or "Outdated" in snippet
     blocked = " ".join(memory.get("blocked_content_warnings") or []).lower()
     assert "official" in blocked or memory.get("outdated_warnings")
-
-
-def test_official_docs_gate_overrides_same_topic_transcript_in_stage_rules():
-    rules = select_rules_for_stage(
-        {
-            "rukn_official_tool_docs_gate": "Official current documentation overrides old sources.",
-            "rukn_transcript_topic_relevance_gate": TRANSCRIPT_TOPIC_RELEVANCE_GATE,
-        },
-        PipelineStage.WRITE_SINGLE_REEL,
-    )
-    assert "rukn_official_tool_docs_gate" in rules
-    assert "rukn_transcript_topic_relevance_gate" in rules
-    assert "official" in TRANSCRIPT_TOPIC_RELEVANCE_GATE.lower()
-    assert "official" in rules["rukn_transcript_topic_relevance_gate"].lower()
 
 
 def test_same_topic_transcript_does_not_override_rokn_format():

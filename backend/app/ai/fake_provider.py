@@ -12,10 +12,7 @@ from app.ai.provider import (
     BuildCourseMapInput,
     FinalReviewInput,
     RebuildFinalCourseInput,
-    ReviewFiveReelsInput,
-    ReviewModuleInput,
     ReviewSingleReelInput,
-    ReviewTwoModulesInput,
     WriteSingleReelInput,
 )
 from app.generation.contracts.spoken_final_master import beats_to_plain_script
@@ -27,6 +24,7 @@ from app.schemas.generation import (
     FinalModule,
     FinalReel,
     GeneratedReel,
+    LessonSemanticContract,
     ModulePlan,
     ModuleProject,
     ReelPlan,
@@ -89,6 +87,67 @@ _FAKE_SKILLS = (
     ("Brand mark quiet", "place logo without noise", "brand-quiet"),
     ("Proof shot select", "pick strongest proof shot", "proof-shot"),
 )
+
+
+def _fake_semantic_contract(
+    *,
+    reel_id: str,
+    skill_slug: str,
+    skill_decision: str,
+    is_last: bool,
+) -> LessonSemanticContract:
+    """Deterministic Arabic contract used only by the zero-network fake."""
+    variant = max(0, int(reel_id.rsplit("r", 1)[-1]) - 1) % 3
+    capability_change = (
+        f"ينتقل من التخمين إلى تنفيذ {skill_slug} بقرار قابل للفحص",
+        f"قدرة {reel_id} الجديدة هي ضبط {skill_slug} بدل الاختيار العشوائي",
+        f"بعد المقارنة يقدر المتعلم يحسم {skill_slug} وينفذه باستقلال",
+    )[variant]
+    next_need = (
+        f"ناتج {skill_slug} بقى مدخلًا للخطوة التالية",
+        f"اكتمال {skill_slug} كشف القرار التعليمي التالي المطلوب",
+        f"بعد اختبار {skill_slug} صار الانتقال التالي له سبب واضح",
+    )[variant]
+    return LessonSemanticContract(
+        learner_before=f"المتعلم لسه ما حسمش قرار {skill_slug}",
+        learner_after=f"المتعلم يقدر ينفذ {skill_slug} ويبرر قراره",
+        exact_capability_change=capability_change,
+        strongest_non_obvious_meaning=(
+            f"قيمة {skill_slug} مش في الشكل وحده لكن في أثره على القرار"
+        ),
+        misconception_or_failure=(
+            f"الخطأ إن {skill_slug} يتنفذ كتقليد من غير فهم النتيجة"
+        ),
+        causal_explanation=(
+            f"قرار {skill_slug} يغيّر النتيجة لأنه يتحكم في {skill_decision}"
+        ),
+        proof_example_or_demonstration=(
+            f"قارن حالة {reel_id} قبل وبعد تطبيق {skill_slug} وسجّل الفرق"
+        ),
+        learner_test_or_action=(
+            f"نفّذ {skill_slug} على حالة جديدة واشرح سبب اختيارك"
+        ),
+        boundary_or_exception=(
+            f"ما تعممش {skill_slug} لو شرط الحالة لا يخدم {skill_decision}"
+        ),
+        real_tension=(
+            f"وازن في {skill_slug} بين وضوح القرار وعدم المبالغة في التنفيذ"
+        ),
+        complete_payoff=(
+            f"في نهاية {reel_id} يطلع تطبيق {skill_slug} صالح للمراجعة"
+        ),
+        earned_next_need=(
+            next_need
+            if not is_last
+            else f"ناتج {skill_slug} جاهز للدخول في مشروع الموديول"
+        ),
+        escalation_role=(
+            f"يرفع الاستقلال في {reel_id} من الفهم إلى تنفيذ {skill_slug}"
+        ),
+        sequence_dependency=(
+            f"يعتمد قرار {reel_id} على إتقان الحالة السابقة قبل {skill_slug}"
+        ),
+    )
 
 
 def _delivery_for_index(r_idx: int) -> LessonDeliveryMode:
@@ -169,6 +228,15 @@ class FakeProvider(AIProvider):
                         required_assets=[f"{skill_slug}.png"] if needs_visual else [],
                         project_contribution=f"Feeds module {m_idx} project via {skill_slug}",
                         needs_natural_bridge=r_idx < self.DEFAULT_REELS_PER_MODULE,
+                        lesson_semantic_contract=_fake_semantic_contract(
+                            reel_id=f"{module_id}-r{r_idx}",
+                            skill_slug=skill_slug,
+                            skill_decision=skill_decision,
+                            is_last=(
+                                m_idx == self.DEFAULT_MODULE_COUNT
+                                and r_idx == self.DEFAULT_REELS_PER_MODULE
+                            ),
+                        ),
                     )
                 )
             is_last = m_idx == self.DEFAULT_MODULE_COUNT
@@ -182,7 +250,15 @@ class FakeProvider(AIProvider):
                 inputs_or_files=["ملف تمرين"],
                 deliverable_shape="لقطة شاشة + ملف نهائي",
                 pass_criteria=["ينفّذ الخطوات", "يوضح القرار"],
-                skills_tested=[f"skill-{m_idx}"],
+                skills_tested=[
+                    reel.new_skill_or_decision
+                    or reel.distinct_teaching_outcome
+                    for reel in reels
+                    if (
+                        reel.new_skill_or_decision
+                        or reel.distinct_teaching_outcome
+                    )
+                ],
             )
             modules.append(
                 ModulePlan(
@@ -214,7 +290,16 @@ class FakeProvider(AIProvider):
                 brief=input.brief.outcome or "Final practical deliverable",
                 deliverable_shape="مشروع نهائي كامل",
                 pass_criteria=["يغطي مهارات الكورس"],
-                skills_tested=["capstone"],
+                skills_tested=[
+                    reel.new_skill_or_decision
+                    or reel.distinct_teaching_outcome
+                    for module in modules
+                    for reel in module.reels
+                    if (
+                        reel.new_skill_or_decision
+                        or reel.distinct_teaching_outcome
+                    )
+                ],
             ),
         )
         self.last_usage = _synthetic_usage(input, result)
@@ -248,25 +333,46 @@ class FakeProvider(AIProvider):
             )
 
         skill = (input.reel.new_skill_or_decision or cover0).strip()
-        body = [
-            f"نفّذ {point} كخطوة مستقلة مرتبطة بـ {rid} ومهارة {skill} فقط"
-            for point in input.reel.must_cover
-        ]
-        if mode == LessonDeliveryMode.MICRO_CONCEPT:
+        semantic = input.lesson_semantic_contract
+        if semantic is not None:
+            opener = semantic.exact_capability_change
+            body = [
+                semantic.strongest_non_obvious_meaning,
+                semantic.causal_explanation,
+                (
+                    f"{semantic.misconception_or_failure}؛ "
+                    f"{semantic.real_tension}"
+                ),
+                semantic.proof_example_or_demonstration,
+                semantic.learner_test_or_action,
+                semantic.boundary_or_exception,
+                semantic.complete_payoff,
+            ]
+        else:
+            body = [
+                f"نفّذ {point} كخطوة مستقلة مرتبطة بـ {rid} ومهارة {skill} فقط"
+                for point in input.reel.must_cover
+            ]
+        if semantic is None and mode == LessonDeliveryMode.MICRO_CONCEPT:
             body = body[:1] + [
                 f"الفكرة الضيقة هنا هي {skill} ومش هتتوسع لبره {rid}",
             ]
-        elif mode in {LessonDeliveryMode.SCREEN_DEMO, LessonDeliveryMode.PROJECT_BUILD}:
+        elif semantic is None and mode in {
+            LessonDeliveryMode.SCREEN_DEMO,
+            LessonDeliveryMode.PROJECT_BUILD,
+        }:
             body = body + [
                 f"افتح شاشة {rid} ونفّذ {cover0} قدامك لمهارة {skill}",
                 f"راجع ناتج {rid} وتأكد إن {cover0} اتحقق داخل {skill}",
             ]
-        elif mode == LessonDeliveryMode.BEFORE_AFTER:
+        elif semantic is None and mode == LessonDeliveryMode.BEFORE_AFTER:
             body = body + [
                 f"قارن قبل/بعد لـ {cover0} في حالة {rid} عشان تبين فرق {skill}",
             ]
 
-        if input.reel.needs_natural_bridge:
+        if semantic is not None:
+            closer = semantic.earned_next_need
+        elif input.reel.needs_natural_bridge:
             closer = (
                 f"بعد ما تثبت {skill} في {rid} هيبان احتياج لقرار لاحق مبني على {cover0}"
             )
@@ -276,22 +382,29 @@ class FakeProvider(AIProvider):
         if phase == "final_master":
             if any("forbidden" in (f or "").lower() for f in input.previous_review_feedback):
                 opener = f"ثبت {cover0} في {rid} من غير حشو جاهز حول {input.reel.title}"
-            elif input.previous_review_feedback:
+            elif input.previous_review_feedback and semantic is None:
                 body = list(body) + [
                     f"وضحنا تطبيق {cover0} داخل {rid} لمهارة {skill} من غير قفز",
                 ]
 
         beats = [opener, *body, closer]
         rng = word_range_for(mode)
-        fillers = [
-            f"جرّب {cover0} على حالة جديدة تخص {rid} و{skill}",
-            f"علامة نجاح {rid} تظهر لما {skill} يبقى قابل للقياس عبر {cover0}",
-            f"لو {cover0} مش واضح أعِد خطوة {rid} بهدوء مع تركيز على {skill}",
-            f"اربط {skill} بنتيجة شغلك اليومي في {input.reel.title} عبر {rid}",
-            f"ممنوع تخلط {rid}/{skill} بدرس تاني وهو بيتشرح",
-            f"اختبر {skill} مرة تانية على مثال مختلف تمامًا عن باقي الكورس",
-        ]
-        for line in fillers:
+        meaning_extensions = (
+            [
+                semantic.learner_before,
+                semantic.learner_after,
+                semantic.sequence_dependency,
+                semantic.escalation_role,
+            ]
+            if semantic is not None
+            else [
+                f"جرّب {cover0} على حالة جديدة تخص {rid} و{skill}",
+                f"علامة نجاح {rid} تظهر لما {skill} يبقى قابل للقياس عبر {cover0}",
+                f"لو {cover0} مش واضح أعِد خطوة {rid} مع تركيز على {skill}",
+                f"اختبر {skill} مرة تانية على مثال مختلف عن باقي الكورس",
+            ]
+        )
+        for line in meaning_extensions:
             if len(" ".join(beats).split()) >= max(rng.soft_min, 80):
                 break
             beats.insert(-1, line)
@@ -315,25 +428,6 @@ class FakeProvider(AIProvider):
     def review_single_reel(self, input: ReviewSingleReelInput) -> ReviewResult:
         empty = [input.generated_reel] if not input.generated_reel.script_text.strip() else []
         result = _result_for(ReviewScope.REEL, empty)
-        self.last_usage = _synthetic_usage(input, result)
-        return result
-
-    def review_five_reels(self, input: ReviewFiveReelsInput) -> ReviewResult:
-        empty = [r for r in input.reels if not r.script_text.strip()]
-        result = _result_for(ReviewScope.FIVE_REELS, empty)
-        self.last_usage = _synthetic_usage(input, result)
-        return result
-
-    def review_module(self, input: ReviewModuleInput) -> ReviewResult:
-        empty = [r for r in input.reels if not r.script_text.strip()]
-        result = _result_for(ReviewScope.MODULE, empty)
-        self.last_usage = _synthetic_usage(input, result)
-        return result
-
-    def review_two_modules(self, input: ReviewTwoModulesInput) -> ReviewResult:
-        all_reels = input.first.reels + input.second.reels
-        empty = [r for r in all_reels if not r.script_text.strip()]
-        result = _result_for(ReviewScope.TWO_MODULES, empty)
         self.last_usage = _synthetic_usage(input, result)
         return result
 

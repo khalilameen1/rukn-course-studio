@@ -264,7 +264,7 @@ def format_persona_for_prompt(
     }
 
 
-# Short stage reminders (dynamic, not the full Admin Knowledge essay).
+# Short stage reminders (dynamic, not the canonical standard).
 PERSONA_REVIEW_REMINDERS: tuple[str, ...] = (
     "Does this sound like a real confident creator-teacher, or AI pretending?",
     "Is the hook strong because of meaning, not hype?",

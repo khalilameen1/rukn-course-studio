@@ -23,7 +23,23 @@ Adapters **add** rules; they do not replace global spoken/export rules. Domain l
 
 `app/generation/quality/context_snapshot.py`
 
-Shared by map-preview, full generation intent, writer-test fingerprinting, finalize. Stored on `Course.generation_context_snapshot_json` after preview. Fingerprint drift invalidates an approved preview.
+One v2 contract is shared by map preview, full generation, Writer Test, resume,
+finalize, and export. Preview stores its candidate on
+`Course.generation_context_snapshot_json`; a real run freezes the same contract
+once on `GenerationJob.run_snapshot_json`, after thesis/map approval and before
+the first lesson write. Later stages never rewrite it.
+
+`CONFIG_FINGERPRINT` is a full SHA-256 over the canonical standard package,
+brief, thesis, selected source hashes, research result hash, market, course type,
+language/address profile, quality mode, provider/model, generation settings, and
+approved map. Resume and every DOCX export fail closed when the embedded inputs
+have been altered or the current output-affecting configuration differs.
+
+The snapshot contains the complete state-key contract (`COURSE_THESIS`, audience
+and instructor profiles, capability/coverage/benchmark matrices, all ledgers,
+quality findings, active rule pack, stage state, pedagogy adapter, episodic map,
+and language rewrite record). Raw standard Markdown, source text, secrets, and
+mutable writer results are never copied into it.
 
 ## Content Atom Ledger
 
@@ -48,9 +64,17 @@ Blocks map approval when promises/skills/checkpoints/theory-ratio/early-practice
 
 ## Reviews
 
-- Every-5 and two-module AI reviews: **disabled** (were log-only).
-- Module review: **structural** (`quality/module_review.py`) — failing lessons + missing checkpoints → `needs_map_revision`.
-- Integrated editorial + local validators remain the per-lesson effect path.
+- Retired log-only AI reviews are deleted: no five-reel, AI module, or
+  two-module provider methods/prompts/routing/logs remain.
+- Each lesson follows Writer First Draft → deterministic checks → independent
+  editorial/domain review → bounded Creator rewrite → deterministic re-check.
+- `quality/module_review.py` applies structural findings to acceptance; it
+  cannot merely log them.
+- `quality/cross_scope_review.py` reviews lesson, module, adjacent-module, and
+  whole-course relationships. Every serious/fatal finding becomes an export
+  blocker requiring a real rewrite, merge, or map/project revision.
+- A final AI review may request a Creator rebuild. The rebuild is verified
+  target-by-target; unchanged actions fail closed.
 
 ## Export blockers
 
@@ -76,6 +100,11 @@ cd backend && RUKN_CREDIT_SAFE_TESTS=1 python -m pytest tests/test_universal_qua
 
 `quality/docx_verify.py` — reopen exported DOCX, compare against approved text, check metadata leaks and protected spans.
 
-## Deprecated
+## Canonical map approval
 
-`POST /courses/{id}/generate-map` — prefer `POST /courses/{id}/map-preview`.
+`POST /courses/{id}/map-preview` is the only course-map generation route.
+It freezes the selected brief, sources, Source/Web Memory, market, Thesis,
+quality settings, compressed map, projects, and Coverage Matrix under one
+configuration fingerprint. Full generation requires explicit confirmation of
+that fingerprint, consumes the frozen map without rebuilding it, and rejects
+any changed input before the worker starts.

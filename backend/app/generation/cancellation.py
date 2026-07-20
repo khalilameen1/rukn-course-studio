@@ -64,6 +64,13 @@ def finalize_canceled_job(
 
     if has_saved_work:
         try:
+            from app.services.finalize_saved_job import assert_job_snapshot_current
+
+            assert_job_snapshot_current(
+                session,
+                job,
+                action="export canceled partial course",
+            )
             partial_course = build_partial_course_from_job(
                 job.course_map_json, job.completed_reels_json
             )

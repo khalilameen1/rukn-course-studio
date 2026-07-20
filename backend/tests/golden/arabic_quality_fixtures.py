@@ -20,6 +20,12 @@ REJECTED = {
     "gender_switch": "انت لازم تفتح الحساب وبعدين انتي تختاري الجمهور.",
     "heavy_punctuation": "مرحبا، كيف حالك؟ جرب هذا الآن! (مهم).",
     "numeric_unsourced": "السعر الحالي للإعلان هو 37.5 دولار لكل ألف ظهور بالظبط.",
+    "standalone_thumma": "اختار الهدف ثم افتح إعدادات الحملة",
+    "formal_morphology": "إذا اخترت الهدف فإنه يتعين عليك مراجعة الإعدادات",
+    "attached_prefix": "وبالتالي فإنه يمكنك أن تقوم بتعديل الحملة",
+    "uncontrolled_code_switching": (
+        "Open campaign dashboard then choose audience settings and launch preview"
+    ),
 }
 
 ACCEPTED = {

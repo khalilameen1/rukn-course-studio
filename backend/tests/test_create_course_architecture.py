@@ -1,14 +1,10 @@
-"""Admin Knowledge cleanup, Create Course sources/map, ROKN branding helpers."""
+"""Create Course sources/map and ROKN branding helpers."""
 
 import pytest
 from sqlmodel import Session, SQLModel, create_engine
 from sqlmodel.pool import StaticPool
 
-from app.generation.admin_knowledge_cleanup import (
-    dedupe_admin_knowledge,
-    filter_active_primary,
-)
-from app.generation.course_map_generate import format_course_map_text
+from app.generation.map_preview import format_course_map_text
 from app.models.enums import SourceCategory
 from app.schemas.generation import CourseMap, ModulePlan, ReelPlan
 
@@ -28,51 +24,6 @@ def session(tmp_path, monkeypatch):
     SQLModel.metadata.create_all(engine)
     with Session(engine) as s:
         yield s
-
-
-def test_filter_active_primary_hides_duplicates(session):
-    from app.crud import admin_knowledge_items
-    from app.models.enums import ItemType
-
-    a1 = admin_knowledge_items.create(
-        session,
-        key="rukn_core_rules",
-        title="Core v1",
-        item_type=ItemType.MARKDOWN,
-        content_text="old",
-        is_active=True,
-        version=1,
-    )
-    a2 = admin_knowledge_items.create(
-        session,
-        key="rukn_core_rules",
-        title="Core v2",
-        item_type=ItemType.MARKDOWN,
-        content_text="new",
-        is_active=True,
-        version=2,
-    )
-    inactive = admin_knowledge_items.create(
-        session,
-        key="rukn_core_rules",
-        title="Core backup",
-        item_type=ItemType.MARKDOWN,
-        content_text="backup",
-        is_active=False,
-        version=0,
-    )
-    items = admin_knowledge_items.list(session)
-    primary = filter_active_primary(items)
-    assert len([p for p in primary if p.key == "rukn_core_rules"]) == 1
-    assert primary[-1].id == a2.id
-    assert inactive.id not in {p.id for p in primary}
-
-    report = dedupe_admin_knowledge(session, dry_run=False, confirm=True)
-    assert report["deactivated_count"] >= 1
-    active = [i for i in admin_knowledge_items.list(session, key="rukn_core_rules") if i.is_active]
-    assert len(active) == 1
-    assert active[0].id == a2.id
-    assert a1.is_active is False or admin_knowledge_items.get(session, a1.id).is_active is False
 
 
 def test_course_sources_belong_to_course_not_admin(session):

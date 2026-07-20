@@ -11,7 +11,8 @@ from starlette.requests import Request
 
 from app.auth.middleware import AuthMiddleware
 from app.config import settings
-from app.db import engine, init_db
+import app.db as db_pkg
+from app.db import init_db
 from app.routers import (
     admin_audit,
     admin_knowledge,
@@ -24,7 +25,7 @@ from app.routers import (
     jobs,
     sources,
 )
-from app.seed_admin_knowledge import seed as seed_admin_knowledge
+from app.data.admin_knowledge.seed_loader import seed as seed_course_standard
 
 logger = logging.getLogger(__name__)
 
@@ -53,9 +54,10 @@ async def lifespan(app: FastAPI):
         directory.mkdir(parents=True, exist_ok=True)
 
     init_db()
-    # Idempotent: only inserts keys that have zero rows (never overwrites edits).
-    with Session(engine) as session:
-        seed_admin_knowledge(session)
+    # Fail closed: startup permanently removes legacy/custom rows and installs
+    # the immutable 14-file standard when the database is not canonical.
+    with Session(db_pkg.engine) as session:
+        seed_course_standard(session)
 
     from app.generation.boot_safety import run_generation_boot_safety
 
@@ -105,8 +107,6 @@ class CatchUnhandledErrorsMiddleware(BaseHTTPMiddleware):
                         f"{correlation_id}"
                     ),
                     "correlation_id": correlation_id,
-                    # Class name only — never exception text (may leak paths/SQL).
-                    "error_type": error_type,
                 },
                 headers={"X-Correlation-ID": correlation_id},
             )

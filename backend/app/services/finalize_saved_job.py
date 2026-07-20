@@ -17,8 +17,20 @@ from typing import Any
 from sqlmodel import Session
 
 from app.config import settings
-from app.crud import course_versions, generation_jobs
+from app.crud import course_sources, course_versions, courses, generation_jobs
 from app.generation.course_quality_gates import format_handoff_status
+from app.generation.domain_adapters import build_course_quality_contract
+from app.generation.quality.context_snapshot import (
+    SnapshotMismatchError,
+    active_prompt_versions,
+    assert_snapshot_compatible,
+    build_active_rule_pack,
+    fingerprint_value,
+    snapshot_with_config_overrides,
+    source_ledger_from_fingerprints,
+)
+from app.generation.presets import resolve_generation_settings
+from app.version import get_app_commit
 from app.models.enums import JobStatus
 from app.models.generation_job import GenerationJob
 from app.schemas.generation import (
@@ -52,6 +64,9 @@ class SavedLessonsInspection:
     missing_reel_ids: tuple[str, ...]
     duplicate_reel_ids: tuple[str, ...]
     empty_script_reel_ids: tuple[str, ...]
+    nonpassing_reel_ids: tuple[str, ...] = ()
+    missing_acceptance_reel_ids: tuple[str, ...] = ()
+    fingerprint_mismatch_reel_ids: tuple[str, ...] = ()
     reason: str = ""
 
 
@@ -117,6 +132,46 @@ def inspect_saved_lessons(job: GenerationJob) -> SavedLessonsInspection:
     empty_script_reel_ids = tuple(
         sorted(r.reel_id for r in saved_reels if not (r.script_text or "").strip())
     )
+    nonpassing_reel_ids = tuple(
+        sorted(
+            reel.reel_id
+            for reel in saved_reels
+            if (reel.quality_status or "").lower() != "pass"
+            or reel.self_check_status.value != "pass"
+        )
+    )
+    missing_acceptance: list[str] = []
+    fingerprint_mismatch: list[str] = []
+    for reel in saved_reels:
+        quality_report = dict(reel.quality_report or {})
+        acceptance = dict(quality_report.get("final_text_acceptance") or {})
+        rewrite_record = dict(quality_report.get("language_rewrite_record") or {})
+        required_true = (
+            "semantic_gate_passed",
+            "terminology_gate_passed",
+            "spoken_variety_gate_passed",
+            "teleprompter_gate_passed",
+        )
+        has_ledgers = bool(
+            acceptance.get("term_ledger_fingerprint")
+            and acceptance.get("phrase_ledger_after_fingerprint")
+            and rewrite_record.get("after_text_fingerprint")
+        )
+        if (
+            not acceptance.get("accepted")
+            or not all(acceptance.get(key) is True for key in required_true)
+            or not has_ledgers
+        ):
+            missing_acceptance.append(reel.reel_id)
+            continue
+        actual = fingerprint_value(reel.script_text or "")
+        if (
+            acceptance.get("text_fingerprint") != actual
+            or rewrite_record.get("after_text_fingerprint") != actual
+        ):
+            fingerprint_mismatch.append(reel.reel_id)
+    missing_acceptance_reel_ids = tuple(sorted(missing_acceptance))
+    fingerprint_mismatch_reel_ids = tuple(sorted(fingerprint_mismatch))
 
     declared_total = int(job.total_lessons_count or 0)
     declared_done = int(job.completed_reels_count or 0)
@@ -131,6 +186,9 @@ def inspect_saved_lessons(job: GenerationJob) -> SavedLessonsInspection:
         and not missing_reel_ids
         and not duplicate_reel_ids
         and not empty_script_reel_ids
+        and not nonpassing_reel_ids
+        and not missing_acceptance_reel_ids
+        and not fingerprint_mismatch_reel_ids
     )
     reason = "ok" if ok else "incomplete_or_inconsistent_lessons"
     return SavedLessonsInspection(
@@ -141,6 +199,9 @@ def inspect_saved_lessons(job: GenerationJob) -> SavedLessonsInspection:
         missing_reel_ids=missing_reel_ids,
         duplicate_reel_ids=duplicate_reel_ids,
         empty_script_reel_ids=empty_script_reel_ids,
+        nonpassing_reel_ids=nonpassing_reel_ids,
+        missing_acceptance_reel_ids=missing_acceptance_reel_ids,
+        fingerprint_mismatch_reel_ids=fingerprint_mismatch_reel_ids,
         reason=reason,
     )
 
@@ -166,6 +227,22 @@ def job_eligible_for_saved_finalize(job: GenerationJob) -> bool:
     if job.output_docx_path:
         return False
     stage = (job.current_stage or "").lower()
+    error_category = (job.error_category or "").lower()
+    if (
+        stage in {"blocked", "needs_review"}
+        or int(job.needs_review_count or 0) > 0
+        or any(
+            cue in error_category
+            for cue in (
+                "blocked",
+                "needs_review",
+                "quality",
+                "snapshot",
+                "fingerprint",
+            )
+        )
+    ):
+        return False
     if stage not in POST_LESSON_STAGES:
         # Also allow generating when counters already say every lesson is saved
         # (worker died after last save flush but before stage flip).
@@ -213,7 +290,36 @@ def try_recover_job_from_saved_lessons(
         return job
     if not job_eligible_for_saved_finalize(job):
         return job
-    recovered = finalize_job_from_saved_lessons(session, job)
+    try:
+        recovered = finalize_job_from_saved_lessons(session, job)
+    except SnapshotMismatchError as exc:
+        logger.warning(
+            "saved-finalize blocked by snapshot mismatch job_id=%s reason=%s",
+            job.id,
+            str(exc),
+        )
+        return job
+    except Exception as exc:  # export blockers are a saved-state outcome
+        from app.generation.export_blockers import ExportBlockedError
+
+        if not isinstance(exc, ExportBlockedError):
+            raise
+        logger.warning(
+            "saved-finalize blocked by export gates job_id=%s reason=%s",
+            job.id,
+            str(exc),
+        )
+        generation_jobs.update(
+            session,
+            job.id,
+            status=JobStatus.PARTIAL,
+            current_stage="blocked",
+            error_category="export_blocked",
+            error_message="Saved lessons still have unresolved export blockers.",
+            last_progress_message="Saved lessons require review before export",
+        )
+        session.refresh(job)
+        return job
     return recovered if recovered is not None else job
 
 
@@ -294,6 +400,104 @@ def _assemble_from_saved(course_map: CourseMap, reels: list[GeneratedReel]) -> F
     )
 
 
+def assert_job_snapshot_current(
+    session: Session,
+    job: GenerationJob,
+    *,
+    action: str,
+) -> None:
+    """Validate a persisted job against all current output-affecting inputs."""
+    course_map = CourseMap.model_validate(coerce_json_dict(job.course_map_json) or {})
+    thesis = course_map.thesis
+    if thesis is None:
+        raise SnapshotMismatchError(f"Cannot {action}: Course Thesis is missing")
+    frozen_snapshot = assert_snapshot_compatible(job.run_snapshot_json, action=action)
+    course = courses.get(session, job.course_id)
+    if course is None:
+        raise SnapshotMismatchError(f"Cannot {action}: course {job.course_id} is missing")
+    from app.generation.orchestrator import USABLE_SOURCE_STATUSES, _build_course_brief
+
+    brief = _build_course_brief(course)
+    generation_settings = dict(
+        frozen_snapshot.CONFIG_INPUTS.get("GENERATION_SETTINGS") or {}
+    )
+    contract = build_course_quality_contract(
+        brief,
+        course_domain=getattr(course, "course_domain", None),
+        course_type=getattr(course, "course_type", None) or "practical_skill",
+        address_form=thesis.address_form,
+        delivery_pattern=str(
+            generation_settings.get("delivery_pattern")
+            or "teleprompter_standard"
+        ),
+        human_override_hard_limits=bool(
+            generation_settings.get("human_override_hard_limits", False)
+        ),
+    )
+    selected_sources = [
+        source
+        for source in course_sources.list(session, course_id=job.course_id)
+        if source.include_in_generation and source.status in USABLE_SOURCE_STATUSES
+    ]
+    source_ledger = source_ledger_from_fingerprints(
+        [source.id for source in selected_sources],
+        {
+            str(source.id): fingerprint_value(source.extracted_text or "")
+            for source in selected_sources
+        },
+        {
+            str(source.id): {
+                "category": source.source_category.value,
+                "priority": source.priority.value,
+                "include_in_generation": source.include_in_generation,
+            }
+            for source in selected_sources
+        },
+    )
+    generation_settings.update(
+        {
+            "generation_preset": brief.generation_preset.value,
+            "resolved_generation_settings": resolve_generation_settings(
+                brief.generation_preset
+            ),
+            "structure_mode": brief.structure_mode.value,
+            "explanation_level": brief.explanation_level.value,
+            "web_research_mode": job.web_research_mode.value,
+            "prompt_versions": active_prompt_versions(),
+            "app_commit": get_app_commit(),
+        }
+    )
+    from app.generation.web_research import research_identity_payload
+
+    research_identity = research_identity_payload(
+        coerce_json_dict(job.source_memory_json),
+        coerce_json_dict(job.web_source_memory_json),
+    )
+    provider_name = (settings.ai_provider or "fake").strip().lower()
+    current_inputs = snapshot_with_config_overrides(
+        frozen_snapshot,
+        STANDARD_PACKAGE=build_active_rule_pack(),
+        BRIEF=brief.model_dump(mode="json"),
+        COURSE_THESIS=thesis.model_dump(mode="json"),
+        SELECTED_SOURCES=source_ledger,
+        RESEARCH_RESULT_SHA256=fingerprint_value(research_identity),
+        MARKET=brief.target_market.value,
+        COURSE_TYPE=contract.pedagogy.course_type,
+        LANGUAGE_PROFILE=contract.language.model_dump(mode="json"),
+        ADDRESS_FORM=thesis.address_form.value,
+        QUALITY_MODE=job.generation_quality_mode.value,
+        PROVIDER=provider_name,
+        MODEL="fake" if provider_name == "fake" else (settings.ai_model_name or ""),
+        GENERATION_SETTINGS=generation_settings,
+        APPROVED_MAP=course_map.model_dump(mode="json"),
+    )
+    assert_snapshot_compatible(
+        frozen_snapshot,
+        current_config_inputs=current_inputs,
+        action=action,
+    )
+
+
 def finalize_job_from_saved_lessons(
     session: Session,
     job: GenerationJob,
@@ -312,14 +516,25 @@ def finalize_job_from_saved_lessons(
     inspection = inspect_saved_lessons(job)
     if not inspection.ok:
         logger.warning(
-            "finalize_saved_job skipped job_id=%s reason=%s missing=%s dupes=%s empty=%s",
+            "finalize_saved_job skipped job_id=%s reason=%s missing=%s dupes=%s "
+            "empty=%s nonpassing=%s unaccepted=%s fingerprint_mismatch=%s",
             job.id,
             inspection.reason,
             inspection.missing_reel_ids[:8],
             inspection.duplicate_reel_ids[:8],
             inspection.empty_script_reel_ids[:8],
+            inspection.nonpassing_reel_ids[:8],
+            inspection.missing_acceptance_reel_ids[:8],
+            inspection.fingerprint_mismatch_reel_ids[:8],
         )
         return None
+
+    course_map = CourseMap.model_validate(coerce_json_dict(job.course_map_json) or {})
+    assert_job_snapshot_current(
+        session,
+        job,
+        action="resume/finalize saved lessons",
+    )
 
     backup_path = backup_job_snapshot(job)
     logger.info(
@@ -329,7 +544,6 @@ def finalize_job_from_saved_lessons(
         inspection.planned_count,
     )
 
-    course_map = CourseMap.model_validate(coerce_json_dict(job.course_map_json) or {})
     reels = [
         GeneratedReel.model_validate(raw)
         for raw in coerce_json_list(job.completed_reels_json)
@@ -353,12 +567,41 @@ def finalize_job_from_saved_lessons(
     address_form = (
         course_map.thesis.address_form if course_map.thesis else AddressForm.MASCULINE
     )
+    frozen_snapshot = assert_snapshot_compatible(
+        job.run_snapshot_json,
+        action="evaluate recovered saved lessons",
+    )
+    from app.generation.orchestrator import _build_course_brief
+
+    course = courses.get(session, job.course_id)
+    if course is None:
+        return None
+    brief = _build_course_brief(course)
+    generation_settings = dict(
+        frozen_snapshot.CONFIG_INPUTS.get("GENERATION_SETTINGS") or {}
+    )
+    quality_contract = build_course_quality_contract(
+        brief,
+        course_domain=getattr(course, "course_domain", None),
+        course_type=getattr(course, "course_type", None) or "practical_skill",
+        address_form=address_form,
+        delivery_pattern=str(
+            generation_settings.get("delivery_pattern")
+            or "teleprompter_standard"
+        ),
+        human_override_hard_limits=bool(
+            generation_settings.get("human_override_hard_limits", False)
+        ),
+    )
     export_report = evaluate_export_blockers(
         final_course=final_course,
         course_map=course_map,
         thesis=course_map.thesis,
         generated_reels=ordered,
         address_form=address_form,
+        quality_contract=quality_contract,
+        evidence_ledger=coerce_json_dict(job.evidence_ledger_json),
+        expected_config_fingerprint=frozen_snapshot.CONFIG_FINGERPRINT,
     )
     if not export_report.ok:
         logger.warning(
@@ -409,7 +652,8 @@ def finalize_job_from_saved_lessons(
         final_course.model_dump_json(indent=2), encoding="utf-8"
     )
 
-    logs = coerce_json_list(job.log_json)
+    # Assign a fresh list so SQLAlchemy detects the JSON column mutation.
+    logs = list(coerce_json_list(job.log_json))
     logs.append(
         {
             "step": "finalize_from_saved_lessons",

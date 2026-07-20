@@ -24,7 +24,7 @@ Rukn produces structured practical-skill courses composed of modules and "reels"
 2. **Repetition** — the same explanations, examples, or phrasing recur across reels/modules because there's no memory of what was already said.
 3. **Hallucination** — invented facts, invented steps, or invented terminology not grounded in Rukn's rules or the provided course brief/sources.
 
-The system must solve these by generating **incrementally** (reel by reel) with **structured review checkpoints** at increasing scope (single reel → 5 reels → module → 2 modules → full course), while presenting the user with a single, polished, final output.
+The system solves these by generating **incrementally** (reel by reel), applying an independent bounded review/rewrite to every lesson, then enforcing deterministic checks at lesson, module, adjacent-module, and whole-course scope before export.
 
 ---
 
@@ -104,7 +104,7 @@ There is no end-learner-facing role in this product — the DOCX itself is later
 
 - FR-15: The system builds or validates a course map before content generation begins (see pipeline stage 1).
 - FR-16: The system generates content reel by reel internally (pipeline stage 2), never generating the whole course in a single pass.
-- FR-17: The system performs silent, automatic review after each reel, after every 5 reels, after every module, after every 2 modules, and one final full-course review/rebuild pass — per the pipeline defined in ARCHITECTURE.md. None of these intermediate states are delivered to the user as the product output.
+- FR-17: The system performs an effectful independent review/rewrite after each reel and deterministic blocking review at module, adjacent-module, and whole-course scope. A final review action must change its target or block export. None of these intermediate states are delivered as product output.
 - FR-18: Only after the final review/rebuild pass does the system assemble and export the final DOCX.
 - FR-19: The user-visible output of a successful generation run is exactly one DOCX file, matching Rukn's formatting/branding rules.
 - FR-20: Internal generation logs (per-reel review notes, revision counts, flags raised) are retained for admin/debug purposes but are not part of the user-facing deliverable.
@@ -134,7 +134,7 @@ There is no end-learner-facing role in this product — the DOCX itself is later
 - Course creation page.
 - Source upload page.
 - Final DOCX generation/export.
-- The 8-stage internal generation pipeline described in ARCHITECTURE.md.
+- The internal effectful generation pipeline described in ARCHITECTURE.md.
 
 **Explicitly out of scope for MVP** (see Non-Goals): other course types, chat-style interaction, reel-level user editing, multi-format export (PPT, HTML, etc.), collaboration features, video/audio ingestion, in-place DOCX editing.
 

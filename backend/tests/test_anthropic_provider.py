@@ -11,6 +11,7 @@ from app.ai.anthropic_provider import (
     AnthropicProvider,
     AnthropicProviderError,
     _bump_max_tokens,
+    _create_anthropic_client,
     _create_message_kwargs,
     _model_rejects_custom_sampling,
     _normalize_tool_input,
@@ -20,15 +21,12 @@ from app.ai.provider import (
     BuildCourseMapInput,
     CourseBrief,
     FinalReviewInput,
-    ModuleWithReels,
     RebuildFinalCourseInput,
-    ReviewFiveReelsInput,
-    ReviewModuleInput,
     ReviewSingleReelInput,
-    ReviewTwoModulesInput,
     WriteSingleReelInput,
 )
 from app.generation.presets import PRESET_TEMPERATURES
+from app.generation.model_routing import model_output_max_tokens
 from app.models.enums import ExplanationLevel, GenerationPreset, StructureMode
 from app.schemas.generation import (
     CourseMap,
@@ -160,6 +158,8 @@ def test_build_prompt_includes_template_and_context():
 
 
 def test_message_content_marks_stable_rules_for_cache():
+    from app.data.course_standard import load_standard_files
+
     provider = AnthropicProvider(api_key="test-key")
     input_model = ReviewSingleReelInput(
         reel_plan=ReelPlan(
@@ -168,10 +168,7 @@ def test_message_content_marks_stable_rules_for_cache():
         generated_reel=GeneratedReel(
             reel_id="r1", module_id="m1", title="Reel 1", script_text="hi", self_check_status="pass"
         ),
-        rules_context={
-            "rukn_core_rules": "stable body",
-            "runtime_hint": "dynamic only",
-        },
+        rules_context={**load_standard_files(), "runtime_hint": "dynamic only"},
     )
 
     blocks = provider._build_message_content(
@@ -181,8 +178,9 @@ def test_message_content_marks_stable_rules_for_cache():
     assert len(stable_blocks) == 1
     assert stable_blocks[0]["cache_control"] == {"type": "ephemeral"}
     assert "Stable rules" in stable_blocks[0]["text"]
-    assert "rukn_core_rules" in stable_blocks[0]["text"]
+    assert "00-runtime-contract.md" in stable_blocks[0]["text"]
     assert "runtime_hint" not in stable_blocks[0]["text"]
+    assert '"reel_id": "r1"' not in stable_blocks[0]["text"]
     flat = "".join(b.get("text", "") for b in blocks if b.get("type") == "text")
     assert "runtime_hint" in flat
 
@@ -198,6 +196,52 @@ def test_call_structured_strips_cache_control_by_default():
     sent = provider._client.messages.calls[0]["messages"][0]["content"]
     assert isinstance(sent, list)
     assert all("cache_control" not in b for b in sent if isinstance(b, dict))
+
+
+def test_cache_control_rejection_retries_once_without_cache(monkeypatch):
+    import app.ai.anthropic_provider as module
+
+    class RejectCacheOnceMessages:
+        def __init__(self):
+            self.calls: list[dict] = []
+
+        def create(self, **kwargs):
+            self.calls.append(kwargs)
+            sent = kwargs["messages"][0]["content"]
+            if any(block.get("cache_control") for block in sent):
+                raise RuntimeError("invalid_request: cache_control is not supported")
+            return FakeResponse(
+                [FakeToolUseBlock("review_result", VALID_REVIEW_RESULT)]
+            )
+
+    provider = AnthropicProvider(api_key="test-key")
+    provider._client = type("Client", (), {})()
+    provider._client.messages = RejectCacheOnceMessages()
+    monkeypatch.setattr(module.settings, "anthropic_prompt_cache_enabled", True)
+    blocks = [
+        {"type": "text", "text": "stable", "cache_control": {"type": "ephemeral"}},
+        {"type": "text", "text": "dynamic"},
+    ]
+
+    result = provider._call_structured(blocks, ReviewResult, "review_result")
+
+    assert result.status == "pass"
+    assert len(provider._client.messages.calls) == 2
+    fallback = provider._client.messages.calls[1]["messages"][0]["content"]
+    assert all("cache_control" not in block for block in fallback)
+
+
+def test_cache_enabled_does_not_duplicate_uncached_prompt(monkeypatch):
+    import app.ai.anthropic_provider as module
+
+    provider = _provider_with_responses(
+        [FakeResponse([FakeToolUseBlock("review_result", VALID_REVIEW_RESULT)])]
+    )
+    monkeypatch.setattr(module.settings, "anthropic_prompt_cache_enabled", True)
+
+    provider._call_structured("plain prompt", ReviewResult, "review_result")
+
+    assert len(provider._client.messages.calls) == 1
 
 
 def test_classify_anthropic_provider_error_as_malformed():
@@ -317,8 +361,6 @@ def test_call_structured_accepts_lessons_alias_for_course_map():
 
 
 def test_call_structured_bumps_max_tokens_after_truncation():
-    from app.generation.model_routing import MODEL_OUTPUT_MAX_TOKENS
-
     truncated = FakeResponse(
         [FakeTextBlock("partial")],
         stop_reason="max_tokens",
@@ -332,8 +374,24 @@ def test_call_structured_bumps_max_tokens_after_truncation():
 
     assert result.status == "pass"
     assert provider._client.messages.calls[0]["max_tokens"] == 1024
-    assert provider._client.messages.calls[1]["max_tokens"] == MODEL_OUTPUT_MAX_TOKENS
-    assert _bump_max_tokens(1024) == MODEL_OUTPUT_MAX_TOKENS
+    expected_limit = model_output_max_tokens(provider._model_name)
+    assert provider._client.messages.calls[1]["max_tokens"] == expected_limit
+    assert _bump_max_tokens(1024, provider._model_name) == expected_limit
+
+
+def test_max_tokens_is_clamped_to_model_output_limit():
+    provider = AnthropicProvider(
+        api_key="test-key", model_name="claude-haiku-4-5", max_tokens=128_000
+    )
+    provider._client = FakeAnthropicClient(
+        [FakeResponse([FakeToolUseBlock("review_result", VALID_REVIEW_RESULT)])]
+    )
+
+    provider._call_structured(
+        "prompt", ReviewResult, "review_result", overrides={"max_tokens": 128_000}
+    )
+
+    assert provider._client.messages.calls[0]["max_tokens"] == 64_000
 
 
 def test_truncation_public_hint_mentions_token_limit():
@@ -386,20 +444,22 @@ def test_last_usage_captures_real_response_usage_fields():
         "output_tokens": 45,
         "cache_creation_input_tokens": 10,
         "cache_read_input_tokens": 5,
+        "request_attempts": 1,
+        "response_attempts": 1,
     }
 
 
-def test_last_usage_is_safely_none_valued_when_response_has_no_usage_attribute():
+def test_last_usage_is_safely_zero_valued_when_response_has_no_usage_attribute():
     responses = [FakeResponse([FakeToolUseBlock("review_result", VALID_REVIEW_RESULT)])]
     provider = _provider_with_responses(responses)
 
     provider._call_structured("prompt", ReviewResult, "review_result")
 
-    assert provider.last_usage["input_tokens"] is None
-    assert provider.last_usage["output_tokens"] is None
+    assert provider.last_usage["input_tokens"] == 0
+    assert provider.last_usage["output_tokens"] == 0
 
 
-def test_last_usage_only_updates_on_the_attempt_that_actually_succeeds():
+def test_last_usage_aggregates_every_billed_response_attempt():
     invalid_usage = FakeUsage(input_tokens=999, output_tokens=999)
     valid_usage = FakeUsage(input_tokens=10, output_tokens=20)
     invalid = FakeResponse([FakeToolUseBlock("review_result", {"scope": "reel"})], usage=invalid_usage)
@@ -410,8 +470,10 @@ def test_last_usage_only_updates_on_the_attempt_that_actually_succeeds():
 
     provider._call_structured("prompt", ReviewResult, "review_result")
 
-    assert provider.last_usage["input_tokens"] == 10
-    assert provider.last_usage["output_tokens"] == 20
+    assert provider.last_usage["input_tokens"] == 1009
+    assert provider.last_usage["output_tokens"] == 1019
+    assert provider.last_usage["request_attempts"] == 2
+    assert provider.last_usage["response_attempts"] == 2
 
 
 def test_call_structured_uses_forced_tool_choice_and_configured_model():
@@ -462,6 +524,7 @@ def test_request_timeout_defaults_from_settings(monkeypatch):
     AnthropicProvider(api_key="test-key")
 
     assert captured["timeout"] == module.settings.anthropic_request_timeout_seconds
+    assert captured["max_retries"] == 0
 
 
 def test_request_timeout_can_be_overridden_explicitly(monkeypatch):
@@ -478,6 +541,29 @@ def test_request_timeout_can_be_overridden_explicitly(monkeypatch):
     AnthropicProvider(api_key="test-key", request_timeout_seconds=5.0)
 
     assert captured["timeout"] == 5.0
+
+
+def test_client_falls_back_from_deprecated_proxies_constructor_error(monkeypatch):
+    import app.ai.anthropic_provider as module
+
+    calls: list[dict] = []
+    sentinel_http_client = object()
+
+    class FakeAnthropicClass:
+        def __init__(self, **kwargs):
+            calls.append(kwargs)
+            if len(calls) == 1:
+                raise TypeError("Client.__init__() got an unexpected keyword argument 'proxies'")
+
+    monkeypatch.setattr(module.anthropic, "Anthropic", FakeAnthropicClass)
+    monkeypatch.setattr(module.httpx, "Client", lambda **_kwargs: sentinel_http_client)
+
+    _create_anthropic_client(api_key="test-key", timeout=12.0)
+
+    assert len(calls) == 2
+    assert calls[0]["max_retries"] == 0
+    assert "http_client" not in calls[0]
+    assert calls[1]["http_client"] is sentinel_http_client
 
 
 def _brief() -> CourseBrief:
@@ -584,33 +670,6 @@ VALID_FINAL_COURSE = {
             VALID_REVIEW_RESULT,
             ReviewResult,
             "Review a Completed Reel Draft",
-        ),
-        (
-            "review_five_reels",
-            lambda: ReviewFiveReelsInput(reels=[_generated_reel()]),
-            "review_result",
-            {"scope": "five_reels", "status": "pass", "actions": []},
-            ReviewResult,
-            "Review a Window of Five Reels",
-        ),
-        (
-            "review_module",
-            lambda: ReviewModuleInput(module=_module_plan(), reels=[_generated_reel()]),
-            "review_result",
-            {"scope": "module", "status": "pass", "actions": []},
-            ReviewResult,
-            "Review One Completed Module",
-        ),
-        (
-            "review_two_modules",
-            lambda: ReviewTwoModulesInput(
-                first=ModuleWithReels(module=_module_plan(), reels=[_generated_reel()]),
-                second=ModuleWithReels(module=_module_plan(), reels=[_generated_reel()]),
-            ),
-            "review_result",
-            {"scope": "two_modules", "status": "pass", "actions": []},
-            ReviewResult,
-            "Review a Pair of Modules",
         ),
         (
             "final_review",

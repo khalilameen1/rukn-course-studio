@@ -14,16 +14,14 @@ from enum import Enum
 
 from pydantic import BaseModel, Field, model_validator
 
-from app.models.enums import AddressForm, CourseMixType, LessonDeliveryMode
+from app.models.enums import AddressForm, CourseFamily, CourseMixType, LessonDeliveryMode
 
 
 class ReviewScope(str, Enum):
-    """Matches the 5 review stages in docs/ARCHITECTURE.md §6 (stages 3-7)."""
+    """Scopes whose findings can change acceptance or trigger a rewrite."""
 
     REEL = "reel"
-    FIVE_REELS = "five_reels"
     MODULE = "module"
-    TWO_MODULES = "two_modules"
     FINAL = "final"
 
 
@@ -54,6 +52,25 @@ class CourseThesis(BaseModel):
     in_scope: list[str] = Field(default_factory=list)
     out_of_scope: list[str] = Field(default_factory=list)
     course_type: str = "practical_skill"
+    course_domain: str = ""
+    course_specialty: str = ""
+    primary_course_family: CourseFamily = CourseFamily.GENERAL_SKILL
+    secondary_course_families: list[CourseFamily] = Field(default_factory=list)
+    target_market: str = "egypt"
+    student_language: str = "ar"
+    spoken_variety: str = "egyptian_colloquial"
+    learner_starting_state: str = ""
+    required_final_performance: str = ""
+    required_independence_level: str = "independent_with_checklist"
+    instructor_responsibility_boundaries: list[str] = Field(default_factory=list)
+    verified_instructor_experience: list[str] = Field(default_factory=list)
+    forbidden_first_person_claims: list[str] = Field(default_factory=list)
+    realistic_student_budget: str = ""
+    available_tools: list[str] = Field(default_factory=list)
+    professional_constraints: list[str] = Field(default_factory=list)
+    high_stakes_constraints: list[str] = Field(default_factory=list)
+    beginner_assumption_policy: str = "no_undeclared_prerequisites"
+    experienced_learner_policy: str = "respect_existing_competence"
     mix_type: CourseMixType = CourseMixType.PRACTICAL
     target_theory_ratio: float = 0.25
     target_practice_ratio: float = 0.60
@@ -63,6 +80,8 @@ class CourseThesis(BaseModel):
     target_lessons_min: int = 35
     target_lessons_max: int = 55
     hard_max_lessons: int = 60
+    size_basis_capabilities: list[str] = Field(default_factory=list)
+    size_derivation: str = "capability_based"
     required_tools: list[str] = Field(default_factory=list)
     final_project: str = ""
     address_form: AddressForm = AddressForm.MASCULINE
@@ -91,6 +110,25 @@ class ModuleProject(BaseModel):
             pass_criteria=["ينفّذ المطلوب بوضوح", "يستخدم مهارات الموديول"],
             skills_tested=[],
         )
+
+
+class LessonSemanticContract(BaseModel):
+    """Meaning that must exist before prose is written for one lesson."""
+
+    learner_before: str
+    learner_after: str
+    exact_capability_change: str
+    strongest_non_obvious_meaning: str
+    misconception_or_failure: str
+    causal_explanation: str
+    proof_example_or_demonstration: str
+    learner_test_or_action: str
+    boundary_or_exception: str
+    real_tension: str
+    complete_payoff: str
+    earned_next_need: str
+    escalation_role: str
+    sequence_dependency: str
 
 
 class ReelPlan(BaseModel):
@@ -125,6 +163,7 @@ class ReelPlan(BaseModel):
     already_taught_forbid_repeat: list[str] = Field(default_factory=list)
     # True → may open a natural need for the next lesson; False → clean close.
     needs_natural_bridge: bool = False
+    lesson_semantic_contract: LessonSemanticContract | None = None
 
 
 class ModulePlan(BaseModel):
@@ -215,7 +254,7 @@ class ReviewAction(BaseModel):
 
 
 class ReviewResult(BaseModel):
-    """Output of any of the 5 review stages (Stage 3 through Stage 7)."""
+    """Actionable review output; findings must rewrite content or block it."""
 
     scope: ReviewScope
     status: ReviewStatus

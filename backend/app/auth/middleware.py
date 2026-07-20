@@ -103,9 +103,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 from sqlmodel import Session
 
                 from app.auth.token_denylist import is_jti_revoked
-                from app.db import engine
+                import app.db as db_pkg
 
-                with Session(engine) as session:
+                with Session(db_pkg.engine) as session:
                     if is_jti_revoked(session, jti):
                         return JSONResponse(
                             {"detail": "Invalid or expired token"},
@@ -130,7 +130,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 {
                     "detail": (
                         f"Missing scope {needed!r} for this route. "
-                        "Sign in with an account that has Admin Knowledge access."
+                        "Sign in with an account that has Course Standard access."
                         if needed.endswith("admin_knowledge:*")
                         else f"Missing scope {needed!r} for this route."
                     )

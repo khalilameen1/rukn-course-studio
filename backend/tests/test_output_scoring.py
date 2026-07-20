@@ -1,5 +1,6 @@
 """Tests for app/generation/output_scoring.py (§4)."""
 
+from copy import deepcopy
 import json
 
 from app.generation.output_scoring import score_final_course
@@ -143,3 +144,22 @@ def test_never_blocks_or_raises_on_empty_document():
     assert report.teleprompter_clean is True
     assert report.module_lesson_structure_present is False
     assert report.paragraph_readability.avg_words_per_sentence == 0.0
+
+
+def test_scoring_is_read_only_and_cannot_clear_export_blockers():
+    from app.generation.export_blockers import ExportBlocker, ExportGateReport
+
+    rules = {"canonical": "unchanged"}
+    sources = ["private source text"]
+    before_rules = deepcopy(rules)
+    before_sources = deepcopy(sources)
+    gate_report = ExportGateReport(
+        blockers=[ExportBlocker("lesson", "needs_review", "must remain blocked", "r1")]
+    )
+
+    score_final_course(CLEAN_DOCUMENT, rules, source_texts=sources)
+
+    assert rules == before_rules
+    assert sources == before_sources
+    assert gate_report.ok is False
+    assert gate_report.blockers[0].code == "needs_review"

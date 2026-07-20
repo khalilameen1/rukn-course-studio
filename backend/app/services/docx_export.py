@@ -7,13 +7,16 @@ modules, and graduation project. Never production notes, sources, reviews,
 Hook/Loop labels, or critic metadata.
 """
 
+import re
+import tempfile
 from pathlib import Path
 
 from docx import Document
 from docx.document import Document as DocxDocument
+from docx.enum.section import WD_ORIENT
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
-from docx.shared import Pt
+from docx.shared import Inches, Pt, RGBColor
 from docx.text.paragraph import Paragraph
 
 from app.config import settings
@@ -30,6 +33,13 @@ from app.schemas.generation import (
     GeneratedReel,
     ModuleProject,
 )
+from app.services.docx_verification import (
+    assert_final_course_ready_for_docx,
+    lesson_heading,
+    module_heading,
+    render_docx_pages,
+    verify_docx_archive,
+)
 
 TELEPROMPTER_FONT = "Arial"
 BODY_FONT_SIZE = Pt(14)
@@ -40,6 +50,14 @@ _HEADING_STYLE_SIZES = {
     "Heading 2": Pt(16),
     "Heading 3": Pt(14),
 }
+_HEADING_STYLE_SPACING = {
+    "Title": (Pt(0), Pt(12)),
+    "Heading 1": (Pt(18), Pt(10)),
+    "Heading 2": (Pt(14), Pt(8)),
+    "Heading 3": (Pt(10), Pt(5)),
+}
+_LATIN_TOKEN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+/#:@-]*")
+_ARABIC = re.compile(r"[\u0600-\u06FF]")
 
 
 def _set_style_font(style, size: Pt) -> None:
@@ -51,6 +69,39 @@ def _set_style_font(style, size: Pt) -> None:
         r_fonts = r_pr.makeelement(qn("w:rFonts"), {})
         r_pr.append(r_fonts)
     r_fonts.set(qn("w:cs"), TELEPROMPTER_FONT)
+    r_fonts.set(qn("w:ascii"), TELEPROMPTER_FONT)
+    r_fonts.set(qn("w:hAnsi"), TELEPROMPTER_FONT)
+    r_fonts.set(qn("w:eastAsia"), TELEPROMPTER_FONT)
+    style.font.color.rgb = RGBColor(0, 0, 0)
+
+
+def _set_run_direction(run, *, rtl: bool) -> None:
+    r_pr = run._r.get_or_add_rPr()  # noqa: SLF001
+    rtl_node = r_pr.find(qn("w:rtl"))
+    if rtl_node is None:
+        rtl_node = r_pr.makeelement(qn("w:rtl"), {})
+        r_pr.append(rtl_node)
+    rtl_node.set(qn("w:val"), "1" if rtl else "0")
+    r_fonts = r_pr.find(qn("w:rFonts"))
+    if r_fonts is None:
+        r_fonts = r_pr.makeelement(qn("w:rFonts"), {})
+        r_pr.append(r_fonts)
+    for key in ("ascii", "hAnsi", "eastAsia", "cs"):
+        r_fonts.set(qn(f"w:{key}"), TELEPROMPTER_FONT)
+
+
+def _add_directional_runs(paragraph: Paragraph, text: str) -> None:
+    cursor = 0
+    for match in _LATIN_TOKEN.finditer(text or ""):
+        if match.start() > cursor:
+            run = paragraph.add_run(text[cursor : match.start()])
+            _set_run_direction(run, rtl=bool(_ARABIC.search(run.text)))
+        run = paragraph.add_run(match.group(0))
+        _set_run_direction(run, rtl=False)
+        cursor = match.end()
+    if cursor < len(text or ""):
+        run = paragraph.add_run(text[cursor:])
+        _set_run_direction(run, rtl=bool(_ARABIC.search(run.text)))
 
 
 def _set_rtl(paragraph: Paragraph) -> Paragraph:
@@ -58,16 +109,89 @@ def _set_rtl(paragraph: Paragraph) -> Paragraph:
     if p_pr.find(qn("w:bidi")) is None:
         p_pr.append(p_pr.makeelement(qn("w:bidi"), {}))
     paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    for run in paragraph.runs:
+        _set_run_direction(run, rtl=not bool(_LATIN_TOKEN.fullmatch(run.text.strip())))
+    return paragraph
+
+
+def _set_ltr(paragraph: Paragraph) -> Paragraph:
+    paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    for run in paragraph.runs:
+        _set_run_direction(run, rtl=False)
+    return paragraph
+
+
+def _add_text_paragraph(
+    document: DocxDocument,
+    text: str,
+    *,
+    force_rtl: bool,
+    style: str | None = None,
+) -> Paragraph:
+    paragraph = document.add_paragraph(style=style)
+    _add_directional_runs(paragraph, text)
+    paragraph.paragraph_format.keep_together = True
+    if force_rtl or _ARABIC.search(text or ""):
+        return _set_rtl(paragraph)
+    return _set_ltr(paragraph)
+
+
+def _add_heading(
+    document: DocxDocument,
+    text: str,
+    *,
+    level: int,
+    force_rtl: bool,
+    page_break_before: bool = False,
+) -> Paragraph:
+    style = "Title" if level == 0 else f"Heading {level}"
+    paragraph = _add_text_paragraph(
+        document,
+        text,
+        force_rtl=force_rtl,
+        style=style,
+    )
+    paragraph.paragraph_format.keep_with_next = True
+    paragraph.paragraph_format.page_break_before = page_break_before
     return paragraph
 
 
 def _apply_teleprompter_formatting(document: DocxDocument) -> None:
+    section = document.sections[0]
+    section.orientation = WD_ORIENT.PORTRAIT
+    section.page_width = Inches(8.5)
+    section.page_height = Inches(11)
+    section.top_margin = Inches(1)
+    section.right_margin = Inches(1)
+    section.bottom_margin = Inches(1)
+    section.left_margin = Inches(1)
+    section.header_distance = Inches(0.492)
+    section.footer_distance = Inches(0.492)
+
     styles = document.styles
     _set_style_font(styles["Normal"], BODY_FONT_SIZE)
     styles["Normal"].paragraph_format.line_spacing = BODY_LINE_SPACING
     styles["Normal"].paragraph_format.space_after = Pt(8)
     for style_name, size in _HEADING_STYLE_SIZES.items():
         _set_style_font(styles[style_name], size)
+        style_p_pr = styles[style_name].element.get_or_add_pPr()
+        borders = style_p_pr.find(qn("w:pBdr"))
+        if borders is not None:
+            style_p_pr.remove(borders)
+        before, after = _HEADING_STYLE_SPACING[style_name]
+        styles[style_name].paragraph_format.space_before = before
+        styles[style_name].paragraph_format.space_after = after
+        styles[style_name].paragraph_format.keep_with_next = True
+
+    # The teleprompter contract has no visible or embedded author metadata.
+    core = document.core_properties
+    core.author = ""
+    core.last_modified_by = ""
+    core.title = ""
+    core.subject = ""
+    core.comments = ""
+    core.keywords = ""
+    core.category = ""
 
 
 def _spoken_body_lines(reel: FinalReel) -> list[str]:
@@ -98,7 +222,12 @@ def _add_script_lines(document: DocxDocument, script_text: str) -> None:
             _set_rtl(document.add_paragraph(""))
 
 
-def _add_reel_script(document: DocxDocument, reel: FinalReel) -> None:
+def _add_reel_script(
+    document: DocxDocument,
+    reel: FinalReel,
+    *,
+    force_rtl: bool,
+) -> None:
     lines = _spoken_body_lines(reel)
     # Trim leading/trailing blank pause lines only.
     while lines and not lines[0]:
@@ -108,49 +237,81 @@ def _add_reel_script(document: DocxDocument, reel: FinalReel) -> None:
     if not lines:
         return
     for line in lines:
-        _set_rtl(document.add_paragraph(line))
+        _add_text_paragraph(document, line, force_rtl=force_rtl)
 
 
-def _add_module_project(document: DocxDocument, project: ModuleProject) -> None:
+def _add_module_project(
+    document: DocxDocument,
+    project: ModuleProject,
+    *,
+    force_rtl: bool,
+    heading_level: int = 2,
+    page_break_before: bool = False,
+) -> None:
     """Render a module/graduation project — not a numbered lesson."""
-    _set_rtl(document.add_heading(project.name or "مشروع الموديول", level=2))
+    _add_heading(
+        document,
+        project.name or "مشروع الموديول",
+        level=heading_level,
+        force_rtl=force_rtl,
+        page_break_before=page_break_before,
+    )
     if project.brief:
-        _set_rtl(document.add_paragraph(project.brief))
-    if project.inputs_or_files:
-        _set_rtl(document.add_paragraph("المدخلات: " + "، ".join(project.inputs_or_files)))
-    if project.deliverable_shape:
-        _set_rtl(document.add_paragraph("شكل التسليم: " + project.deliverable_shape))
-    if project.pass_criteria:
-        _set_rtl(document.add_paragraph("شروط الاجتياز: " + "؛ ".join(project.pass_criteria)))
-    if project.skills_tested:
-        _set_rtl(document.add_paragraph("المهارات: " + "؛ ".join(project.skills_tested)))
+        _add_text_paragraph(document, project.brief, force_rtl=force_rtl)
+    # inputs/files, rubric, pass criteria, and skills tested are internal
+    # project artefacts. Only the spoken project instruction belongs here.
 
 
 def render_final_course_docx(final_course: FinalCourse) -> DocxDocument:
     """Build the in-memory python-docx Document."""
     document = Document()
     _apply_teleprompter_formatting(document)
+    force_rtl = bool(
+        final_course.thesis is not None
+        and final_course.thesis.student_language.lower().startswith("ar")
+    ) or bool(_ARABIC.search(final_course.title or ""))
 
-    _set_rtl(document.add_heading(final_course.title or "Untitled Course", level=0))
+    _add_heading(
+        document,
+        final_course.title or "Untitled Course",
+        level=0,
+        force_rtl=force_rtl,
+    )
 
     for module_index, module in enumerate(final_course.modules, start=1):
-        if module_index > 1:
-            document.add_page_break()
-
-        _set_rtl(document.add_heading(f"Module {module_index} — {module.title}", level=1))
+        _add_heading(
+            document,
+            module_heading(final_course, module_index, module.title),
+            level=1,
+            force_rtl=force_rtl,
+            page_break_before=module_index > 1,
+        )
 
         for lesson_index, reel in enumerate(module.reels, start=1):
-            _set_rtl(document.add_heading(f"Lesson {lesson_index} — {reel.title}", level=2))
-            _add_reel_script(document, reel)
+            _add_heading(
+                document,
+                lesson_heading(final_course, lesson_index, reel.title),
+                level=2,
+                force_rtl=force_rtl,
+            )
+            _add_reel_script(document, reel, force_rtl=force_rtl)
 
         # Only structured module_project is exported. Legacy bridge_project stays internal.
         if module.module_project is not None:
-            _add_module_project(document, module.module_project)
+            _add_module_project(
+                document,
+                module.module_project,
+                force_rtl=force_rtl,
+            )
 
     if final_course.graduation_project is not None:
-        document.add_page_break()
-        _set_rtl(document.add_heading("مشروع التخرج", level=1))
-        _add_module_project(document, final_course.graduation_project)
+        _add_module_project(
+            document,
+            final_course.graduation_project,
+            force_rtl=force_rtl,
+            heading_level=1,
+            page_break_before=True,
+        )
 
     return document
 
@@ -166,12 +327,28 @@ def next_version_number(existing_version_numbers: list[int]) -> int:
 def export_final_course_to_docx(
     final_course: FinalCourse, course_id: int, version_number: int
 ) -> Path:
+    assert_final_course_ready_for_docx(final_course)
     document = render_final_course_docx(final_course)
 
     course_dir = settings.storage_outputs_dir / str(course_id)
     course_dir.mkdir(parents=True, exist_ok=True)
     output_path = course_dir / f"course_v{version_number}.docx"
-    document.save(output_path)
+    try:
+        document.save(output_path)
+        archive_report = verify_docx_archive(output_path, final_course)
+        archive_report.raise_if_invalid()
+        if settings.docx_visual_qa_required:
+            with tempfile.TemporaryDirectory(
+                prefix="rukn-docx-qa-", dir=course_dir
+            ) as qa_dir:
+                render_report = render_docx_pages(
+                    output_path,
+                    output_dir=Path(qa_dir),
+                )
+                render_report.raise_if_invalid()
+    except Exception:
+        output_path.unlink(missing_ok=True)
+        raise
     return output_path
 
 
@@ -240,22 +417,40 @@ def render_partial_course_docx(final_course: FinalCourse) -> DocxDocument:
     document = Document()
     _apply_teleprompter_formatting(document)
 
-    _set_rtl(document.add_paragraph(PARTIAL_DRAFT_NOTE))
-    _set_rtl(document.add_heading(final_course.title or "Untitled Course", level=0))
+    force_rtl = bool(_ARABIC.search(final_course.title or ""))
+    _add_text_paragraph(document, PARTIAL_DRAFT_NOTE, force_rtl=force_rtl)
+    _add_heading(
+        document,
+        final_course.title or "Untitled Course",
+        level=0,
+        force_rtl=force_rtl,
+    )
 
     for module_index, module in enumerate(final_course.modules, start=1):
-        if module_index > 1:
-            document.add_page_break()
-
-        _set_rtl(document.add_heading(f"Module {module_index} — {module.title}", level=1))
+        _add_heading(
+            document,
+            module_heading(final_course, module_index, module.title),
+            level=1,
+            force_rtl=force_rtl,
+            page_break_before=module_index > 1,
+        )
 
         for lesson_index, reel in enumerate(module.reels, start=1):
-            _set_rtl(document.add_heading(f"Lesson {lesson_index} — {reel.title}", level=2))
-            _add_reel_script(document, reel)
+            _add_heading(
+                document,
+                lesson_heading(final_course, lesson_index, reel.title),
+                level=2,
+                force_rtl=force_rtl,
+            )
+            _add_reel_script(document, reel, force_rtl=force_rtl)
 
         # Only structured module_project is exported. Legacy bridge_project stays internal.
         if module.module_project is not None:
-            _add_module_project(document, module.module_project)
+            _add_module_project(
+                document,
+                module.module_project,
+                force_rtl=force_rtl,
+            )
 
     return document
 

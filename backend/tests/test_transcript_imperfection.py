@@ -9,7 +9,6 @@ from app.generation.transcript_imperfection import (
     normalize_transcript_text,
     strip_transcript_timestamps,
 )
-from app.seed_admin_knowledge import TRANSCRIPT_TOPIC_RELEVANCE_GATE
 
 META_ADS_PROMISE = {
     "title": "Meta Ads for Egyptian Boutique Shops",
@@ -18,11 +17,6 @@ META_ADS_PROMISE = {
     "target_market": "egypt",
     "course_map_text": "Campaign setup, creative testing, ROAS measurement",
 }
-
-
-def test_gate_documents_transcript_imperfection_mistrust():
-    assert "do not trust wording literally" in TRANSCRIPT_TOPIC_RELEVANCE_GATE.lower()
-    assert "source origin" in TRANSCRIPT_TOPIC_RELEVANCE_GATE.lower()
 
 
 def test_duplicated_transcript_fragments_collapsed():

@@ -20,6 +20,22 @@ def _configure_auth(monkeypatch):
     monkeypatch.setattr(settings, "admin_username", "admin")
     monkeypatch.setattr(settings, "admin_password", "s3cret")
     monkeypatch.setattr(settings, "auth_secret_key", "test-secret-key")
+    monkeypatch.setattr(
+        "app.routers.auth.allow_login_attempt_db",
+        lambda _session, _key: True,
+    )
+
+
+def _full_diagnostics():
+    token = create_token(
+        "admin",
+        settings.auth_secret_key,
+        scopes=["courses:*"],
+    )
+    return client.get(
+        "/auth/diagnostics/full",
+        headers={"Authorization": f"Bearer {token}"},
+    )
 
 
 def test_login_succeeds_with_correct_credentials():
@@ -212,7 +228,7 @@ def test_diagnostics_never_exposes_secrets():
 def test_diagnostics_reports_configured_booleans_accurately(monkeypatch):
     monkeypatch.setattr(settings, "frontend_origin", "https://rukn-frontend.onrender.com")
 
-    response = client.get("/auth/diagnostics")
+    response = _full_diagnostics()
 
     assert response.status_code == 200
     body = response.json()
@@ -230,7 +246,7 @@ def test_diagnostics_reports_unconfigured_admin_credentials(monkeypatch):
     monkeypatch.setattr(settings, "admin_password", None)
     monkeypatch.setattr(settings, "frontend_origin", None)
 
-    response = client.get("/auth/diagnostics")
+    response = _full_diagnostics()
 
     body = response.json()
     assert body["admin_username_configured"] is False
@@ -242,7 +258,7 @@ def test_diagnostics_reports_unconfigured_admin_credentials(monkeypatch):
 def test_diagnostics_reports_fake_provider_as_always_ready(monkeypatch):
     monkeypatch.setattr(settings, "ai_provider", "fake")
 
-    response = client.get("/auth/diagnostics")
+    response = _full_diagnostics()
 
     body = response.json()
     assert body["ai_provider"] == "fake"
@@ -254,7 +270,7 @@ def test_diagnostics_reports_anthropic_ready_once_configured(monkeypatch):
     monkeypatch.setattr(settings, "anthropic_api_key", "sk-ant-test-should-never-leak-12345")
     monkeypatch.setattr(settings, "ai_model_name", "claude-example-model")
 
-    response = client.get("/auth/diagnostics")
+    response = _full_diagnostics()
 
     body = response.json()
     assert body["ai_provider"] == "anthropic"
@@ -269,7 +285,7 @@ def test_diagnostics_reports_anthropic_not_ready_when_misconfigured(monkeypatch)
     monkeypatch.setattr(settings, "anthropic_api_key", None)
     monkeypatch.setattr(settings, "ai_model_name", "claude-example-model")
 
-    response = client.get("/auth/diagnostics")
+    response = _full_diagnostics()
 
     body = response.json()
     assert body["ai_provider"] == "anthropic"
@@ -280,14 +296,14 @@ def test_diagnostics_reports_ai_model_name_only_for_anthropic(monkeypatch):
     monkeypatch.setattr(settings, "ai_provider", "fake")
     monkeypatch.setattr(settings, "ai_model_name", "claude-example-model")
 
-    response = client.get("/auth/diagnostics")
+    response = _full_diagnostics()
 
     assert response.json()["ai_model_name"] == "fake"
 
     monkeypatch.setattr(settings, "ai_provider", "anthropic")
     monkeypatch.setattr(settings, "anthropic_api_key", "sk-ant-test-should-never-leak-99999")
 
-    response = client.get("/auth/diagnostics")
+    response = _full_diagnostics()
 
     assert response.json()["ai_model_name"] == "claude-example-model"
 
@@ -299,7 +315,7 @@ def test_diagnostics_provider_health_defaults_to_unknown_with_no_usage_history(m
     monkeypatch.setattr(settings, "ai_provider", "anthropic")
     monkeypatch.setattr(settings, "anthropic_api_key", "sk-ant-test-should-never-leak-11111")
 
-    response = client.get("/auth/diagnostics")
+    response = _full_diagnostics()
 
     body = response.json()
     assert body["provider_reachable"] == "unknown"
@@ -332,7 +348,7 @@ def test_diagnostics_provider_health_reflects_a_recent_successful_usage_event(tm
             status="ok",
         )
 
-    response = client.get("/auth/diagnostics")
+    response = _full_diagnostics()
 
     body = response.json()
     assert body["provider_reachable"] == "ok"
@@ -387,7 +403,7 @@ def test_diagnostics_never_exposes_secrets_even_with_usage_and_error_history(tmp
             error_message="Rate limit reached - please try again shortly.",
         )
 
-    response = client.get("/auth/diagnostics")
+    response = _full_diagnostics()
 
     assert response.status_code == 200
     assert fake_key not in response.text

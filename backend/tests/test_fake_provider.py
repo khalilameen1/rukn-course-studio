@@ -1,22 +1,25 @@
-"""Tests for FakeProvider - determinism plus a full pipeline dry run."""
+"""FakeProvider unit tests; no test generates a complete course."""
 
 from app.ai.fake_provider import FakeProvider
 from app.ai.provider import (
+    AIProvider,
     BuildCourseMapInput,
     CourseBrief,
     FinalReviewInput,
-    ModuleWithReels,
     RebuildFinalCourseInput,
-    ReviewFiveReelsInput,
-    ReviewModuleInput,
     ReviewSingleReelInput,
-    ReviewTwoModulesInput,
     WriteSingleReelInput,
 )
 from app.models.enums import ExplanationLevel, StructureMode
-from app.schemas.generation import GeneratedReel, ReviewStatus
+from app.schemas.generation import ReviewStatus
 
 provider = FakeProvider()
+
+
+def test_retired_no_effect_review_methods_are_not_provider_surface() -> None:
+    for method in ("review_five_reels", "review_module", "review_two_modules"):
+        assert not hasattr(AIProvider, method)
+        assert not hasattr(FakeProvider, method)
 
 
 def _brief() -> CourseBrief:
@@ -69,29 +72,32 @@ def test_write_single_reel_is_deterministic_and_uses_the_plan():
         assert point in first.used_ideas
 
 
-def _full_pipeline_run():
-    """Build a map, write every reel, then run every review stage + rebuild."""
+def _single_lesson_case():
+    """Build a map but write exactly one lesson with the zero-network fake."""
     course_map = provider.build_course_map(BuildCourseMapInput(brief=_brief()))
-
-    all_reels: list[GeneratedReel] = []
-    for module in course_map.modules:
-        for reel_plan in module.reels:
-            generated = provider.write_single_reel(
-                WriteSingleReelInput(
-                    course_title=course_map.course_title,
-                    main_thread=course_map.main_thread,
-                    module=module,
-                    reel=reel_plan,
-                )
-            )
-            all_reels.append(generated)
-
-    return course_map, all_reels
+    module = course_map.modules[0]
+    reel_plan = module.reels[0]
+    generated = provider.write_single_reel(
+        WriteSingleReelInput(
+            course_title=course_map.course_title,
+            main_thread=course_map.main_thread,
+            module=module,
+            reel=reel_plan,
+            lesson_semantic_contract=reel_plan.lesson_semantic_contract,
+        )
+    )
+    one_reel_map = course_map.model_copy(
+        update={
+            "modules": [
+                module.model_copy(update={"reels": [reel_plan]})
+            ]
+        }
+    )
+    return one_reel_map, generated
 
 
 def test_review_single_reel_passes_for_normal_reel():
-    course_map, all_reels = _full_pipeline_run()
-    reel = all_reels[0]
+    course_map, reel = _single_lesson_case()
     reel_plan = course_map.modules[0].reels[0]
 
     result = provider.review_single_reel(
@@ -103,9 +109,9 @@ def test_review_single_reel_passes_for_normal_reel():
 
 
 def test_review_single_reel_flags_empty_script():
-    course_map, all_reels = _full_pipeline_run()
+    course_map, reel = _single_lesson_case()
     reel_plan = course_map.modules[0].reels[0]
-    broken_reel = all_reels[0].model_copy(update={"script_text": ""})
+    broken_reel = reel.model_copy(update={"script_text": ""})
 
     result = provider.review_single_reel(
         ReviewSingleReelInput(reel_plan=reel_plan, generated_reel=broken_reel)
@@ -117,44 +123,18 @@ def test_review_single_reel_flags_empty_script():
     assert result.actions[0].target_id == broken_reel.reel_id
 
 
-def test_review_five_reels_and_module_pass_for_normal_reels():
-    course_map, all_reels = _full_pipeline_run()
-    module = course_map.modules[0]
-    module_reels = [r for r in all_reels if r.module_id == module.module_id]
-
-    five_result = provider.review_five_reels(ReviewFiveReelsInput(reels=module_reels))
-    module_result = provider.review_module(
-        ReviewModuleInput(module=module, reels=module_reels)
-    )
-
-    assert five_result.status == ReviewStatus.PASS
-    assert module_result.status == ReviewStatus.PASS
-
-
-def test_review_two_modules_and_final_review_pass_for_full_course():
-    course_map, all_reels = _full_pipeline_run()
-
-    module_reels = [
-        ModuleWithReels(
-            module=module,
-            reels=[r for r in all_reels if r.module_id == module.module_id],
-        )
-        for module in course_map.modules
-    ]
-
-    two_module_result = provider.review_two_modules(
-        ReviewTwoModulesInput(first=module_reels[0], second=module_reels[1])
-    )
+def test_final_review_passes_for_one_normal_lesson():
+    course_map, reel = _single_lesson_case()
     final_result = provider.final_review(
-        FinalReviewInput(course_map=course_map, all_reels=all_reels)
+        FinalReviewInput(course_map=course_map, all_reels=[reel])
     )
 
-    assert two_module_result.status == ReviewStatus.PASS
     assert final_result.status == ReviewStatus.PASS
 
 
 def test_rebuild_final_course_assembles_all_reel_text():
-    course_map, all_reels = _full_pipeline_run()
+    course_map, reel = _single_lesson_case()
+    all_reels = [reel]
     final_review = provider.final_review(
         FinalReviewInput(course_map=course_map, all_reels=all_reels)
     )

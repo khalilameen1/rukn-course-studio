@@ -3,7 +3,7 @@
 import json
 
 from app.schemas.generation import GeneratedReel, ReviewStatus
-from app.validators.forbidden_phrase_checker import check_forbidden_phrases
+from app.validators.forbidden_phrase_checker import FORBIDDEN_PHRASES_KEY, check_forbidden_phrases
 from app.validators.length_checker import check_length
 from app.validators.opening_checker import check_opening
 from app.validators.repetition_checker import check_repetition
@@ -24,7 +24,7 @@ def _reel(reel_id, title, script_text, used_ideas=None, used_examples=None) -> G
 # --- forbidden_phrase_checker ------------------------------------------------
 
 FORBIDDEN_RULES_CONTEXT = {
-    "rukn_forbidden_phrases": json.dumps(
+    FORBIDDEN_PHRASES_KEY: json.dumps(
         {
             "phrases": [
                 {
@@ -58,7 +58,7 @@ def test_forbidden_phrase_checker_handles_missing_rule():
 
 
 def test_forbidden_phrase_checker_handles_malformed_json():
-    assert check_forbidden_phrases("any text", {"rukn_forbidden_phrases": "{not json"}) == []
+    assert check_forbidden_phrases("any text", {FORBIDDEN_PHRASES_KEY: "{not json"}) == []
 
 
 def test_forbidden_phrase_checker_finds_multiple_matches():

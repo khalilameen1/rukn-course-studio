@@ -306,7 +306,7 @@ def format_distilled_memory_snippet(
     add_section("Outdated warnings", list(memory.get("outdated_warnings") or []), cap=3)
     add_section("Market adaptation", list(memory.get("market_adaptation_notes") or []), cap=2)
     add_section("Blocked / discard", list(memory.get("discarded_signals") or []), cap=4)
-    # Cap tightly — full mistrust doctrine lives in Admin Knowledge + style warning.
+    # Cap tightly — full source-authority doctrine lives in the canonical standard.
     add_section("Do not inherit", list(memory.get("blocked_content_warnings") or []), cap=2)
 
     # Query-ranked chunk snippets stay internal and short.

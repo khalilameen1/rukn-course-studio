@@ -14,6 +14,10 @@ def test_rejected_fixtures_fail_gates():
     assert not run_egyptian_arabic_gate(REJECTED["banned_outro"]).ok
     assert not run_egyptian_arabic_gate(REJECTED["literal_cold_audience"]).ok
     assert not run_egyptian_arabic_gate(REJECTED["colloquial_essay"]).ok
+    assert not run_egyptian_arabic_gate(REJECTED["standalone_thumma"]).ok
+    assert not run_egyptian_arabic_gate(REJECTED["formal_morphology"]).ok
+    assert not run_egyptian_arabic_gate(REJECTED["attached_prefix"]).ok
+    assert not run_egyptian_arabic_gate(REJECTED["uncontrolled_code_switching"]).ok
     assert not run_egyptian_arabic_gate(
         REJECTED["gender_switch"], address_form=AddressForm.MASCULINE
     ).ok

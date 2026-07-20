@@ -117,17 +117,14 @@ def test_get_ai_provider_uses_module_level_settings_by_default(monkeypatch):
     assert isinstance(provider, FakeProvider)
 
 
-def test_generate_endpoint_returns_clear_503_when_anthropic_misconfigured(tmp_path, monkeypatch):
+def test_map_preview_returns_clear_503_when_anthropic_misconfigured(tmp_path, monkeypatch):
     """API-level check for requirement 3: a misconfigured real provider must
     fail with a clear backend error (not a raw 500 stack trace, not a
     silent fallback that generates fake content anyway)."""
     import app.db as db_module
-    import app.generation.orchestrator as orchestrator_module
-
     engine = create_engine(f"sqlite:///{tmp_path / 'factory_api_test.db'}")
     SQLModel.metadata.create_all(engine)
     monkeypatch.setattr(db_module, "engine", engine)
-    monkeypatch.setattr(orchestrator_module, "engine", engine)
 
     import app.ai.factory as factory_module
 
@@ -152,7 +149,7 @@ def test_generate_endpoint_returns_clear_503_when_anthropic_misconfigured(tmp_pa
     assert create_response.status_code == 201
     course_id = create_response.json()["id"]
 
-    generate_response = client.post(f"/courses/{course_id}/generate")
+    generate_response = client.post(f"/courses/{course_id}/map-preview")
 
     assert generate_response.status_code == 503
     assert "ANTHROPIC_API_KEY" in generate_response.json()["detail"]

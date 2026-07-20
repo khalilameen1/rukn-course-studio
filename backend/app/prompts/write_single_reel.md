@@ -49,6 +49,17 @@ Agency hard limit: **one** first draft + Integrated Editorial Review + at most *
 
 ## Spoken Final Master contract
 
+`lesson_semantic_contract` is frozen before this call. Realize every meaning in
+natural spoken prose: capability change, non-obvious meaning, failure, cause,
+proof/demonstration, learner action, boundary, real tension, complete payoff,
+and earned next need. Do not print field names or planning labels. Do not swap
+in a generic example or a different lesson's meaning.
+
+Delete any sentence that can be removed without losing a claim, condition,
+exception, cause, timing, sequence, contrast, example, action, or continuation
+dependency. Never shorten away the explanation, proof, boundary, action, or
+payoff merely to reduce word count.
+
 - Primary output is natural spoken beats (Egyptian colloquial), not an essay paragraph.
 - Put the full spoken transcript in `script_text` (plain lines). Prefer one natural spoken beat per line.
 - Never put Hook/Loop labels, lecturer notes, filming instructions, sources, timestamps, scores, critic notes, parentheses as asides, or bullet markers in `script_text`.
@@ -64,7 +75,7 @@ Agency hard limit: **one** first draft + Integrated Editorial Review + at most *
 - Do not invent prices/specs without a valid source. Do not turn soft rules into absolute laws.
 - Respect `rukn_phrase_ledger_runtime` when present — do not reuse overused openers/closers/templates.
 - Respect `rukn_voice_profile_runtime` for rhythm only — never copy catchphrases.
-- Follow `rukn_high_signal_reel_doctrine`, teleprompter contract, and every voice/style rule in `rules_context`.
+- Follow the complete canonical RUKN standard in `rules_context`.
 - Length follows delivery mode word ranges (camera / micro / screen / critique / project) — never pad to hit a number; never shrink by removing real teaching.
 - Cover every point in `reel.must_cover`. Avoid every point in `reel.must_avoid` and `already_taught_forbid_repeat`.
 - Knowledge sources = facts. FLOW_REFERENCE / voice profile = spoken calibration only — never facts from style samples, never written style forced onto the lecturer.

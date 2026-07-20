@@ -67,7 +67,7 @@ export default function NotesChatPanel({
     <section id={sectionId} className="flex flex-col gap-3">
       <div>
         <h3 className="text-sm font-semibold text-foreground">Paste source text</h3>
-        <p className="text-xs text-muted">These sources belong only to this course — not Admin Knowledge.</p>
+        <p className="text-xs text-muted">These sources belong only to this course — not the Course Standard.</p>
       </div>
 
       <div className="nc-chat-panel">

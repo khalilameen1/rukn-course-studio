@@ -18,7 +18,6 @@ from app.generation.source_usefulness import (
 )
 from app.generation.teleprompter_checks import find_forbidden_substrings
 from app.schemas.generation import FinalCourse, FinalModule, FinalReel
-from app.seed_admin_knowledge import SOURCE_DISTILLATION_GATE
 from app.services.docx_export import extract_plain_text, render_final_course_docx
 
 META = {
@@ -52,13 +51,6 @@ GOOD_SCRIPT = """\
 خليني أوضح لك الحتة دي بسرعة.
 الغلط هنا إن ناس كتير بتفهم الموضوع بالعكس لما الميزانية صغيرة.
 """
-
-
-def test_gate_documents_usefulness_credit_hygiene():
-    assert "usefulness" in SOURCE_DISTILLATION_GATE.lower()
-    assert "low_signal" in SOURCE_DISTILLATION_GATE.lower()
-    assert "mistrust does not mean rejection" in SOURCE_DISTILLATION_GATE.lower()
-    assert PROMPT_COMPILER_VERSION == "2.21"
 
 
 def test_useful_source_stays_distilled_not_rejected():

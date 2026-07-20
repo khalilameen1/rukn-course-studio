@@ -143,7 +143,7 @@ class Settings(BaseSettings):
     anthropic_prompt_cache_enabled: bool = False
 
     # Auth for this internal MVP (see app/auth/). Admin gets full scopes;
-    # optional OPERATOR_* credentials get courses:* only (no Admin Knowledge).
+    # optional OPERATOR_* credentials get courses:* only (no standard management).
     auth_enabled: bool = True
     admin_username: str | None = None
     admin_password: str | None = None
@@ -172,6 +172,11 @@ class Settings(BaseSettings):
     generate_min_interval_seconds: float = 3.0
     # When true, skip free-space preflight (tests / special hosts).
     generation_skip_disk_check: bool = False
+
+    # Final DOCX delivery requires actual page rendering in production. Local
+    # unit tests keep this off and exercise the renderer explicitly with a fake
+    # or installed office binary. Render deployment sets it to true.
+    docx_visual_qa_required: bool = False
 
     # When True (default), only one generation job may be active globally
     # across all courses. Env: GENERATION_GLOBAL_LOCK

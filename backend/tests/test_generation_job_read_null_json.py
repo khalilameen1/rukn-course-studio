@@ -83,4 +83,6 @@ def test_latest_endpoint_tolerates_null_waste_warnings(tmp_path, monkeypatch):
         with TestClient(app) as client:
             latest = client.get(f"/courses/{cid}/generate/latest")
             assert latest.status_code == 200, latest.text
-            assert latest.json()["waste_warnings_json"] == []
+            # Internal waste telemetry is normalized safely and excluded from
+            # the public Copilot-scale DTO.
+            assert "waste_warnings_json" not in latest.json()

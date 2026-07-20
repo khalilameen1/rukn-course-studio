@@ -63,15 +63,6 @@ _IMPORTED_EXAMPLE = re.compile(
     re.IGNORECASE,
 )
 
-_LOCAL_EXAMPLE_SWAP = (
-    "مثلاً محل أو عيادة أو فريلانسر بيشتغل مع عملاء على واتساب وفيسبوك "
-    "بميزانية واقعية."
-)
-
-_ORIGINAL_REWRITE_BEAT = (
-    "خلّينا نشرح الفكرة دي بكلامنا وإيقاع رُكن، مش بنفس صياغة المصدر."
-)
-
 # Minimum consecutive words shared with a source to flag copying.
 _COPY_NGRAM = 6
 _WINDOW_SIM_THRESHOLD = 0.88
@@ -95,15 +86,16 @@ class OriginalityReport:
 
 
 def compile_originality_guidance() -> str:
-    """Runtime guidance injected beside Admin Knowledge (never DOCX)."""
+    """Runtime guidance injected beside the canonical standard (never DOCX)."""
     return (
         "ORIGINALITY_RIGHTS: Sources (upload + web) are for facts, concepts, "
         "terminology, field logic, common mistakes, and verified knowledge only. "
         "Never copy wording, distinctive examples, story/hook structure, creator "
         "style, catchphrases, or produce a translated/paraphrased rewrite of a "
         "source. Free/public sources are still not free to copy. Flow references "
-        "teach pacing/tension/transitions/rhythm only — never verbal style or "
-        "signature lines. Web research fills facts only — not article structure, "
+        "calibrate language naturalness only — never pacing, hooks, teaching flow, "
+        "terminology, verbal style, or signature lines. Web research fills facts "
+        "only — not article structure, "
         "hooks, examples, or tone. Rewrite from the underlying idea; keep the "
         "fact/concept, not the source's expression."
     )
@@ -262,21 +254,11 @@ def rewrite_script_originality(
         report.remediations.append("strip_article_tone")
 
     if any(f.code == "imported_example_swap" for f in findings):
-        out = _IMPORTED_EXAMPLE.sub(_LOCAL_EXAMPLE_SWAP, out)
-        report.remediations.append("localize_imported_example")
-
-    if any(
-        f.code
-        in {
-            "source_wording_overlap",
-            "distinctive_source_example",
-            "article_paraphrase_tone",
-        }
-        for f in findings
-    ):
-        if _ORIGINAL_REWRITE_BEAT not in out:
-            out = f"{out.rstrip()}\n{_ORIGINAL_REWRITE_BEAT}"
-        report.remediations.append("original_rewrite_beat")
+        # Do not invent a stock local example. Removing an imported example
+        # deliberately leaves the semantic contract/reviewer to require a
+        # domain-appropriate replacement from the creator.
+        out = _IMPORTED_EXAMPLE.sub("", out)
+        report.remediations.append("strip_imported_example_for_creator_rewrite")
 
     for leak in ORIGINALITY_DOCX_LEAKS:
         out = re.sub(re.escape(leak), "", out, flags=re.IGNORECASE)

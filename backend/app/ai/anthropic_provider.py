@@ -26,6 +26,7 @@ import json
 from typing import TypeVar
 
 import anthropic
+import httpx
 from pydantic import BaseModel, ValidationError
 
 from app.ai.provider import (
@@ -33,10 +34,7 @@ from app.ai.provider import (
     BuildCourseMapInput,
     FinalReviewInput,
     RebuildFinalCourseInput,
-    ReviewFiveReelsInput,
-    ReviewModuleInput,
     ReviewSingleReelInput,
-    ReviewTwoModulesInput,
     WriteSingleReelInput,
 )
 from app.config import settings
@@ -150,11 +148,35 @@ def _public_api_hint(exc: BaseException) -> str:
     return "Anthropic API rejected the request."
 
 
-def _bump_max_tokens(current: int) -> int:
+def _bump_max_tokens(current: int, model_name: str = "") -> int:
     """Jump to the model output ceiling after any truncation stop."""
-    from app.generation.model_routing import MODEL_OUTPUT_MAX_TOKENS
+    from app.generation.model_routing import model_output_max_tokens
 
-    return max(int(current), MODEL_OUTPUT_MAX_TOKENS)
+    del current
+    return model_output_max_tokens(model_name)
+
+
+def _create_anthropic_client(*, api_key: str | None, timeout: float):
+    """Construct the SDK client without deprecated proxy kwargs.
+
+    Some Anthropic/httpx combinations fail while constructing the SDK's
+    implicit HTTP client with ``unexpected keyword argument 'proxies'``.
+    The fallback supplies a current httpx client explicitly. ``trust_env``
+    keeps standard HTTP(S)_PROXY support without passing deprecated kwargs.
+    """
+    kwargs = {"api_key": api_key, "timeout": timeout, "max_retries": 0}
+    try:
+        return anthropic.Anthropic(**kwargs)
+    except TypeError as exc:
+        if "proxies" not in str(exc).lower():
+            raise
+        http_client = httpx.Client(timeout=timeout, trust_env=True)
+        return anthropic.Anthropic(
+            api_key=api_key,
+            timeout=timeout,
+            max_retries=0,
+            http_client=http_client,
+        )
 
 
 def _normalize_tool_input(schema: type[BaseModel], data: object) -> object:
@@ -220,13 +242,14 @@ class AnthropicProvider(AIProvider):
         preset: GenerationPreset | None = None,
         request_timeout_seconds: float | None = None,
     ) -> None:
-        self._client = anthropic.Anthropic(
+        timeout = (
+            request_timeout_seconds
+            if request_timeout_seconds is not None
+            else settings.anthropic_request_timeout_seconds
+        )
+        self._client = _create_anthropic_client(
             api_key=api_key or settings.anthropic_api_key,
-            timeout=(
-                request_timeout_seconds
-                if request_timeout_seconds is not None
-                else settings.anthropic_request_timeout_seconds
-            ),
+            timeout=timeout,
         )
         # Single source of truth for the model name: settings.ai_model_name
         # (AI_MODEL_NAME env var), unless explicitly overridden by a caller
@@ -234,10 +257,12 @@ class AnthropicProvider(AIProvider):
         self._model_name = model_name or settings.ai_model_name
         # Anthropic requires max_tokens; default to the model output ceiling
         # so stage calls never hit a soft product cap mid-response.
-        from app.generation.model_routing import MODEL_OUTPUT_MAX_TOKENS
+        from app.generation.model_routing import model_output_max_tokens
 
         self._max_tokens = (
-            int(max_tokens) if max_tokens is not None else MODEL_OUTPUT_MAX_TOKENS
+            min(int(max_tokens), model_output_max_tokens(self._model_name))
+            if max_tokens is not None
+            else model_output_max_tokens(self._model_name)
         )
         # Starts at the given (or default) preset's temperature; the
         # orchestrator calls `configure_for_run` once per generation run
@@ -276,15 +301,6 @@ class AnthropicProvider(AIProvider):
 
     def review_single_reel(self, input: ReviewSingleReelInput) -> ReviewResult:
         return self._run(PipelineStage.REVIEW_SINGLE_REEL, input, ReviewResult)
-
-    def review_five_reels(self, input: ReviewFiveReelsInput) -> ReviewResult:
-        return self._run(PipelineStage.REVIEW_FIVE_REELS, input, ReviewResult)
-
-    def review_module(self, input: ReviewModuleInput) -> ReviewResult:
-        return self._run(PipelineStage.REVIEW_MODULE, input, ReviewResult)
-
-    def review_two_modules(self, input: ReviewTwoModulesInput) -> ReviewResult:
-        return self._run(PipelineStage.REVIEW_TWO_MODULES, input, ReviewResult)
 
     def final_review(self, input: FinalReviewInput) -> ReviewResult:
         return self._run(PipelineStage.FINAL_REVIEW, input, ReviewResult)
@@ -414,11 +430,31 @@ class AnthropicProvider(AIProvider):
         overrides = overrides or {}
         model_name = overrides.get("model", self._model_name)
         temperature = overrides.get("temperature", self._temperature)
-        max_tokens = int(overrides.get("max_tokens", self._max_tokens))
+        from app.generation.model_routing import model_output_max_tokens
+
+        max_tokens = min(
+            int(overrides.get("max_tokens", self._max_tokens)),
+            model_output_max_tokens(model_name),
+        )
 
         tool = _tool_for_schema(schema, tool_name)
         last_error: str = "unknown error"
         saw_truncation = False
+        usage_totals = {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+        }
+        response_attempts = 0
+        request_attempts = 0
+
+        def capture_usage(response_obj: object) -> None:
+            nonlocal response_attempts
+            response_attempts += 1
+            usage = getattr(response_obj, "usage", None)
+            for field in usage_totals:
+                usage_totals[field] += int(getattr(usage, field, 0) or 0)
 
         for attempt in range(1, MAX_ATTEMPTS + 1):
             if isinstance(prompt, list):
@@ -454,15 +490,16 @@ class AnthropicProvider(AIProvider):
             enable_cache = bool(
                 getattr(settings, "anthropic_prompt_cache_enabled", False)
             )
-            variants: list[str | list[dict]] = [
-                content if enable_cache else _strip_cache_control(content)
-            ]
-            if enable_cache:
-                variants.append(_strip_cache_control(content))
+            primary = content if enable_cache else _strip_cache_control(content)
+            variants: list[str | list[dict]] = [primary]
+            uncached = _strip_cache_control(content)
+            if enable_cache and uncached != primary:
+                variants.append(uncached)
 
             for variant in variants:
                 for api_attempt in range(2):
                     try:
+                        request_attempts += 1
                         response = self._client.messages.create(
                             **_create_message_kwargs(
                                 model_name=model_name,
@@ -473,6 +510,7 @@ class AnthropicProvider(AIProvider):
                                 content=variant,
                             )
                         )
+                        capture_usage(response)
                         last_api_exc = None
                         break
                     except Exception as api_exc:  # noqa: BLE001
@@ -521,7 +559,7 @@ class AnthropicProvider(AIProvider):
             attempt_max_tokens = max_tokens
             if stop == "max_tokens":
                 saw_truncation = True
-                max_tokens = _bump_max_tokens(max_tokens)
+                max_tokens = _bump_max_tokens(max_tokens, model_name)
 
             tool_use = next(
                 (block for block in response.content if block.type == "tool_use"), None
@@ -564,13 +602,11 @@ class AnthropicProvider(AIProvider):
             # present on a real Anthropic SDK response; `getattr(...,
             # None)` keeps this safe against any future/older SDK response
             # shape that happens to omit one of the cache-token fields.
-            usage = getattr(response, "usage", None)
             self.last_usage = {
                 "model": model_name,
-                "input_tokens": getattr(usage, "input_tokens", None),
-                "output_tokens": getattr(usage, "output_tokens", None),
-                "cache_creation_input_tokens": getattr(usage, "cache_creation_input_tokens", None),
-                "cache_read_input_tokens": getattr(usage, "cache_read_input_tokens", None),
+                **usage_totals,
+                "request_attempts": request_attempts,
+                "response_attempts": response_attempts,
             }
             return result
 

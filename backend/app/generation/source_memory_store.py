@@ -724,18 +724,6 @@ def format_memory_snippet(
             + str(memory["flow_profile"])[:400]
         )
 
-    if memory.get("old_course_lessons") and memory.get("source_type") == "old_course":
-
-        parts.append(
-
-            "Prior course lessons (structure only):\n- "
-
-            + "\n- ".join(str(x) for x in memory["old_course_lessons"][:8])
-
-        )
-
-
-
     if chunks and query_text:
 
         relevant = select_relevant_chunks(chunks, query_text, max_chunks=MAX_RELEVANT_CHUNKS)

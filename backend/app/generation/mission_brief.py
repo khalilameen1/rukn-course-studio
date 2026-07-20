@@ -28,7 +28,7 @@ def build_mission_brief(
         if sources_summary:
             grounding = f"{grounding} — {sources_summary}"
     else:
-        grounding = "Grounded on brief + Admin Knowledge (no uploads included)"
+        grounding = "Grounded on brief + canonical RUKN standard (no uploads included)"
 
     confidence = (
         "ready"

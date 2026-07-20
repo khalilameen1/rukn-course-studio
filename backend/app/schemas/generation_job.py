@@ -2,11 +2,20 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field, field_serializer, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    computed_field,
+    field_serializer,
+    field_validator,
+    model_validator,
+)
 
 from app.generation.public_progress import sanitize_progress_message
 from app.models.enums import GenerationQualityMode, JobStatus, WebResearchMode
 from app.schemas.validators import (
+    AddressFormLoose,
     GenerationQualityModeLoose,
     JobStatusLoose,
     WebResearchModeLoose,
@@ -48,10 +57,6 @@ class GenerateCourseRequest(BaseModel):
     # When true, client confirmed the map preview and hard-limit warnings.
     map_preview_confirmed: bool = False
     human_override_hard_limits: bool = False
-    address_form: str = "masculine"
-    presenter_language: str = "ar"
-    presenter_dialect: str = "egyptian"
-    delivery_pattern: str = "teleprompter_standard"
     approved_snapshot_fingerprint: str | None = None
 
 
@@ -75,10 +80,10 @@ class WriterTest3ReelsRequest(BaseModel):
 class MapPreviewRequest(BaseModel):
     generation_quality_mode: GenerationQualityModeLoose = GenerationQualityMode.PREMIUM
     human_override_hard_limits: bool = False
-    web_research_mode: WebResearchModeLoose = WebResearchMode.DISABLED
-    address_form: str = "masculine"
-    presenter_language: str = "ar"
-    presenter_dialect: str = "egyptian"
+    web_research_mode: WebResearchModeLoose = WebResearchMode.AUTONOMOUS_GAP_FILL
+    address_form: AddressFormLoose | None = None
+    presenter_language: str | None = None
+    presenter_dialect: str | None = None
     delivery_pattern: str = "teleprompter_standard"
 
 class GenerationJobRead(BaseModel):
@@ -122,6 +127,8 @@ class GenerationJobRead(BaseModel):
     research_memory_reuse_count: int = 0
     created_at: datetime
     updated_at: datetime
+    config_fingerprint: Optional[str] = None
+    snapshot_version: Optional[str] = None
 
     # Loaded for sanitizers / aliases only — never serialized.
     needs_review_count: int = Field(default=0, exclude=True)
@@ -130,6 +137,24 @@ class GenerationJobRead(BaseModel):
     last_completed_step: Optional[str] = Field(default=None, exclude=True)
     waste_warnings_json: list[str] = Field(default_factory=list, exclude=True)
     reused_source_memory_count: int = Field(default=0, exclude=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _derive_safe_snapshot_metadata(cls, value: object) -> object:
+        if isinstance(value, dict):
+            data = dict(value)
+            snapshot = data.get("run_snapshot_json")
+        else:
+            data = {
+                name: getattr(value, name, None)
+                for name in cls.model_fields
+                if name not in {"config_fingerprint", "snapshot_version"}
+            }
+            snapshot = getattr(value, "run_snapshot_json", None)
+        if isinstance(snapshot, dict):
+            data["config_fingerprint"] = snapshot.get("CONFIG_FINGERPRINT")
+            data["snapshot_version"] = snapshot.get("version")
+        return data
 
     @field_serializer("output_docx_path", "partial_docx_path")
     @classmethod
@@ -328,6 +353,11 @@ class WriterTestReelPublic(BaseModel):
 class WriterTestJobRead(BaseModel):
     job: GenerationJobRead
     job_kind: str = "writer_test_3_reels"
-    settings_fingerprint: str | None = None
+    config_fingerprint: str | None = None
+    production_context_fingerprint: str | None = None
+    reference_context_fingerprint: str | None = None
+    context_matches_course: bool = False
+    context_mismatch_fields: list[str] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)
     series_linked: bool = False
     reels: list[WriterTestReelPublic] = Field(default_factory=list)

@@ -41,7 +41,10 @@ def test_no_sources_produces_a_complete_coherent_docx(session):
     # Preset handling: the course's own (non-default) preset choice must
     # reach the pipeline and be recorded, not silently fall back to the
     # global default.
-    assert job.run_snapshot_json["generation_preset"] == GenerationPreset.CREATIVE.value
+    assert (
+        job.run_snapshot_json["CONFIG_INPUTS"]["GENERATION_SETTINGS"]["generation_preset"]
+        == GenerationPreset.CREATIVE.value
+    )
     # No sources at all -> the run snapshot's source list must be empty,
     # not just "not present".
-    assert job.run_snapshot_json["source_ids_used"] == []
+    assert job.run_snapshot_json["SOURCE_LEDGER"] == []

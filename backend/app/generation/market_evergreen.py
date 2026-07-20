@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from typing import Any
 
 from app.models.enums import TargetMarket
 from app.schemas.generation import CourseMap, FinalCourse
@@ -138,12 +139,6 @@ _EVERGREEN_PRICE_REWRITE = (
     "متبنيش القرار على رقم ثابت في الكورس."
 )
 
-_LOCAL_EXAMPLE_BEAT = (
-    "خلّي المثال من واقع قريب: محل أو عيادة أو فريلانسر بيشتغل "
-    "بميزانية محدودة، وبيتواصل مع العميل على واتساب وفيسبوك."
-)
-
-
 @dataclass
 class MarketEvergreenFinding:
     code: str
@@ -160,13 +155,108 @@ class MarketEvergreenReport:
         return {f.code for f in self.findings}
 
 
-def compile_market_guidance(target_market: TargetMarket | str) -> str:
-    """Compact runtime guidance injected beside Admin Knowledge (not DOCX)."""
-    market = (
-        target_market
-        if isinstance(target_market, TargetMarket)
-        else TargetMarket(str(target_market))
+def _coerce_target_market(target_market: TargetMarket | str | None) -> TargetMarket:
+    """Use Egypt only for an explicitly selected/default-empty brief value."""
+    if isinstance(target_market, TargetMarket):
+        return target_market
+    raw = str(target_market or "").strip()
+    if not raw:
+        return TargetMarket.EGYPT
+    try:
+        return TargetMarket(raw)
+    except ValueError:
+        # Legacy/invalid records predate the closed enum. They get the documented
+        # product default instead of an invented regional assumption.
+        return TargetMarket.EGYPT
+
+
+def build_market_pack(
+    target_market: TargetMarket | str | None,
+    *,
+    special_notes: str | None = None,
+    realistic_student_budget: str | None = None,
+    available_tools: list[str] | None = None,
+) -> dict[str, Any]:
+    """Build a deterministic market policy only from the selected brief.
+
+    This is intentionally policy, not a bundle of invented personas, channels,
+    budgets, or businesses. Domain-appropriate examples remain the creator's
+    job and must be grounded in the course thesis/brief.
+    """
+    market = _coerce_target_market(target_market)
+    tools = [
+        str(tool).strip()
+        for tool in (available_tools or [])
+        if str(tool).strip()
+    ]
+    budget = str(realistic_student_budget or "").strip()
+    custom_context = (
+        str(special_notes or "").strip()
+        if market == TargetMarket.CUSTOM
+        else ""
     )
+
+    localization_policy = {
+        TargetMarket.EGYPT: (
+            "Use Egyptian realities only when they fit the course domain and brief; "
+            "choose specific plausible scenarios without stock stereotypes."
+        ),
+        TargetMarket.ARAB_MARKET: (
+            "Use broad Arab-market reality; never assume Egypt or a specific country "
+            "unless the brief supplies it."
+        ),
+        TargetMarket.GLOBAL: (
+            "Keep examples globally portable; do not force Egypt, Arab-market channels, "
+            "or US/EU startup assumptions."
+        ),
+        TargetMarket.CUSTOM: (
+            "Use only the market context explicitly supplied in special_notes; do not "
+            "fall back to Egypt or generic regional stereotypes."
+        ),
+    }[market]
+    return {
+        "selected_market": market.value,
+        "context_source": "course_brief_selection",
+        "localization_policy": localization_policy,
+        "scenario_policy": (
+            "Examples must be plausible for the actual course domain, buyer/client "
+            "behavior, contact path, and learner situation; never reuse a stock list "
+            "of shops, clinics, freelancers, or channels."
+        ),
+        "realistic_student_budget": budget or "not_declared",
+        "available_tools": tools,
+        "budget_and_tool_policy": (
+            "Do not assume enterprise subscriptions or large recurring budgets. Do not "
+            "make the course look poor, fetishize free tools, or reject a tool merely "
+            "because it is paid."
+        ),
+        "paid_tool_policy": (
+            "Recommend paid tools only when their professional value or time/risk saving "
+            "clearly exceeds the larger cost for this learner context."
+        ),
+        "stereotype_guard": (
+            "No Egyptian, Arab, global, profession, income, or client stereotypes; "
+            "localization must be domain- and brief-specific."
+        ),
+        "custom_context": custom_context,
+    }
+
+
+def compile_market_guidance(
+    target_market: TargetMarket | str | None,
+    *,
+    special_notes: str | None = None,
+    realistic_student_budget: str | None = None,
+    available_tools: list[str] | None = None,
+) -> str:
+    """Compact runtime guidance injected beside the canonical standard."""
+    pack = build_market_pack(
+        target_market,
+        special_notes=special_notes,
+        realistic_student_budget=realistic_student_budget,
+        available_tools=available_tools,
+    )
+    market = _coerce_target_market(target_market)
     evergreen = (
         "EVERGREEN: Prefer principles, decision rules, and workflows that survive "
         "UI updates. Do not depend on exact salaries, prices, dates, temporary "
@@ -174,28 +264,24 @@ def compile_market_guidance(target_market: TargetMarket | str) -> str:
         "current official docs/pricing. Demos may use today's UI but must not "
         "be button-click-only tutorials. Keep wording natural — avoid disclaimer spam."
     )
-    if market == TargetMarket.GLOBAL:
-        return (
-            "TARGET_MARKET=global. Avoid over-localizing to Egypt, but never sound "
-            "like a literal US/EU translation. Clean spoken Egyptian Arabic still "
-            "applies unless the user asked otherwise.\n" + evergreen
+    lines = [
+        f"TARGET_MARKET={market.value}. Market context comes only from the course brief.",
+        f"LOCALIZATION: {pack['localization_policy']}",
+        f"SCENARIOS: {pack['scenario_policy']}",
+        f"BUDGET_TOOLS: {pack['budget_and_tool_policy']}",
+        f"PAID_TOOLS: {pack['paid_tool_policy']}",
+        f"STEREOTYPE_GUARD: {pack['stereotype_guard']}",
+    ]
+    if pack["realistic_student_budget"] != "not_declared":
+        lines.append(f"DECLARED_BUDGET: {pack['realistic_student_budget']}")
+    if pack["available_tools"]:
+        lines.append(
+            "DECLARED_AVAILABLE_TOOLS: " + ", ".join(pack["available_tools"])
         )
-    if market == TargetMarket.CUSTOM:
-        return (
-            "TARGET_MARKET=custom. Follow course special_notes / brief for market. "
-            "Still avoid literal translation tone and fragile short-expiry facts.\n"
-            + evergreen
-        )
-    region = "Egypt" if market == TargetMarket.EGYPT else "Arab markets"
-    return (
-        f"TARGET_MARKET={market.value}. Default practical reality: learner in "
-        f"{region}; mostly local/Arab clients; lower budgets than US/EU; "
-        "WhatsApp/Facebook/Instagram/referrals/trust/negotiation matter. "
-        "Examples: shops, freelancers, clinics, restaurants, real estate, "
-        "training centers, local service providers. Do not assume US startup "
-        "tools/budgets/salaries unless the topic requires it. Clean Egyptian "
-        "Arabic — market realism, not fake street slang.\n" + evergreen
-    )
+    if pack["custom_context"]:
+        lines.append(f"CUSTOM_MARKET_CONTEXT: {pack['custom_context']}")
+    lines.append(evergreen)
+    return "\n".join(lines)
 
 
 def scan_script_market_evergreen(
@@ -299,14 +385,13 @@ def rewrite_script_market_evergreen(
         f.code in {"foreign_market_assumption", "missing_local_context", "expensive_tool_assumption"}
         for f in findings
     ):
-        out = _FOREIGN_MARKET.sub("سوق محلي بميزانية واقعية", out)
+        # Remove unsupported imported assumptions. A creator rewrite must supply
+        # the domain-appropriate local scenario; this pass never fabricates one.
+        out = _FOREIGN_MARKET.sub("سوق العميل المستهدف", out)
         out = _EXPENSIVE_TOOL_ASSUME.sub(
-            "اختار أداة تناسب ميزانيتك وتغطي الحاجة فعلاً", out
+            "قيّم الأداة حسب قيمتها المهنية وتكلفتها الكلية", out
         )
-        if target_market in (TargetMarket.EGYPT, TargetMarket.ARAB_MARKET):
-            if _LOCAL_EXAMPLE_BEAT not in out and not _LOCAL_CUE.search(out):
-                out = f"{out.rstrip()}\n{_LOCAL_EXAMPLE_BEAT}"
-        report.remediations.append("localize_market_example")
+        report.remediations.append("remove_unsupported_market_assumption")
 
     if any(f.code == "button_click_tutorial" for f in findings):
         if "القاعدة هنا أهم من شكل الواجهة" not in out:

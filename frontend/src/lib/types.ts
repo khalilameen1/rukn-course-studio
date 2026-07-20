@@ -31,6 +31,18 @@ export type WebResearchMode = "disabled" | "autonomous_gap_fill";
 
 export type TargetMarket = "egypt" | "arab_market" | "global" | "custom";
 
+export type CourseFamily =
+  | "general_skill"
+  | "creative_production"
+  | "analytical_operational"
+  | "programming_technical"
+  | "languages_communication"
+  | "sales_marketing_business"
+  | "professional_service"
+  | "high_stakes_authority_sensitive";
+
+export type AddressForm = "masculine" | "feminine" | "neutral";
+
 export type Priority = "high" | "medium" | "low";
 
 export type JobStatus =
@@ -55,17 +67,20 @@ export interface AdminKnowledgeItem {
   updated_at: string;
 }
 
-export interface AdminKnowledgeCreateInput {
+export interface CourseStandardManifestFile {
+  order: number;
   key: string;
   title: string;
-  item_type: ItemType;
-  content_text?: string | null;
-  file_path?: string | null;
-  version?: number;
-  is_active?: boolean;
+  file_path: string;
+  content_sha256: string;
 }
 
-export type AdminKnowledgeUpdateInput = Partial<AdminKnowledgeCreateInput>;
+export interface CourseStandardManifest {
+  standard_version: string;
+  fingerprint: string;
+  file_count: number;
+  files: CourseStandardManifestFile[];
+}
 
 export interface Course {
   id: number;
@@ -75,6 +90,9 @@ export interface Course {
   special_notes: string | null;
   course_type: string;
   course_domain?: string | null;
+  course_specialty?: string | null;
+  primary_course_family: CourseFamily;
+  secondary_course_families: CourseFamily[];
   structure_mode: StructureMode;
   manual_map_text: string | null;
   explanation_level: ExplanationLevel;
@@ -82,6 +100,19 @@ export interface Course {
   generation_quality_mode?: GenerationQualityMode;
   web_research_mode?: WebResearchMode;
   target_market?: TargetMarket;
+  student_language: string;
+  spoken_variety: string;
+  address_form: AddressForm;
+  learner_starting_state: string;
+  required_final_performance: string;
+  required_independence_level: string;
+  instructor_responsibility_boundaries: string[];
+  verified_instructor_experience: string[];
+  forbidden_first_person_claims: string[];
+  realistic_student_budget?: string | null;
+  available_tools: string[];
+  professional_constraints: string[];
+  high_stakes_constraints: string[];
   status: string;
   created_at: string;
   updated_at: string;
@@ -93,12 +124,30 @@ export interface CourseCreateInput {
   outcome: string;
   special_notes?: string | null;
   course_domain?: string | null;
+  course_specialty?: string | null;
+  course_type?: string;
+  primary_course_family?: CourseFamily;
+  secondary_course_families?: CourseFamily[];
   structure_mode: StructureMode;
   manual_map_text?: string | null;
   explanation_level?: ExplanationLevel;
   generation_preset?: GenerationPreset;
   generation_quality_mode?: GenerationQualityMode;
+  web_research_mode?: WebResearchMode;
   target_market?: TargetMarket;
+  student_language?: string;
+  spoken_variety?: string;
+  address_form?: AddressForm;
+  learner_starting_state?: string;
+  required_final_performance?: string;
+  required_independence_level?: string;
+  instructor_responsibility_boundaries?: string[];
+  verified_instructor_experience?: string[];
+  forbidden_first_person_claims?: string[];
+  realistic_student_budget?: string | null;
+  available_tools?: string[];
+  professional_constraints?: string[];
+  high_stakes_constraints?: string[];
 }
 
 export type CourseUpdateInput = Partial<CourseCreateInput> & { status?: string };
@@ -180,6 +229,8 @@ export interface GenerationJob {
   agent_roster?: { id: string; label: string; state: string }[];
   live_eta_summary?: string | null;
   public_stage_label?: string | null;
+  config_fingerprint?: string | null;
+  snapshot_version?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -286,9 +337,9 @@ export interface MapPreviewStats {
   thesis?: Record<string, unknown>;
   course_map?: Record<string, unknown>;
   quality_contract?: Record<string, unknown>;
-  snapshot?: Record<string, unknown>;
   snapshot_fingerprint?: string;
   adapter_id?: string;
+  map_text?: string;
 }
 
 export interface WriterTestReelPublic {
@@ -307,7 +358,12 @@ export interface WriterTestReelPublic {
 export interface WriterTestJobRead {
   job: GenerationJob;
   job_kind: string;
-  settings_fingerprint?: string | null;
+  config_fingerprint?: string | null;
+  production_context_fingerprint?: string | null;
+  reference_context_fingerprint?: string | null;
+  context_matches_course: boolean;
+  context_mismatch_fields: string[];
+  limitations: string[];
   series_linked: boolean;
   reels: WriterTestReelPublic[];
 }

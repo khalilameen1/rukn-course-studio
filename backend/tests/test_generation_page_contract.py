@@ -27,7 +27,6 @@ def _client(tmp_path, monkeypatch):
     engine = create_engine(f"sqlite:///{tmp_path / 'gen_ux.db'}")
     SQLModel.metadata.create_all(engine)
     monkeypatch.setattr(db_module, "engine", engine)
-    monkeypatch.setattr(orchestrator_module, "engine", engine)
     monkeypatch.setattr(orchestrator_module.settings, "storage_outputs_dir", tmp_path)
     from app.main import app
 
@@ -50,10 +49,13 @@ def test_generate_returns_claimed_job_then_completes(tmp_path, monkeypatch):
     assert "run_snapshot_json" not in body
     assert "internal_risk_count" not in body
     assert "public_stage_label" in body
+    assert body["snapshot_version"] is None  # async claim exists before map freeze
 
     # BackgroundTasks finished under TestClient; poll shows completed.
     latest = client.get(f"/jobs/{body['id']}?course_id={course_id}")
     assert latest.json()["status"] == "completed"
+    assert latest.json()["snapshot_version"] == "2.0"
+    assert len(latest.json()["config_fingerprint"]) == 64
 
 
 def test_debounce_returns_active_or_429(tmp_path, monkeypatch):

@@ -371,14 +371,18 @@ def compile_official_tool_guidance(store: OfficialToolMemoryStore | None) -> str
         return (
             "Official Tool Documentation Gate: if the course uses a current "
             "tool/platform, current official behavior beats old courses/PDFs/blogs. "
-            "Teach durable principles and feature categories; never fragile button positions. "
+            "Teach the principle and decision before showing the current tool as one "
+            "example; never make fragile button positions or temporary prices/stats a rule. "
             "Never put docs links, citations, or research notes in script_text."
         )
     lines = [
         "Official Tool Documentation Gate (silent — never DOCX):",
         "- Official current docs/help center beat old uploaded courses, books, and tutorials for tool behavior.",
         "- Extract principles from old sources only; rebuild outdated workflows from official current behavior.",
+        "- Teach the durable principle and decision first; use the current tool/UI only as an example.",
         "- Prefer goals + feature categories + how to verify in help center over exact UI click paths.",
+        "- Temporary prices, limits, dates, specifications, and stats are not permanent teaching rules.",
+        "- Keep the capability evergreen if the UI changes or a better competing tool becomes appropriate.",
         "Tools in this course:",
     ]
     for dep in store.tool_dependencies:

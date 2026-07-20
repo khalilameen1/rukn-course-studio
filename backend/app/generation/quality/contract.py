@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from app.models.enums import AddressForm, CourseMixType, LessonDeliveryMode
+from app.models.enums import (
+    AddressForm,
+    CourseFamily,
+    CourseMixType,
+    LessonDeliveryMode,
+)
 
 
 class CourseLanguageProfile(BaseModel):
@@ -26,8 +31,17 @@ class CourseLanguageProfile(BaseModel):
 class DomainPedagogyProfile(BaseModel):
     course_domain: str = "generic"
     course_type: str = "practical_skill"
+    primary_course_family: CourseFamily = CourseFamily.GENERAL_SKILL
+    secondary_course_families: list[CourseFamily] = Field(default_factory=list)
     learner_profile: str = ""
     prior_knowledge: str = ""
+    learner_starting_state: str = ""
+    required_final_performance: str = ""
+    required_independence_level: str = "independent_with_checklist"
+    realistic_student_budget: str = ""
+    available_tools: list[str] = Field(default_factory=list)
+    beginner_assumption_policy: str = "no_undeclared_prerequisites"
+    experienced_learner_policy: str = "respect_existing_competence"
     learning_promises: list[str] = Field(default_factory=list)
     required_skills: list[str] = Field(default_factory=list)
     practice_types: list[str] = Field(default_factory=list)
@@ -52,6 +66,11 @@ class EvidenceAndRiskProfile(BaseModel):
     protected_content_types: list[str] = Field(default_factory=list)
     claim_verification_policy: str = "standard"  # standard | strict | expert_gate
     require_expert_review_before_export: bool = False
+    instructor_responsibility_boundaries: list[str] = Field(default_factory=list)
+    verified_instructor_experience: list[str] = Field(default_factory=list)
+    forbidden_first_person_claims: list[str] = Field(default_factory=list)
+    professional_constraints: list[str] = Field(default_factory=list)
+    high_stakes_constraints: list[str] = Field(default_factory=list)
 
 
 class DeliveryContract(BaseModel):
@@ -86,7 +105,7 @@ class CourseQualityContract(BaseModel):
     evidence: EvidenceAndRiskProfile = Field(default_factory=EvidenceAndRiskProfile)
     delivery: DeliveryContract = Field(default_factory=DeliveryContract)
     adapter_id: str = "generic"
-    version: str = "1.0"
+    version: str = "1.1"
 
     def fingerprint_payload(self) -> dict:
         return self.model_dump(mode="json")

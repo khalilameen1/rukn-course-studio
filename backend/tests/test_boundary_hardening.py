@@ -10,6 +10,8 @@ import app.db as db_module
 from app.auth.scopes import SCOPE_ADMIN_KNOWLEDGE, SCOPE_COURSES
 from app.auth.tokens import create_token
 from app.config import settings
+from app.data.admin_knowledge.seed_loader import seed
+from app.data.course_standard import STANDARD_FILE_NAMES
 from app.generation.source_isolation import (
     SOURCE_ISOLATION_RULES,
     UNTRUSTED_CLOSE,
@@ -18,7 +20,6 @@ from app.generation.source_isolation import (
     wrap_untrusted,
 )
 from app.main import app
-from app.seed_admin_knowledge import seed
 
 
 @pytest.fixture()
@@ -92,26 +93,17 @@ def test_course_readiness_does_not_leak_rule_bodies(db_client, auth_headers):
     assert "active_rule_key_count" in body
     assert body["active_rule_key_count"] >= 1
     blob = readiness.text.lower()
-    assert "rukn_core_rules" not in blob
+    assert STANDARD_FILE_NAMES[0].lower() not in blob
     assert "content_text" not in blob
 
 
-def test_activate_dry_run_returns_200_dict(db_client, auth_headers):
-    test_client, engine = db_client
-    with Session(engine) as session:
-        from app.crud import admin_knowledge_items
-
-        row = admin_knowledge_items.list(session, key="rukn_core_rules")[0]
-        item_id = row.id
-
+def test_legacy_activate_endpoint_is_removed(db_client, auth_headers):
+    test_client, _ = db_client
     response = test_client.post(
-        f"/admin/knowledge/{item_id}/activate?dry_run=true&confirm=false",
+        "/admin/knowledge/1/activate?dry_run=true&confirm=false",
         headers=auth_headers,
     )
-    assert response.status_code == 200
-    body = response.json()
-    assert body["applied"] is False
-    assert body["dry_run"] is True
+    assert response.status_code in {404, 405}
 
 
 def test_course_create_idempotency_key(db_client, auth_headers):
@@ -130,26 +122,17 @@ def test_course_create_idempotency_key(db_client, auth_headers):
     assert first.json()["id"] == second.json()["id"]
 
 
-def test_high_trust_put_requires_confirm(db_client, auth_headers):
-    test_client, engine = db_client
-    with Session(engine) as session:
-        from app.crud import admin_knowledge_items
-
-        row = next(
-            i
-            for i in admin_knowledge_items.list(session, key="rukn_core_rules")
-            if i.is_active
-        )
-        item_id = row.id
-
-    preview = test_client.put(
-        f"/admin/knowledge/{item_id}",
+def test_course_standard_cannot_be_edited(db_client, auth_headers):
+    test_client, _ = db_client
+    response = test_client.put(
+        "/admin/knowledge/1",
         headers=auth_headers,
-        json={"content_text": "# mutated high trust"},
+        json={"content_text": "# attempted mutation"},
     )
-    assert preview.status_code == 200
-    assert preview.json()["applied"] is False
-    assert preview.json()["high_trust"] is True
+    assert response.status_code in {404, 405}
+    rows = test_client.get("/admin/knowledge", headers=auth_headers)
+    assert rows.status_code == 200
+    assert [item["key"] for item in rows.json()] == list(STANDARD_FILE_NAMES)
 
 
 def test_audit_list_endpoint(db_client, auth_headers):

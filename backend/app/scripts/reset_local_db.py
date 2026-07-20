@@ -75,10 +75,10 @@ def reset_local_db(*, seed: bool = False, confirmed: bool = False) -> None:
     print(f"created  {db_path} (tables from current schema)")
 
     if seed:
-        from app.seed_admin_knowledge import main as seed_main
+        from app.data.admin_knowledge.seed_loader import main as seed_main
 
         seed_main()
-        print("seeded  admin knowledge items")
+        print("seeded  canonical RUKN course standard")
 
 
 def main() -> None:
@@ -91,7 +91,7 @@ def main() -> None:
     parser.add_argument(
         "--seed",
         action="store_true",
-        help="Re-run python -m app.seed_admin_knowledge after recreating tables.",
+        help="Install the canonical RUKN course standard after recreating tables.",
     )
     args = parser.parse_args()
     reset_local_db(seed=args.seed, confirmed=args.confirm)

@@ -25,14 +25,19 @@ def test_registry_covers_all_provider_methods():
         "build_course_map",
         "write_single_reel",
         "review_single_reel",
-        "review_five_reels",
-        "review_module",
-        "review_two_modules",
         "final_review",
         "rebuild_final_course",
     }
     registered = {spec.provider_method for spec in PROMPT_SPECS.values()}
     assert registered == expected_methods
+
+
+def test_retired_no_effect_review_surfaces_are_gone():
+    retired = {"review_five_reels", "review_module", "review_two_modules"}
+    assert retired.isdisjoint(stage.value for stage in PipelineStage)
+    assert retired.isdisjoint(spec.provider_method for spec in PROMPT_SPECS.values())
+    for name in retired:
+        assert not (Path(__file__).parents[1] / "app" / "prompts" / f"{name}.md").exists()
 
 
 @pytest.mark.parametrize(
@@ -41,9 +46,6 @@ def test_registry_covers_all_provider_methods():
         ("build_course_map", PipelineStage.BUILD_COURSE_MAP),
         ("write_single_reel", PipelineStage.WRITE_SINGLE_REEL),
         ("review_single_reel", PipelineStage.REVIEW_SINGLE_REEL),
-        ("review_five_reels", PipelineStage.REVIEW_FIVE_REELS),
-        ("review_module", PipelineStage.REVIEW_MODULE),
-        ("review_two_modules", PipelineStage.REVIEW_TWO_MODULES),
         ("final_review", PipelineStage.FINAL_REVIEW),
         ("rebuild_final_course", PipelineStage.REBUILD_FINAL_COURSE),
     ],
