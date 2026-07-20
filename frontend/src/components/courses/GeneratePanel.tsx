@@ -2,7 +2,13 @@
 
 import { useEffect, useRef, useState } from "react";
 import { api, formatApiErrorForDisplay } from "@/lib/api";
-import type { GenerationJob, GenerationQualityMode, MapPreviewStats } from "@/lib/types";
+import type {
+  AddressForm,
+  GenerationJob,
+  GenerationQualityMode,
+  MapPreviewStats,
+  WebResearchMode,
+} from "@/lib/types";
 import StatusBadge from "@/components/ui/StatusBadge";
 import WriterTestPanel from "@/components/courses/WriterTestPanel";
 import {
@@ -441,7 +447,7 @@ function GenerationStatusPanel({
       {showStoppedInfo ? (
         <div className="mt-4 rounded-md border border-border bg-surface-muted/30 px-3 py-3">
           <p className="text-sm font-medium text-foreground">
-            {canFinalize ? "Lessons saved — finish without regenerating" : "Run stopped early"}
+            {canFinalize ? "Recovery ready — finish without regenerating" : "Export blockers"}
           </p>
           <p className="mt-1 text-xs text-muted">
             Stopped after: {stoppedStepLabel} · {completedLessons}
@@ -496,12 +502,20 @@ export default function GeneratePanel({
   courseId,
   onVersionCreated,
   onJobUpdate,
-  webResearchMode = "autonomous_gap_fill",
+  initialQualityMode = "premium",
+  initialWebResearchMode = "autonomous_gap_fill",
+  addressForm = "masculine",
+  presenterLanguage = "ar",
+  presenterDialect = "egyptian",
 }: {
   courseId: number;
   onVersionCreated: () => void;
   onJobUpdate?: (job: GenerationJob | null) => void;
-  webResearchMode?: "disabled" | "autonomous_gap_fill";
+  initialQualityMode?: GenerationQualityMode;
+  initialWebResearchMode?: WebResearchMode;
+  addressForm?: AddressForm;
+  presenterLanguage?: string;
+  presenterDialect?: string;
 }) {
   const [job, setJob] = useState<GenerationJob | null>(null);
   const [starting, setStarting] = useState(false);
@@ -509,7 +523,10 @@ export default function GeneratePanel({
   const [finalizingSaved, setFinalizingSaved] = useState(false);
   const [downloadingCompleted, setDownloadingCompleted] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [qualityMode, setQualityMode] = useState<GenerationQualityMode>("premium");
+  const [qualityMode, setQualityMode] = useState<GenerationQualityMode>(initialQualityMode);
+  const [webResearchMode, setWebResearchMode] =
+    useState<WebResearchMode>(initialWebResearchMode);
+  const [humanOverrideHardLimits, setHumanOverrideHardLimits] = useState(false);
   const [mission, setMission] = useState<MissionBrief | null>(null);
   const [showTighten, setShowTighten] = useState(false);
   const [mapPreview, setMapPreview] = useState<MapPreviewStats | null>(null);
@@ -667,6 +684,10 @@ export default function GeneratePanel({
       const stats = await api.mapPreview(courseId, {
         generation_quality_mode: qualityMode,
         web_research_mode: webResearchMode,
+        human_override_hard_limits: humanOverrideHardLimits,
+        address_form: addressForm,
+        presenter_language: presenterLanguage,
+        presenter_dialect: presenterDialect,
       });
       setMapPreview(stats);
     } catch (err) {
@@ -747,6 +768,7 @@ export default function GeneratePanel({
         generation_quality_mode: modeToUse,
         map_preview_confirmed: true,
         web_research_mode: webResearchMode,
+        human_override_hard_limits: humanOverrideHardLimits,
         approved_snapshot_fingerprint: mapPreview.snapshot_fingerprint,
       });
       updateJob(started);
@@ -807,7 +829,11 @@ export default function GeneratePanel({
             className="mt-1 block w-full max-w-xs rounded-md border border-border bg-surface px-3 py-2 text-sm"
             value={qualityMode}
             disabled={starting || isRunning || finalizingSaved}
-            onChange={(e) => setQualityMode(e.target.value as GenerationQualityMode)}
+            onChange={(e) => {
+              setQualityMode(e.target.value as GenerationQualityMode);
+              setMapPreview(null);
+              setMapConfirmed(false);
+            }}
           >
             {QUALITY_MODE_OPTIONS.map((opt) => (
               <option key={opt.value} value={opt.value}>
@@ -820,6 +846,55 @@ export default function GeneratePanel({
           {QUALITY_MODE_OPTIONS.find((o) => o.value === qualityMode)?.hint}
         </p>
       </div>
+
+      <div className="grid gap-4 sm:grid-cols-2">
+        <label className="text-sm text-foreground">
+          Research choice
+          <select
+            className="mt-1 block w-full rounded-md border border-border bg-surface px-3 py-2 text-sm"
+            value={webResearchMode}
+            disabled={starting || isRunning || finalizingSaved}
+            onChange={(e) => {
+              setWebResearchMode(e.target.value as WebResearchMode);
+              setMapPreview(null);
+              setMapConfirmed(false);
+            }}
+          >
+            <option value="autonomous_gap_fill">Fill evidence gaps from the web</option>
+            <option value="disabled">Disabled — supplied sources only</option>
+          </select>
+        </label>
+        <div className="rounded-md border border-border bg-surface-muted/30 px-3 py-2 text-xs text-muted">
+          <p className="font-medium text-foreground">Delivery language</p>
+          <p className="mt-1">
+            {presenterLanguage} · {presenterDialect} · {addressForm} address
+          </p>
+          <p className="mt-1">Edit these values in the Course brief before previewing.</p>
+        </div>
+      </div>
+
+      <label className="rounded-md border border-amber-300 bg-amber-50 px-3 py-3 text-sm text-amber-950 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-200">
+        <span className="flex items-start gap-2">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={humanOverrideHardLimits}
+            disabled={starting || isRunning || finalizingSaved}
+            onChange={(e) => {
+              setHumanOverrideHardLimits(e.target.checked);
+              setMapPreview(null);
+              setMapConfirmed(false);
+            }}
+          />
+          <span>
+            <span className="block font-medium">Human hard-limit override</span>
+            <span className="mt-1 block text-xs">
+              Warning: this permits a map beyond canonical duration or lesson limits. Your
+              confirmation is recorded; semantic quality and export gates still cannot be bypassed.
+            </span>
+          </span>
+        </span>
+      </label>
 
       <div className="rounded-md border border-border px-3 py-3 space-y-2 text-sm">
         <div className="flex flex-wrap items-center gap-2">

@@ -42,8 +42,8 @@ def test_sa_json_object_and_array_roundtrip_from_text(tmp_path):
         assert isinstance(row.arr, list)
 
 
-def test_generation_job_read_still_accepts_string_json():
-    """Schema validators remain as a second line of defense for API responses."""
+def test_generation_job_read_coerces_hidden_warnings_and_drops_internal_usage():
+    """Hidden helpers may coerce input, but internal telemetry is never serialized."""
     now = datetime.now(timezone.utc)
     read = GenerationJobRead.model_validate(
         {
@@ -67,4 +67,6 @@ def test_generation_job_read_still_accepts_string_json():
         }
     )
     assert read.waste_warnings_json == ["dup"]
-    assert read.usage_by_stage_json == {"map": 1}
+    public = read.model_dump()
+    assert "waste_warnings_json" not in public
+    assert "usage_by_stage_json" not in public

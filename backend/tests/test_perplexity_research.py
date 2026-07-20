@@ -161,7 +161,9 @@ def test_ledger_support_rollup_preferred_in_scoring():
 
 
 def test_gap_fill_respects_search_budget_and_progress():
-    assert MAX_WEB_SEARCHES_PER_RUN == 5
+    # The canonical long-course budget allows module-level gap coverage;
+    # the hard cap still prevents unbounded autonomous research.
+    assert MAX_WEB_SEARCHES_PER_RUN == 24
     seen: list[str] = []
 
     result = run_autonomous_gap_fill(

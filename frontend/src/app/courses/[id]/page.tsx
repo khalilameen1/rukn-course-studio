@@ -163,6 +163,11 @@ export default function CourseDetailPage() {
       generation_preset: values.generation_preset,
       generation_quality_mode: values.generation_quality_mode,
       target_market: values.target_market,
+      primary_course_family: values.primary_course_family,
+      web_research_mode: values.web_research_mode,
+      student_language: values.student_language,
+      spoken_variety: values.spoken_variety,
+      address_form: values.address_form,
     });
     setCourse(updated);
     setEditingBrief(false);
@@ -384,12 +389,17 @@ export default function CourseDetailPage() {
         <SectionPanel label="Generate" description="Work / status only" framed>
           <Card className="flex flex-col gap-4">
             <GeneratePanel
+              key={`${course.id}:${course.updated_at}`}
               courseId={courseId}
               onVersionCreated={loadAll}
               onJobUpdate={setCurrentJob}
-              webResearchMode={
+              initialQualityMode={course.generation_quality_mode ?? "premium"}
+              initialWebResearchMode={
                 course.web_research_mode ?? "autonomous_gap_fill"
               }
+              addressForm={course.address_form}
+              presenterLanguage={course.student_language}
+              presenterDialect={course.spoken_variety}
             />
             {currentJob?.provenance_summary ? (
               <details className="rounded-md border border-border bg-surface-muted/30 px-3 py-2 text-xs text-muted">

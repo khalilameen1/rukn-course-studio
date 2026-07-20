@@ -19,6 +19,7 @@ from app.auth.scopes import (
 from app.auth.token_denylist import is_jti_revoked, revoke_jti
 from app.auth.tokens import create_token, verify_token
 from app.config import settings
+from app.crud import generation_jobs
 from app.main import app
 
 SAMPLE_TEXT = (
@@ -112,12 +113,13 @@ def test_source_list_omits_extracted_text(client):
 
 
 def test_job_requires_course_id(client):
-    test_client, _ = client
+    test_client, engine = client
     course_id = _create_course(test_client)
-    # Create a job via generate (fake provider)
-    started = test_client.post(f"/courses/{course_id}/generate")
-    assert started.status_code in {200, 201}
-    job_id = started.json()["id"]
+    # This is an IDOR/DTO test, not a generation test. Create the row
+    # directly so the canonical map-confirmation gate is not bypassed and
+    # no complete-course pipeline runs during the test suite.
+    with Session(engine) as session:
+        job_id = generation_jobs.create(session, course_id=course_id).id
 
     missing = test_client.get(f"/jobs/{job_id}")
     assert missing.status_code == 422

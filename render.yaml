@@ -55,15 +55,18 @@ services:
       # filesystem is ephemeral. See app/config.py `storage_dir`.
       - key: STORAGE_DIR
         value: /opt/render/project/src/backend/storage
-      # FakeProvider by default for this pass - see app/ai/factory.py. Do
-      # not switch to "anthropic" as part of this deploy; if that ever
-      # changes, also set ANTHROPIC_API_KEY and AI_MODEL_NAME below.
+      # Production provider. The key and model remain Dashboard-managed
+      # secrets/values; tests use FakeProvider and never spend AI credits.
       - key: AI_PROVIDER
-        value: fake
+        value: anthropic
       - key: ANTHROPIC_API_KEY
         sync: false
       - key: AI_MODEL_NAME
         sync: false
+      # Stable-prefix prompt caching is enabled in production. The provider
+      # retries exactly once without cache when an account/model rejects it.
+      - key: ANTHROPIC_PROMPT_CACHE_ENABLED
+        value: "true"
       # The deployed frontend's URL (no trailing slash) - allows it through
       # CORS. See app/config.py `frontend_origin`. Use CORS_ORIGINS instead
       # (JSON array string) if more than one origin is ever needed.
@@ -85,7 +88,7 @@ services:
     runtime: node
     plan: starter
     rootDir: frontend
-    buildCommand: npm install && npm run build
+    buildCommand: npm ci && npm run build
     startCommand: npm start
     envVars:
       # Full URL incl. https://, NO trailing slash, e.g.

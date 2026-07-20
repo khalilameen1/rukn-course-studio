@@ -2,12 +2,15 @@
 
 import { useState } from "react";
 import type {
+  AddressForm,
   Course,
+  CourseFamily,
   ExplanationLevel,
   GenerationPreset,
   GenerationQualityMode,
   StructureMode,
   TargetMarket,
+  WebResearchMode,
 } from "@/lib/types";
 import SectionPanel from "@/components/ui/SectionPanel";
 import {
@@ -28,6 +31,11 @@ export interface CourseFormValues {
   generation_preset: GenerationPreset;
   generation_quality_mode: GenerationQualityMode;
   target_market: TargetMarket;
+  primary_course_family: CourseFamily;
+  web_research_mode: WebResearchMode;
+  student_language: string;
+  spoken_variety: string;
+  address_form: AddressForm;
 }
 
 export function courseToFormValues(course: Course): CourseFormValues {
@@ -43,6 +51,11 @@ export function courseToFormValues(course: Course): CourseFormValues {
     generation_preset: course.generation_preset,
     generation_quality_mode: course.generation_quality_mode ?? "premium",
     target_market: course.target_market ?? "egypt",
+    primary_course_family: course.primary_course_family ?? "general_skill",
+    web_research_mode: course.web_research_mode ?? "autonomous_gap_fill",
+    student_language: course.student_language ?? "ar",
+    spoken_variety: course.spoken_variety ?? "egyptian",
+    address_form: course.address_form ?? "masculine",
   };
 }
 
@@ -58,6 +71,11 @@ export const EMPTY_COURSE_VALUES: CourseFormValues = {
   generation_preset: DEFAULT_GENERATION_PRESET,
   generation_quality_mode: "premium",
   target_market: "egypt",
+  primary_course_family: "general_skill",
+  web_research_mode: "autonomous_gap_fill",
+  student_language: "ar",
+  spoken_variety: "egyptian",
+  address_form: "masculine",
 };
 
 const FIELD_CLASS = "field-input";
@@ -158,6 +176,23 @@ export default function CourseForm({
           />
         </label>
         <label className="mt-4 flex flex-col gap-1 text-sm">
+          Primary course family
+          <select
+            value={current.primary_course_family}
+            onChange={(e) => update("primary_course_family", e.target.value as CourseFamily)}
+            className={FIELD_CLASS}
+          >
+            <option value="general_skill">General skill</option>
+            <option value="creative_production">Creative production</option>
+            <option value="analytical_operational">Analytical / operational</option>
+            <option value="programming_technical">Programming / technical</option>
+            <option value="languages_communication">Languages / communication</option>
+            <option value="sales_marketing_business">Sales / marketing / business</option>
+            <option value="professional_service">Professional service</option>
+            <option value="high_stakes_authority_sensitive">High-stakes / authority-sensitive</option>
+          </select>
+        </label>
+        <label className="mt-4 flex flex-col gap-1 text-sm">
           Target market
           <select
             value={current.target_market}
@@ -168,6 +203,51 @@ export default function CourseForm({
             <option value="arab_market">Arab market</option>
             <option value="global">Global</option>
             <option value="custom">Custom (follow special notes)</option>
+          </select>
+        </label>
+        <div className="mt-4 grid gap-4 sm:grid-cols-2">
+          <label className="flex flex-col gap-1 text-sm">
+            Student language
+            <input
+              required
+              value={current.student_language}
+              onChange={(e) => update("student_language", e.target.value)}
+              placeholder="e.g. ar or en"
+              className={FIELD_CLASS}
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-sm">
+            Spoken variety
+            <input
+              required
+              value={current.spoken_variety}
+              onChange={(e) => update("spoken_variety", e.target.value)}
+              placeholder="e.g. egyptian"
+              className={FIELD_CLASS}
+            />
+          </label>
+        </div>
+        <label className="mt-4 flex flex-col gap-1 text-sm">
+          Address form
+          <select
+            value={current.address_form}
+            onChange={(e) => update("address_form", e.target.value as AddressForm)}
+            className={FIELD_CLASS}
+          >
+            <option value="masculine">Masculine</option>
+            <option value="feminine">Feminine</option>
+            <option value="neutral">Neutral / inclusive</option>
+          </select>
+        </label>
+        <label className="mt-4 flex flex-col gap-1 text-sm">
+          Web research
+          <select
+            value={current.web_research_mode}
+            onChange={(e) => update("web_research_mode", e.target.value as WebResearchMode)}
+            className={FIELD_CLASS}
+          >
+            <option value="autonomous_gap_fill">Fill evidence gaps from the web</option>
+            <option value="disabled">Disabled — use supplied sources only</option>
           </select>
         </label>
         <label className="mt-4 flex flex-col gap-1 text-sm">

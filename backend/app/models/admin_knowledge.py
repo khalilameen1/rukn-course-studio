@@ -13,12 +13,11 @@ def _utcnow() -> datetime:
 
 
 class AdminKnowledgeItem(SQLModel, table=True):
-    """One fixed piece of Rukn knowledge (a rule section, template, etc.).
+    """One read-only file from the canonical RUKN standard package.
 
-    `key` identifies which knowledge section this is (e.g. "structure_rules",
-    "style_rules"). It is intentionally not unique on its own: versioning
-    means multiple rows can share a `key` over time, with `is_active`
-    marking the one currently used by new generation runs.
+    ``key`` is the exact canonical Markdown filename. Reset permanently
+    deletes every non-canonical or duplicate row before reseeding the 14-file
+    package; the legacy columns remain only for existing-database compatibility.
     """
 
     __tablename__ = "admin_knowledge_items"

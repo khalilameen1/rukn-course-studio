@@ -2,7 +2,15 @@
 
 import type { CourseFormValues } from "@/components/courses/CourseForm";
 import ChatComposer from "@/components/ui/ChatComposer";
-import type { GenerationPreset, GenerationQualityMode, StructureMode, TargetMarket } from "@/lib/types";
+import type {
+  AddressForm,
+  CourseFamily,
+  GenerationPreset,
+  GenerationQualityMode,
+  StructureMode,
+  TargetMarket,
+  WebResearchMode,
+} from "@/lib/types";
 import {
   GENERATION_PRESET_HELPERS,
   GENERATION_PRESET_OPTIONS,
@@ -109,12 +117,33 @@ export default function BriefWorkspace({
         <summary className="cursor-pointer list-none text-sm font-medium text-foreground marker:hidden [&::-webkit-details-marker]:hidden">
           <span className="flex items-center justify-between gap-2">
             Advanced settings
-            <span className="text-xs font-normal text-muted group-open:hidden">Structure, preset, market</span>
+            <span className="text-xs font-normal text-muted group-open:hidden">Family, language, research, quality</span>
             <span className="hidden text-xs font-normal text-muted group-open:inline">Hide</span>
           </span>
         </summary>
         <div className="mt-4 grid gap-4 border-t border-border pt-4">
           <div className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <label className="nc-field-label" htmlFor="nc-family">
+                Primary course family
+              </label>
+              <select
+                id="nc-family"
+                disabled={disabled}
+                value={values.primary_course_family}
+                onChange={(e) => update("primary_course_family", e.target.value as CourseFamily)}
+                className="field-input"
+              >
+                <option value="general_skill">General skill</option>
+                <option value="creative_production">Creative production</option>
+                <option value="analytical_operational">Analytical / operational</option>
+                <option value="programming_technical">Programming / technical</option>
+                <option value="languages_communication">Languages / communication</option>
+                <option value="sales_marketing_business">Sales / marketing / business</option>
+                <option value="professional_service">Professional service</option>
+                <option value="high_stakes_authority_sensitive">High-stakes / authority-sensitive</option>
+              </select>
+            </div>
             <div>
               <label className="nc-field-label" htmlFor="nc-market">
                 Target market
@@ -133,6 +162,21 @@ export default function BriefWorkspace({
               </select>
             </div>
             <div>
+              <label className="nc-field-label" htmlFor="nc-research">
+                Web research
+              </label>
+              <select
+                id="nc-research"
+                disabled={disabled}
+                value={values.web_research_mode}
+                onChange={(e) => update("web_research_mode", e.target.value as WebResearchMode)}
+                className="field-input"
+              >
+                <option value="autonomous_gap_fill">Fill evidence gaps from the web</option>
+                <option value="disabled">Disabled — supplied sources only</option>
+              </select>
+            </div>
+            <div>
               <label className="nc-field-label" htmlFor="nc-quality">
                 Generation quality
               </label>
@@ -147,6 +191,52 @@ export default function BriefWorkspace({
               >
                 <option value="premium">Premium — full pipeline</option>
                 <option value="preview">Preview — faster direction test</option>
+              </select>
+            </div>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-3">
+            <div>
+              <label className="nc-field-label" htmlFor="nc-language">
+                Student language
+              </label>
+              <input
+                id="nc-language"
+                required
+                disabled={disabled}
+                value={values.student_language}
+                onChange={(e) => update("student_language", e.target.value)}
+                placeholder="ar"
+                className="field-input"
+              />
+            </div>
+            <div>
+              <label className="nc-field-label" htmlFor="nc-variety">
+                Spoken variety
+              </label>
+              <input
+                id="nc-variety"
+                required
+                disabled={disabled}
+                value={values.spoken_variety}
+                onChange={(e) => update("spoken_variety", e.target.value)}
+                placeholder="egyptian"
+                className="field-input"
+              />
+            </div>
+            <div>
+              <label className="nc-field-label" htmlFor="nc-address-form">
+                Address form
+              </label>
+              <select
+                id="nc-address-form"
+                disabled={disabled}
+                value={values.address_form}
+                onChange={(e) => update("address_form", e.target.value as AddressForm)}
+                className="field-input"
+              >
+                <option value="masculine">Masculine</option>
+                <option value="feminine">Feminine</option>
+                <option value="neutral">Neutral / inclusive</option>
               </select>
             </div>
           </div>

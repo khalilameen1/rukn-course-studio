@@ -179,6 +179,11 @@ export default function NewCoursePage() {
         generation_preset: values.generation_preset,
         generation_quality_mode: values.generation_quality_mode,
         target_market: values.target_market,
+        primary_course_family: values.primary_course_family,
+        web_research_mode: values.web_research_mode,
+        student_language: values.student_language,
+        spoken_variety: values.spoken_variety,
+        address_form: values.address_form,
       });
       return courseId;
     }
@@ -195,6 +200,11 @@ export default function NewCoursePage() {
         generation_preset: values.generation_preset,
         generation_quality_mode: values.generation_quality_mode,
         target_market: values.target_market,
+        primary_course_family: values.primary_course_family,
+        web_research_mode: values.web_research_mode,
+        student_language: values.student_language,
+        spoken_variety: values.spoken_variety,
+        address_form: values.address_form,
       },
       {
         idempotencyKey: createIdempotencyKeyRef.current,
@@ -342,7 +352,10 @@ export default function NewCoursePage() {
       setMapStatus("Building course map…");
       const preview = await api.mapPreview(id, {
         generation_quality_mode: values.generation_quality_mode,
-        web_research_mode: "autonomous_gap_fill",
+        web_research_mode: values.web_research_mode,
+        address_form: values.address_form,
+        presenter_language: values.student_language,
+        presenter_dialect: values.spoken_variety,
       });
       setMapStatus("Reviewing map…");
       const map = preview.map_text ?? "";
