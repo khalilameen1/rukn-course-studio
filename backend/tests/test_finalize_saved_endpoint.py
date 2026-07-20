@@ -7,7 +7,10 @@ from app.crud import courses, generation_jobs
 from app.generation.domain_adapters import build_course_quality_contract
 from app.generation.web_research import research_identity_payload
 from app.generation.orchestrator import _build_course_brief
-from app.generation.quality.context_snapshot import build_generation_context_snapshot
+from app.generation.quality.context_snapshot import (
+    build_generation_context_snapshot,
+    fingerprint_value,
+)
 from app.models.enums import JobStatus, StructureMode
 from app.schemas.generation import CourseMap
 from app.security.request_throttle import reset_for_tests
@@ -25,7 +28,11 @@ COURSE_BODY = {
 def _spoken(i: int) -> str:
     return "\n".join(
         [
-            f"في الدرس {i} القرار الأساسي يظهر من أول تطبيق عملي",
+            (
+                f"ابدأ بقياس أثر القرار الأول في درس {i} على حالة عملية واضحة"
+                if i % 2
+                else f"النتيجة المختلفة في درس {i} تكشف سبب اختيار القرار الثاني"
+            ),
             f"نفّذ خطوة واضحة تخص درس {i} من غير حشو",
             f"راجع الناتج وتأكد إن القرار اتحقق في حالة حقيقية",
             f"لو النتيجة ضعيفة أعد نفس الخطوة بهدوء على مثال مختلف",
@@ -33,25 +40,64 @@ def _spoken(i: int) -> str:
             f"قفل درس {i} لما تقدر تعيد نفس القرار لوحدك بدون مساعدة",
             f"علامة النجاح تظهر لما تقدر تشرح فرق قبل وبعد لنفس الحالة",
             f"ممنوع تلخّص نفس الفكرة مرتين بعد ما اتشرحت",
+            f"اختبر قرار درس {i} على حالة تانية قبل ما تعتبره ثابت",
+            f"سجل سبب نجاح الخطوة وسبب فشل البديل في درس {i}",
+            f"قارن النتيجة بالهدف الأساسي وخد قرار واضح قابل للتكرار",
+            (
+                f"اقفل درس {i} بتفسير مستقل يثبت إنك فهمت القرار الأول"
+                if i % 2
+                else f"اختم درس {i} بمقارنة جديدة تثبت إن القرار الثاني قابل للتكرار"
+            ),
         ]
     )
 
 
+def _capability(i: int) -> str:
+    values = (
+        "compose visual hierarchy from evidence",
+        "diagnose color contrast with measurement",
+        "repair spacing through explicit constraints",
+    )
+    return values[(i - 1) % len(values)]
+
+
 def _map_and_reels(n: int = 2) -> tuple[dict, list[dict]]:
-    reels = [
-        {
+    reels = []
+    for i in range(1, n + 1):
+        script = _spoken(i)
+        text_fingerprint = fingerprint_value(script)
+        reels.append({
             "reel_id": f"r{i}",
             "module_id": "m1",
             "title": f"Lesson {i}",
-            "script_text": _spoken(i),
+            "script_text": script,
             "used_ideas": [],
             "used_examples": [],
             "self_check_status": "pass",
             "quality_status": "pass",
-            "delivery_mode": "camera_explainer",
-        }
-        for i in range(1, n + 1)
-    ]
+            "delivery_mode": "error_fix",
+            "quality_report": {
+                "notes": [],
+                "semantic_contract": {
+                    "missing_fields": [],
+                    "remaining_filler_count": 0,
+                },
+                "language_rewrite_record": {
+                    "after_text_fingerprint": text_fingerprint,
+                    "semantic_preserved": True,
+                },
+                "final_text_acceptance": {
+                    "text_fingerprint": text_fingerprint,
+                    "semantic_gate_passed": True,
+                    "terminology_gate_passed": True,
+                    "spoken_variety_gate_passed": True,
+                    "teleprompter_gate_passed": True,
+                    "term_ledger_fingerprint": fingerprint_value({"term": i}),
+                    "phrase_ledger_after_fingerprint": fingerprint_value({"phrase": i}),
+                    "accepted": True,
+                },
+            },
+        })
     course_map = {
         "course_title": "Test Course",
         "main_thread": "thread",
@@ -66,20 +112,38 @@ def _map_and_reels(n: int = 2) -> tuple[dict, list[dict]]:
                     "brief": "نفّذ تمرين تطبيقي قصير",
                     "deliverable_shape": "ملف نهائي",
                     "pass_criteria": ["ينفّذ المطلوب"],
-                    "skills_tested": ["skill-1"],
+                    "skills_tested": [_capability(1)],
                 },
                 "reels": [
                     {
                         "reel_id": f"r{i}",
                         "title": f"Lesson {i} unique skill {i}",
                         "purpose": f"teach skill {i} only",
-                        "distinct_teaching_outcome": f"student executes skill-{i} alone",
-                        "new_skill_or_decision": f"skill-{i}",
+                        "distinct_teaching_outcome": _capability(i),
+                        "new_skill_or_decision": _capability(i),
+                        "student_can_do_after": _capability(i),
+                        "project_contribution": _capability(i),
                         "must_cover": [f"skill-{i}-core"],
                         "must_avoid": [],
                         "source_hints": [],
                         "estimated_length": "2 minutes",
-                        "delivery_mode": "camera_explainer",
+                        "delivery_mode": "error_fix",
+                        "lesson_semantic_contract": {
+                            "learner_before": f"before skill-{i}",
+                            "learner_after": f"after skill-{i}",
+                            "exact_capability_change": _capability(i),
+                            "strongest_non_obvious_meaning": f"meaning skill-{i}",
+                            "misconception_or_failure": f"failure skill-{i}",
+                            "causal_explanation": f"cause skill-{i}",
+                            "proof_example_or_demonstration": f"proof skill-{i}",
+                            "learner_test_or_action": f"action skill-{i}",
+                            "boundary_or_exception": f"boundary skill-{i}",
+                            "real_tension": f"tension skill-{i}",
+                            "complete_payoff": f"payoff skill-{i}",
+                            "earned_next_need": f"next skill-{i}",
+                            "escalation_role": f"escalation skill-{i}",
+                            "sequence_dependency": f"sequence skill-{i}",
+                        },
                     }
                     for i in range(1, n + 1)
                 ],
@@ -90,7 +154,7 @@ def _map_and_reels(n: int = 2) -> tuple[dict, list[dict]]:
             "brief": "تسليم نهائي يجمع مهارات الكورس",
             "deliverable_shape": "مشروع كامل",
             "pass_criteria": ["يغطي المهارات"],
-            "skills_tested": ["capstone"],
+            "skills_tested": [_capability(i) for i in range(1, n + 1)],
         },
         "thesis": {
             "final_student_outcome": "o",

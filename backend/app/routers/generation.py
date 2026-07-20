@@ -324,12 +324,18 @@ def finalize_saved_generation(
     try:
         updated = finalize_job_from_saved_lessons(session, job, force=True)
     except Exception as exc:
+        from app.generation.export_blockers import ExportBlockedError
         from app.generation.quality.context_snapshot import SnapshotMismatchError
 
         if isinstance(exc, SnapshotMismatchError):
             raise HTTPException(
                 status_code=409,
                 detail="Run configuration changed; saved lessons cannot be resumed or exported.",
+            ) from exc
+        if isinstance(exc, ExportBlockedError):
+            raise HTTPException(
+                status_code=409,
+                detail="Saved lessons still have unresolved quality or export blockers.",
             ) from exc
         raise
     if updated is None or updated.status != JobStatus.COMPLETED:
@@ -463,6 +469,20 @@ def _writer_test_job_read(job) -> WriterTestJobRead:
         job=GenerationJobRead.model_validate(job),
         job_kind=str(generation_settings.get("job_kind") or "writer_test_3_reels"),
         config_fingerprint=snap.get("CONFIG_FINGERPRINT"),
+        production_context_fingerprint=generation_settings.get(
+            "writer_test_shared_context_fingerprint"
+        ),
+        reference_context_fingerprint=generation_settings.get(
+            "reference_shared_context_fingerprint"
+        ),
+        context_matches_course=bool(
+            generation_settings.get("reference_shared_context_fingerprint")
+            and not generation_settings.get("context_mismatch_fields")
+        ),
+        context_mismatch_fields=list(
+            generation_settings.get("context_mismatch_fields") or []
+        ),
+        limitations=list(generation_settings.get("writer_test_limitations") or []),
         series_linked=bool(generation_settings.get("series_linked")),
         reels=public,
     )

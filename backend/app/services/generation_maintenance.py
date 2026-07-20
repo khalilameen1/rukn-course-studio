@@ -8,6 +8,7 @@ from sqlmodel import Session, select
 
 from app.crud import generation_jobs
 from app.generation.generation_state import ACTIVE_LOCK_STATUSES
+from app.generation.export_blockers import ExportBlockedError
 from app.generation.quality.context_snapshot import SnapshotMismatchError
 from app.models.enums import JobStatus
 from app.models.generation_job import GenerationJob
@@ -72,6 +73,19 @@ def release_stale_active_jobs(
                 ),
                 error_category="config_fingerprint_mismatch",
                 last_progress_message="Run stopped because its configuration changed",
+            )
+            released += 1
+            return None
+        except ExportBlockedError:
+            generation_jobs.update(
+                session,
+                job.id,
+                status=JobStatus.PARTIAL,
+                current_stage="blocked",
+                cancel_requested=False,
+                error_message="Saved lessons still have unresolved export blockers.",
+                error_category="export_blocked",
+                last_progress_message="Saved lessons require review before export",
             )
             released += 1
             return None

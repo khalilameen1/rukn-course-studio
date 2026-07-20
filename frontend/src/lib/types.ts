@@ -359,6 +359,11 @@ export interface WriterTestJobRead {
   job: GenerationJob;
   job_kind: string;
   config_fingerprint?: string | null;
+  production_context_fingerprint?: string | null;
+  reference_context_fingerprint?: string | null;
+  context_matches_course: boolean;
+  context_mismatch_fields: string[];
+  limitations: string[];
   series_linked: boolean;
   reels: WriterTestReelPublic[];
 }

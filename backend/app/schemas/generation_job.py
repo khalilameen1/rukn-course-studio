@@ -354,5 +354,10 @@ class WriterTestJobRead(BaseModel):
     job: GenerationJobRead
     job_kind: str = "writer_test_3_reels"
     config_fingerprint: str | None = None
+    production_context_fingerprint: str | None = None
+    reference_context_fingerprint: str | None = None
+    context_matches_course: bool = False
+    context_mismatch_fields: list[str] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)
     series_linked: bool = False
     reels: list[WriterTestReelPublic] = Field(default_factory=list)

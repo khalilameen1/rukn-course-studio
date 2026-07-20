@@ -370,6 +370,40 @@ def test_writer_test_generates_exactly_three(session):
     )
     assert job.total_lessons_count == 3
     assert len(job.completed_reels_json or []) == 3
+    snapshot = job.run_snapshot_json or {}
+    generation_settings = (snapshot.get("CONFIG_INPUTS") or {}).get(
+        "GENERATION_SETTINGS"
+    ) or {}
+    assert generation_settings["web_research_mode"] != "disabled"
+    assert len(generation_settings["writer_test_shared_context_fingerprint"]) == 64
+    assert generation_settings["context_mismatch_fields"] == [
+        "approved_course_snapshot_missing"
+    ]
+    assert "Not a quality certificate for the complete course" in generation_settings[
+        "writer_test_limitations"
+    ]
+    assert job.source_memory_json is not None
+    assert job.web_source_memory_json is not None
+    assert job.evidence_ledger_json is not None
+    for reel in job.completed_reels_json or []:
+        acceptance = (reel.get("quality_report") or {}).get(
+            "final_text_acceptance"
+        ) or {}
+        assert acceptance.get("text_fingerprint") == fingerprint_value(
+            reel.get("script_text") or ""
+        )
+        if reel.get("quality_status") == "pass":
+            assert acceptance.get("accepted") is True
+        else:
+            assert acceptance.get("accepted") is False
+            assert reel.get("script_text_final_master") is None
+
+    from app.routers.generation import _writer_test_job_read
+
+    public = _writer_test_job_read(job)
+    assert not public.context_matches_course
+    assert public.production_context_fingerprint
+    assert public.limitations
     # reopen / same idempotency does not create a new job
     again = run_writer_test_3_reels(
         session,
@@ -384,6 +418,23 @@ def test_writer_test_generates_exactly_three(session):
         idempotency_key="wt-test-1",
     )
     assert again.id == job.id
+
+    retried = run_writer_test_3_reels(
+        session,
+        course.id,
+        topics=[
+            WriterTestTopic(title="هوك البوست"),
+            WriterTestTopic(title="تباين الألوان"),
+            WriterTestTopic(title="CTA بسيط"),
+        ],
+        series_linked=False,
+        provider=FakeProvider(),
+        idempotency_key="wt-test-1-r1-retry",
+        retry_reel_id="wt-r1",
+        existing_job_id=job.id,
+    )
+    assert retried.id == job.id
+    assert len(retried.completed_reels_json or []) == 3
 
 
 def test_independent_topics_reject_next_reel_bait():

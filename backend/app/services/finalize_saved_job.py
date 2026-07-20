@@ -64,6 +64,9 @@ class SavedLessonsInspection:
     missing_reel_ids: tuple[str, ...]
     duplicate_reel_ids: tuple[str, ...]
     empty_script_reel_ids: tuple[str, ...]
+    nonpassing_reel_ids: tuple[str, ...] = ()
+    missing_acceptance_reel_ids: tuple[str, ...] = ()
+    fingerprint_mismatch_reel_ids: tuple[str, ...] = ()
     reason: str = ""
 
 
@@ -129,6 +132,46 @@ def inspect_saved_lessons(job: GenerationJob) -> SavedLessonsInspection:
     empty_script_reel_ids = tuple(
         sorted(r.reel_id for r in saved_reels if not (r.script_text or "").strip())
     )
+    nonpassing_reel_ids = tuple(
+        sorted(
+            reel.reel_id
+            for reel in saved_reels
+            if (reel.quality_status or "").lower() != "pass"
+            or reel.self_check_status.value != "pass"
+        )
+    )
+    missing_acceptance: list[str] = []
+    fingerprint_mismatch: list[str] = []
+    for reel in saved_reels:
+        quality_report = dict(reel.quality_report or {})
+        acceptance = dict(quality_report.get("final_text_acceptance") or {})
+        rewrite_record = dict(quality_report.get("language_rewrite_record") or {})
+        required_true = (
+            "semantic_gate_passed",
+            "terminology_gate_passed",
+            "spoken_variety_gate_passed",
+            "teleprompter_gate_passed",
+        )
+        has_ledgers = bool(
+            acceptance.get("term_ledger_fingerprint")
+            and acceptance.get("phrase_ledger_after_fingerprint")
+            and rewrite_record.get("after_text_fingerprint")
+        )
+        if (
+            not acceptance.get("accepted")
+            or not all(acceptance.get(key) is True for key in required_true)
+            or not has_ledgers
+        ):
+            missing_acceptance.append(reel.reel_id)
+            continue
+        actual = fingerprint_value(reel.script_text or "")
+        if (
+            acceptance.get("text_fingerprint") != actual
+            or rewrite_record.get("after_text_fingerprint") != actual
+        ):
+            fingerprint_mismatch.append(reel.reel_id)
+    missing_acceptance_reel_ids = tuple(sorted(missing_acceptance))
+    fingerprint_mismatch_reel_ids = tuple(sorted(fingerprint_mismatch))
 
     declared_total = int(job.total_lessons_count or 0)
     declared_done = int(job.completed_reels_count or 0)
@@ -143,6 +186,9 @@ def inspect_saved_lessons(job: GenerationJob) -> SavedLessonsInspection:
         and not missing_reel_ids
         and not duplicate_reel_ids
         and not empty_script_reel_ids
+        and not nonpassing_reel_ids
+        and not missing_acceptance_reel_ids
+        and not fingerprint_mismatch_reel_ids
     )
     reason = "ok" if ok else "incomplete_or_inconsistent_lessons"
     return SavedLessonsInspection(
@@ -153,6 +199,9 @@ def inspect_saved_lessons(job: GenerationJob) -> SavedLessonsInspection:
         missing_reel_ids=missing_reel_ids,
         duplicate_reel_ids=duplicate_reel_ids,
         empty_script_reel_ids=empty_script_reel_ids,
+        nonpassing_reel_ids=nonpassing_reel_ids,
+        missing_acceptance_reel_ids=missing_acceptance_reel_ids,
+        fingerprint_mismatch_reel_ids=fingerprint_mismatch_reel_ids,
         reason=reason,
     )
 
@@ -178,6 +227,22 @@ def job_eligible_for_saved_finalize(job: GenerationJob) -> bool:
     if job.output_docx_path:
         return False
     stage = (job.current_stage or "").lower()
+    error_category = (job.error_category or "").lower()
+    if (
+        stage in {"blocked", "needs_review"}
+        or int(job.needs_review_count or 0) > 0
+        or any(
+            cue in error_category
+            for cue in (
+                "blocked",
+                "needs_review",
+                "quality",
+                "snapshot",
+                "fingerprint",
+            )
+        )
+    ):
+        return False
     if stage not in POST_LESSON_STAGES:
         # Also allow generating when counters already say every lesson is saved
         # (worker died after last save flush but before stage flip).
@@ -233,6 +298,27 @@ def try_recover_job_from_saved_lessons(
             job.id,
             str(exc),
         )
+        return job
+    except Exception as exc:  # export blockers are a saved-state outcome
+        from app.generation.export_blockers import ExportBlockedError
+
+        if not isinstance(exc, ExportBlockedError):
+            raise
+        logger.warning(
+            "saved-finalize blocked by export gates job_id=%s reason=%s",
+            job.id,
+            str(exc),
+        )
+        generation_jobs.update(
+            session,
+            job.id,
+            status=JobStatus.PARTIAL,
+            current_stage="blocked",
+            error_category="export_blocked",
+            error_message="Saved lessons still have unresolved export blockers.",
+            last_progress_message="Saved lessons require review before export",
+        )
+        session.refresh(job)
         return job
     return recovered if recovered is not None else job
 
@@ -430,12 +516,16 @@ def finalize_job_from_saved_lessons(
     inspection = inspect_saved_lessons(job)
     if not inspection.ok:
         logger.warning(
-            "finalize_saved_job skipped job_id=%s reason=%s missing=%s dupes=%s empty=%s",
+            "finalize_saved_job skipped job_id=%s reason=%s missing=%s dupes=%s "
+            "empty=%s nonpassing=%s unaccepted=%s fingerprint_mismatch=%s",
             job.id,
             inspection.reason,
             inspection.missing_reel_ids[:8],
             inspection.duplicate_reel_ids[:8],
             inspection.empty_script_reel_ids[:8],
+            inspection.nonpassing_reel_ids[:8],
+            inspection.missing_acceptance_reel_ids[:8],
+            inspection.fingerprint_mismatch_reel_ids[:8],
         )
         return None
 
@@ -477,12 +567,41 @@ def finalize_job_from_saved_lessons(
     address_form = (
         course_map.thesis.address_form if course_map.thesis else AddressForm.MASCULINE
     )
+    frozen_snapshot = assert_snapshot_compatible(
+        job.run_snapshot_json,
+        action="evaluate recovered saved lessons",
+    )
+    from app.generation.orchestrator import _build_course_brief
+
+    course = courses.get(session, job.course_id)
+    if course is None:
+        return None
+    brief = _build_course_brief(course)
+    generation_settings = dict(
+        frozen_snapshot.CONFIG_INPUTS.get("GENERATION_SETTINGS") or {}
+    )
+    quality_contract = build_course_quality_contract(
+        brief,
+        course_domain=getattr(course, "course_domain", None),
+        course_type=getattr(course, "course_type", None) or "practical_skill",
+        address_form=address_form,
+        delivery_pattern=str(
+            generation_settings.get("delivery_pattern")
+            or "teleprompter_standard"
+        ),
+        human_override_hard_limits=bool(
+            generation_settings.get("human_override_hard_limits", False)
+        ),
+    )
     export_report = evaluate_export_blockers(
         final_course=final_course,
         course_map=course_map,
         thesis=course_map.thesis,
         generated_reels=ordered,
         address_form=address_form,
+        quality_contract=quality_contract,
+        evidence_ledger=coerce_json_dict(job.evidence_ledger_json),
+        expected_config_fingerprint=frozen_snapshot.CONFIG_FINGERPRINT,
     )
     if not export_report.ok:
         logger.warning(
@@ -533,7 +652,8 @@ def finalize_job_from_saved_lessons(
         final_course.model_dump_json(indent=2), encoding="utf-8"
     )
 
-    logs = coerce_json_list(job.log_json)
+    # Assign a fresh list so SQLAlchemy detects the JSON column mutation.
+    logs = list(coerce_json_list(job.log_json))
     logs.append(
         {
             "step": "finalize_from_saved_lessons",

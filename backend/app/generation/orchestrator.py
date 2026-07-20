@@ -220,6 +220,7 @@ from app.generation.teaching_curves import (
 from app.generation.terminology_map import (
     build_term_ledger,
     compile_term_ledger_guidance,
+    default_terminology_map,
 )
 from app.models.course import Course
 from app.models.course_source import CourseSource
@@ -1477,6 +1478,16 @@ def run_generation(
             else r
             for r in all_reels
         ]
+        final_course, all_reels, phrase_ledger = (
+            _revalidate_after_course_gate_mutations(
+                course_map=course_map,
+                final_course=final_course,
+                generated_reels=all_reels,
+                quality_contract=quality_contract,
+                address_form=address_form,
+                term_ledger=run_snapshot_model.TERM_LEDGER,
+            )
+        )
         duration_summary = (
             f"~{int(round(gate_report.estimated_duration_minutes))} min"
             if gate_report.estimated_duration_minutes
@@ -1504,6 +1515,9 @@ def run_generation(
             generated_reels=all_reels,
             phrase_ledger=phrase_ledger,
             address_form=address_form,
+            quality_contract=quality_contract,
+            evidence_ledger=coerce_json_dict(job.evidence_ledger_json),
+            expected_config_fingerprint=run_snapshot_model.CONFIG_FINGERPRINT,
         )
         logs.append(
             {
@@ -3192,7 +3206,8 @@ def _write_and_review_reel(
 
         spoken_variety_post = ArabicGateReport()
     teleprompter_post = validate_spoken_export_text(cleaned)
-    if not spoken_variety_post.ok or not teleprompter_post.ok:
+    terminology_failures = default_terminology_map().find_awkward_literals(cleaned)
+    if not spoken_variety_post.ok or not teleprompter_post.ok or terminology_failures:
         needs_review = True
     quality_report = dict(master.quality_report or {})
     quality_report["semantic_contract"] = {
@@ -3212,6 +3227,27 @@ def _write_and_review_reel(
         ],
         "teleprompter_recheck_passed": teleprompter_post.ok,
         "semantic_recheck_passed": not semantic_post.missing_fields,
+    }
+    accepted_text_fingerprint = fingerprint_value(cleaned)
+    quality_report["language_rewrite_record"] = {
+        "before_text_fingerprint": fingerprint_value(master.script_text or ""),
+        "after_text_fingerprint": accepted_text_fingerprint,
+        "text_changed": (master.script_text or "") != cleaned,
+        "semantic_preserved": not semantic_post.missing_fields,
+    }
+    quality_report["final_text_acceptance"] = {
+        "text_fingerprint": accepted_text_fingerprint,
+        "semantic_gate_passed": not semantic_post.missing_fields
+        and not semantic_post.filler_lines,
+        "terminology_gate_passed": not terminology_failures,
+        "terminology_failures": list(terminology_failures),
+        "spoken_variety_gate_passed": spoken_variety_post.ok,
+        "teleprompter_gate_passed": teleprompter_post.ok,
+        "term_ledger_fingerprint": fingerprint_value(term_ledger),
+        "phrase_ledger_before_fingerprint": fingerprint_value(
+            phrase_ledger.model_dump() if phrase_ledger is not None else {}
+        ),
+        "accepted": not needs_review,
     }
     master = master.model_copy(
         update={
@@ -3237,6 +3273,13 @@ def _write_and_review_reel(
 
     if phrase_ledger is not None and not needs_review:
         phrase_ledger.record_reel(master)
+        quality_report = dict(master.quality_report or {})
+        acceptance = dict(quality_report.get("final_text_acceptance") or {})
+        acceptance["phrase_ledger_after_fingerprint"] = fingerprint_value(
+            phrase_ledger.model_dump()
+        )
+        quality_report["final_text_acceptance"] = acceptance
+        master = master.model_copy(update={"quality_report": quality_report})
 
     return master, write_count, caught_locally, needs_review
 
@@ -3287,6 +3330,126 @@ def _assemble_final_course(course_map: CourseMap, all_reels: list[GeneratedReel]
         graduation_project=course_map.graduation_project,
         thesis=course_map.thesis,
     )
+
+
+def _revalidate_after_course_gate_mutations(
+    *,
+    course_map: CourseMap,
+    final_course: FinalCourse,
+    generated_reels: list[GeneratedReel],
+    quality_contract,
+    address_form: AddressForm,
+    term_ledger: dict,
+) -> tuple[FinalCourse, list[GeneratedReel], PhraseLedger]:
+    """Refreeze only the exact post-gate text; no provider or semantic rewrite."""
+    final_text_by_id = {
+        reel.reel_id: reel.script_text
+        for module in final_course.modules
+        for reel in module.reels
+    }
+    plan_by_id = {
+        reel.reel_id: reel
+        for module in course_map.modules
+        for reel in module.reels
+    }
+    rebuilt_ledger = PhraseLedger()
+    updated: list[GeneratedReel] = []
+    for reel in generated_reels:
+        text = final_text_by_id.get(reel.reel_id, reel.script_text or "")
+        plan = plan_by_id.get(reel.reel_id)
+        semantic = (
+            inspect_script_against_semantic_contract(
+                text,
+                plan.lesson_semantic_contract,
+            )
+            if plan is not None and plan.lesson_semantic_contract is not None
+            else None
+        )
+        semantic_ok = bool(
+            semantic is not None
+            and not semantic.missing_fields
+            and not semantic.filler_lines
+        )
+        language_profile = quality_contract.language.model_dump(mode="json")
+        if quality_contract.language.apply_egyptian_spoken_qa:
+            spoken_ok = run_spoken_variety_integrity_gate(
+                text,
+                address_form=address_form,
+                spoken_variety=str(
+                    language_profile.get("presenter_dialect") or "egyptian"
+                ),
+                course_domain=quality_contract.pedagogy.course_domain,
+            ).ok
+        elif quality_contract.language.apply_english_spoken_qa:
+            from app.generation.quality.english_spoken_gate import run_english_spoken_gate
+
+            spoken_ok = run_english_spoken_gate(text).ok
+        else:
+            spoken_ok = True
+        teleprompter_ok = validate_spoken_export_text(text).ok
+        terminology_ok = not default_terminology_map().find_awkward_literals(text)
+        accepted = bool(
+            text.strip()
+            and semantic_ok
+            and spoken_ok
+            and teleprompter_ok
+            and terminology_ok
+        )
+        before_acceptance = dict(
+            (reel.quality_report or {}).get("final_text_acceptance") or {}
+        )
+        text_fingerprint = fingerprint_value(text)
+        quality_report = dict(reel.quality_report or {})
+        quality_report["language_rewrite_record"] = {
+            "before_text_fingerprint": before_acceptance.get("text_fingerprint")
+            or fingerprint_value(reel.script_text or ""),
+            "after_text_fingerprint": text_fingerprint,
+            "text_changed": (reel.script_text or "") != text,
+            "semantic_preserved": semantic_ok,
+            "course_gate_revalidation": True,
+        }
+        quality_report["final_text_acceptance"] = {
+            "text_fingerprint": text_fingerprint,
+            "semantic_gate_passed": semantic_ok,
+            "terminology_gate_passed": terminology_ok,
+            "spoken_variety_gate_passed": spoken_ok,
+            "teleprompter_gate_passed": teleprompter_ok,
+            "term_ledger_fingerprint": fingerprint_value(term_ledger),
+            "phrase_ledger_before_fingerprint": fingerprint_value(
+                rebuilt_ledger.model_dump()
+            ),
+            "accepted": accepted,
+        }
+        refreshed = ensure_spoken_beats(
+            reel.model_copy(
+                update={
+                    "script_text": text,
+                    "spoken_beats": [],
+                    "quality_status": "pass" if accepted else "needs_review",
+                    "self_check_status": (
+                        ReviewStatus.PASS
+                        if accepted
+                        else ReviewStatus.NEEDS_REVISION
+                    ),
+                    "quality_report": quality_report,
+                }
+            )
+        )
+        if accepted:
+            rebuilt_ledger.record_reel(refreshed)
+            quality_report = dict(refreshed.quality_report or {})
+            final_acceptance = dict(
+                quality_report.get("final_text_acceptance") or {}
+            )
+            final_acceptance["phrase_ledger_after_fingerprint"] = fingerprint_value(
+                rebuilt_ledger.model_dump()
+            )
+            quality_report["final_text_acceptance"] = final_acceptance
+            refreshed = refreshed.model_copy(update={"quality_report": quality_report})
+        updated.append(refreshed)
+
+    refreshed_course = _assemble_final_course(course_map, updated)
+    return refreshed_course, updated, rebuilt_ledger
 
 
 def _assert_final_review_actions_applied(
