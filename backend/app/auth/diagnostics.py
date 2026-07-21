@@ -25,7 +25,7 @@ from datetime import datetime, timedelta, timezone
 
 from sqlmodel import Session, select
 
-from app.ai.factory import missing_anthropic_config
+from app.ai.factory import missing_openai_config
 from app.config import Settings
 from app.config import settings as default_settings
 from app.models.ai_usage_event import AIUsageEvent
@@ -51,7 +51,7 @@ def _ai_provider_ready(config: Settings) -> bool:
     provider_name = (config.ai_provider or "fake").strip().lower()
     if provider_name == "fake":
         return True
-    return provider_name == "anthropic" and not missing_anthropic_config(config)
+    return provider_name == "openai" and not missing_openai_config(config)
 
 
 def _provider_health(session: Session | None, config: Settings) -> dict:
@@ -143,6 +143,6 @@ def build_diagnostics(config: Settings = default_settings, session: Session | No
         "storage_dir_writable": storage_dir_writable,
         "ai_provider": config.ai_provider,
         "ai_provider_ready": _ai_provider_ready(config),
-        "ai_model_name": config.ai_model_name if (config.ai_provider or "").strip().lower() == "anthropic" else "fake",
+        "ai_model_name": config.ai_model_name if (config.ai_provider or "").strip().lower() == "openai" else "fake",
         **_provider_health(session, config),
     }

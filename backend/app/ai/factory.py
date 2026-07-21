@@ -16,12 +16,12 @@ Nothing here is frontend-visible: the frontend never sees provider/model
 names, only the coarse job status (docs/PRD.md FR-8).
 """
 
-from app.ai.anthropic_provider import AnthropicProvider
 from app.ai.fake_provider import FakeProvider
+from app.ai.openai_provider import OpenAIProvider
 from app.ai.provider import AIProvider
 from app.config import Settings, settings
 
-SUPPORTED_PROVIDERS = ("fake", "anthropic")
+SUPPORTED_PROVIDERS = ("fake", "openai")
 
 
 class AIProviderConfigError(RuntimeError):
@@ -32,7 +32,7 @@ class AIProviderConfigError(RuntimeError):
     fallback to a different provider than the one configured."""
 
 
-def missing_anthropic_config(config: Settings) -> list[str]:
+def missing_openai_config(config: Settings) -> list[str]:
     """Env var names still required for `AI_PROVIDER=anthropic` that are
     currently unset.
 
@@ -43,11 +43,15 @@ def missing_anthropic_config(config: Settings) -> list[str]:
     return [
         env_name
         for env_name, value in (
-            ("ANTHROPIC_API_KEY", config.anthropic_api_key),
+            ("OPENAI_API_KEY", config.openai_api_key),
             ("AI_MODEL_NAME", config.ai_model_name),
         )
         if not value
     ]
+
+
+# Temporary compatibility for old tests; remove after one clean release.
+missing_anthropic_config = missing_openai_config
 
 
 def get_ai_provider(config: Settings = settings) -> AIProvider:
@@ -66,22 +70,21 @@ def get_ai_provider(config: Settings = settings) -> AIProvider:
     if provider_name == "fake":
         return FakeProvider()
 
-    if provider_name == "anthropic":
-        missing = missing_anthropic_config(config)
+    if provider_name == "openai":
+        missing = missing_openai_config(config)
         if missing:
             raise AIProviderConfigError(
-                "AI_PROVIDER=anthropic requires "
+                "AI_PROVIDER=openai requires "
                 f"{' and '.join(missing)} to be set (see backend/.env.example). "
-                "Set the missing value(s), or set AI_PROVIDER=fake to use the "
-                "deterministic fake provider instead."
+                "Set the missing value(s), or set AI_PROVIDER=fake for tests."
             )
         from app.generation.generation_preflight import validate_ai_model_name
 
         model_err = validate_ai_model_name(config.ai_model_name)
         if model_err:
             raise AIProviderConfigError(model_err)
-        return AnthropicProvider(
-            api_key=config.anthropic_api_key, model_name=config.ai_model_name
+        return OpenAIProvider(
+            api_key=config.openai_api_key, model_name=config.ai_model_name
         )
 
     raise AIProviderConfigError(

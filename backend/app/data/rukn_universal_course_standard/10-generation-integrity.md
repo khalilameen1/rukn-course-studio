@@ -17,8 +17,24 @@ config_fingerprint:
   thesis_version:
   selected_sources:
   research_snapshot:
+  practitioner_reality_pack_version:
+  source_sufficiency_matrix_version:
   market_pack_version:
   benchmark_matrix_version:
+  course_performance_composition_version:
+  performance_episode_map_version:
+  capability_adapter_map_version:
+  capability_mode_matrix_version:
+  custom_adapter_registry_version:
+  real_workflow_trace_version:
+  workflow_coverage_matrix_version:
+  duration_budget_version:
+  project_design_policy_version:
+  final_boundary_readiness_policy_version:
+  final_module_resolution_policy_version:
+  attachment_self_evidence_policy_version:
+  module_bridge_policy_version:
+  evergreen_spoken_policy_version:
   episodic_progression_map_version:
   instructor_profile_version:
   voice_profile_version:
@@ -46,7 +62,12 @@ A course map preview must use the same
 - Market pack
 - Thesis rules
 - Capability requirements
-- Project policy
+- Course performance composition and adapter assignment policy
+- Performance episode and real workflow trace policy
+- Practitioner reality research policy
+- Inter module project attachment compactness output purity final boundary readiness and attachment self evidence policy
+- Module bridge and evergreen spoken content policy
+- Duration budget and reel boundaries
 - Hard limits
 
 as full generation
@@ -77,11 +98,13 @@ It must always contain the active minimum needed from
 - Runtime contract
 - Course thesis
 - Audience model
-- Capability and lesson semantic contract
+- Capability performance episode adapter map mode matrix real workflow and lesson semantic contract
+- Accepted custom adapter contract and active context overlays where relevant
+- Workflow coverage and duration budget relevant to the lesson
 - Invisible episodic progression map and the exact adjacent dependency
-- Market pack
+- Market pack and practitioner reality pack
 - Instructor truth profile
-- Source authority rules
+- Source authority community evidence and source sufficiency rules
 - Language profile
 - Spoken residue policy and protected verbatim register boundaries
 - Term ledger entries relevant to the lesson
@@ -90,6 +113,9 @@ It must always contain the active minimum needed from
 - Prior accepted lesson dependencies
 - Phrase ledger patterns to avoid
 - Demonstration and asset requirements relevant to the lesson
+- Inter module project task attachment visible result and attachment self evidence requirements when the lesson feeds a module boundary
+- The final boundary readiness role capability coverage and final module resolution contract when the unit sits near the end of the course
+- The relevant module bridge intent and evergreen risk decisions when the unit sits at a module boundary
 
 Never truncate a mandatory rule midway
 When context is tight reduce in this order
@@ -112,9 +138,11 @@ Do not allow retrieval popularity to replace authority ranking
 
 Pack separately
 
-- Verified facts
-- Current values
-- Practitioner tradeoffs
+- Verified facts and authoritative mechanisms
+- Current findings kept internal with their durable spoken reframes
+- Practitioner starting states attempts failures diagnoses corrections and tradeoffs
+- Real performance stage inputs signals variation counterpart correction completion and workflow handoff evidence
+- Capability adapter and custom adapter evidence
 - Market evidence
 - Voice calibration summary
 
@@ -150,7 +178,8 @@ When `RUN_MODE` is `FINAL_FROM_FIRST_REQUEST`
 
 - Keep drafts findings rewrites and reviewer discussions internal
 - Continue through course wide adversarial review and rendering
-- Return only the accepted deliverable and a concise validation summary
+- Return only the accepted lecturer DOCX
+- Keep validation findings internal and do not attach a second report
 - Surface a blocker only when it requires a user product decision authority or missing external material
 
 Do not interpret this mode as permission to skip reviews
@@ -179,8 +208,13 @@ Course level reviews after a group of lessons modules or the full course must in
 - Broken payoff newly exposed need or capability escalation
 - Artificial suspense theatricality or answer withholding introduced across lessons
 - Project lesson mismatch
+- Missing failed or evaluator expanded attachment self evidence checks
+- Missing or weak final boundary integrated readiness coverage and final module resolution
+- Missing weak misplaced or formulaic module boundary closes
+- Volatile spoken content or output boundary leakage
 - Tone and address drift
 - Course promise drift
+- Adapter drift title based classification missing secondary modes missing overlays or generic treatment of a mixed capability
 
 When a window review finds a defect it must reopen the smallest affected accepted units apply changes and rerun their local gates plus the window gate
 
@@ -226,9 +260,13 @@ Do not export a mixture of drafts accepted lessons and cleaned variants
 
 Hard limits must be enforced at the stage where they matter and again at export
 
-- Map size and total duration before lesson generation
-- Lesson spoken range by delivery mode after accepted rewrite
-- Project presence and placement after map and at export
+- Performance episode capability adapter map mode matrix and workflow coverage before lesson generation
+- Total duration sufficiency and absence of an arbitrary reel count ceiling before lesson generation
+- One to five minute teaching reel range after accepted rewrite and at export
+- Project presence placement compactness supported attachment types visible capability evidence attachment self evidence and learner facing text purity after map and at export
+- Final boundary integrated readiness coverage and a final module resolution contract that uses the accepted work adds completion value and introduces no new promise critical capability before lesson generation and at export
+- Module bridge presence placement causality and non teaser wording after map and at export
+- Evergreen spoken content and teleprompter only output boundary before export
 - Semantic duplication after window reviews and at export
 - Teleprompter formatting after rendering
 
@@ -254,7 +292,12 @@ Do not optimise prose to a proxy metric at the expense of meaning
 Use deterministic fixtures for
 
 - API and state transitions
-- Map schemas
+- Performance episode course composition capability adapter map capability mode matrix real workflow coverage and duration budget schemas
+- Custom adapter evidence status loop and registry schemas
+- Project attachment compactness visible result and attachment self evidence schemas
+- Final boundary readiness and final module resolution schemas
+- Module bridge placement and causality schemas
+- Evergreen risk and final output purity schemas
 - Saving and recovery
 - DOCX structure
 - Export blockers
@@ -285,4 +328,19 @@ Block the run when
 - Recovery would bypass current blockers
 - A lower quality artefact can overwrite a higher quality accepted artefact invisibly
 - The exporter enforces weaker limits than the writer contract
+- An applied course reaches architecture without a sufficient practitioner reality pack or adapter evidence
+- A required capability reaches architecture without an accepted primary adapter native evidence active overlays or resolved custom adapter contract
+- A course wide label silently replaces capability level composition
+- A real performance or workflow gap is hidden by a generic transition or unsupported assumption
+- A non final module project does not produce a supported attachment whose decisive result can be inspected directly
+- An attachment self evidence record is missing fails requires hidden context or contains evaluator scoring feedback or post upload logic
+- The last boundary project omits promise critical capability integration or the final module introduces an unproved promise critical standalone capability
+- The final module does not use the accepted integrated work or exists only as recap
+- A project exceeds the effort policy without redesign review
+- A non final module lacks its project or unlabelled bridge close after the project
+- A module bridge explicitly advertises what follows or withholds a current answer
+- The teleprompter contains platform post upload production or review instructions
+- Volatile prices subscriptions rates rankings limits interface paths current statistics or temporary features remain in spoken text
+- A teaching reel is below one minute or above five minutes
+- Course duration is compressed or padded independently of required competence
 - The run returns a first draft before the final stage contract passes

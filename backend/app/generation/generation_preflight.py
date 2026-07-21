@@ -7,7 +7,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from app.ai.factory import get_ai_provider, missing_anthropic_config
+from app.ai.factory import get_ai_provider, missing_openai_config
 from app.config import settings
 
 # Strings that are clearly placeholders — never call Anthropic with these.
@@ -21,7 +21,7 @@ _BAD_MODEL_MARKERS = (
     ">",
 )
 
-_MODEL_OK = re.compile(r"^claude-[\w.-]+$", re.I)
+_MODEL_OK = re.compile(r"^gpt-5\.6(?:-sol)?$", re.I)
 
 
 def validate_ai_model_name(model_name: str | None) -> str | None:
@@ -33,12 +33,12 @@ def validate_ai_model_name(model_name: str | None) -> str | None:
     if any(m in low for m in _BAD_MODEL_MARKERS):
         return (
             f"AI_MODEL_NAME '{name}' looks invalid or is a placeholder. "
-            "Set a current Anthropic model slug in the Render dashboard."
+            "Set AI_MODEL_NAME=gpt-5.6-sol in the Render dashboard."
         )
     if not _MODEL_OK.match(name):
         return (
-            f"AI_MODEL_NAME '{name}' is not a recognizable Claude slug "
-            "(expected like claude-…)."
+            f"AI_MODEL_NAME '{name}' is not the approved ROKN model "
+            "(expected gpt-5.6-sol or alias gpt-5.6)."
         )
     return None
 
@@ -84,11 +84,11 @@ def generation_preflight() -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001
         blockers.append(str(exc))
 
-    if provider == "anthropic":
-        missing = missing_anthropic_config(settings)
+    if provider == "openai":
+        missing = missing_openai_config(settings)
         if missing:
             blockers.append(
-                "Anthropic config missing: " + ", ".join(missing)
+                "OpenAI config missing: " + ", ".join(missing)
             )
         model_err = validate_ai_model_name(settings.ai_model_name)
         if model_err:
@@ -100,7 +100,7 @@ def generation_preflight() -> dict[str, Any]:
 
     if provider == "fake":
         warnings.append(
-            "AI_PROVIDER=fake — runs succeed with placeholder scripts, not real Claude."
+            "AI_PROVIDER=fake — runs succeed with placeholder scripts, not real OpenAI generation."
         )
 
     return {

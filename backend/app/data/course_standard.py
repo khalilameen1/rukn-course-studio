@@ -11,7 +11,7 @@ from pathlib import Path
 
 from app.models.enums import ItemType
 
-STANDARD_VERSION = "1.3-spoken-variety-integrity"
+STANDARD_VERSION = "1.7-universal-performance-ai-readable-projects"
 STANDARD_DIRECTORY = Path(__file__).resolve().parent / "rukn_universal_course_standard"
 STANDARD_FILE_NAMES: tuple[str, ...] = (
     "README.md",
@@ -19,7 +19,7 @@ STANDARD_FILE_NAMES: tuple[str, ...] = (
     "01-intake-and-course-thesis.md",
     "02-research-market-and-voice-calibration.md",
     "03-capability-map-and-course-architecture.md",
-    "04-projects-practice-and-assessment.md",
+    "04-inter-module-projects-and-practice.md",
     "05-lesson-meaning-and-writing.md",
     "06-language-terminology-and-teleprompter.md",
     "07-tools-ai-cost-and-evergreen-design.md",

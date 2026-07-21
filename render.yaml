@@ -15,7 +15,7 @@
 # the backend (disks aren't available on Render's free tier).
 #
 # Secrets (ADMIN_USERNAME, ADMIN_PASSWORD, AUTH_SECRET_KEY, DATABASE_URL,
-# and ANTHROPIC_API_KEY if ever used) and deploy-time values
+# and OPENAI_API_KEY) and deploy-time values
 # (NEXT_PUBLIC_API_BASE_URL, FRONTEND_ORIGIN) are intentionally left as
 # `sync: false` - set them in the Render Dashboard after the first deploy,
 # never commit them here. See README.md "Deploying to Render" for the full
@@ -58,15 +58,14 @@ services:
       # Production provider. The key and model remain Dashboard-managed
       # secrets/values; tests use FakeProvider and never spend AI credits.
       - key: AI_PROVIDER
-        value: anthropic
-      - key: ANTHROPIC_API_KEY
+        value: openai
+      - key: OPENAI_API_KEY
         sync: false
       - key: AI_MODEL_NAME
-        sync: false
-      # Stable-prefix prompt caching is enabled in production. The provider
-      # retries exactly once without cache when an account/model rejects it.
-      - key: ANTHROPIC_PROMPT_CACHE_ENABLED
-        value: "true"
+        value: gpt-5.6-sol
+      # Long-running Pro+max architecture/final passes.
+      - key: OPENAI_REQUEST_TIMEOUT_SECONDS
+        value: "1800"
       # The deployed frontend's URL (no trailing slash) - allows it through
       # CORS. See app/config.py `frontend_origin`. Use CORS_ORIGINS instead
       # (JSON array string) if more than one origin is ever needed.

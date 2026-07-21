@@ -1,22 +1,17 @@
-# Task: Final Full-Course Review
+# Task: Final whole-course review
 
-Last check before export. Re-verify the whole course yourself - do not assume every earlier stage caught everything. The user will only ever see the final DOCX; this is the last chance to catch a problem before it reaches them.
+Audit the complete course against ROKN v1.7 as one learner journey, not as
+isolated good reels. Check promise fulfilment, capability coverage, no missing
+middle, realistic workflow, source truth, project placement/evidence, integrated
+readiness proof, final-module role, module closures, progression, repetition,
+spoken Egyptian naturalness, recordability, and evergreen durability.
 
-## Check for
+Fatal architecture rules:
+- Project after every non-final module and none after the final module.
+- The last pre-final project proves integrated readiness within a bounded task.
+- The final module diagnoses, improves, transfers and closes; it does not add an
+  unpractised critical capability.
+- No fast-expiring recorded claims.
+- No evaluator/platform/security machinery in the learner-facing text.
 
-- Repetition anywhere across the whole course (examples, openings, ideas).
-- Slow depth/effort drift from the first module to the last - laziness that adjacent-pair checks can miss.
-- Any claim not grounded in `sources` when sources were provided, or any invented specific when they weren't.
-- Full `rules_context` compliance, including forbidden phrases and structure/pedagogy rules.
-- Whether the course actually delivers on `course_map.main_thread`, front to back.
-- One last Master Creator-Academic Mentor pass (synthetic only — not a named creator):
-  course spine/playlist strength, flat pacing across modules, fake loops, overhype vs quiet
-  dignity. Do not dump `mentor_review` into actions text; issue terse rebuild instructions only.
-  Never surface drafts, student_review, critic notes, or mentor_review in any user-facing field.
-
-## Output
-
-Call the `review_result` tool, `scope` = "final".
-
-- Fine: `status` = "pass", `actions` = [].
-- Not fine: `status` = "needs_revision", one terse, concrete `ReviewAction` per issue - `target_id` = the affected `module_id` or `reel_id`, short `reason_code`, one-sentence `instruction`. `rebuild_final_course` will execute these exactly, so make each one actionable.
+Return only actionable `ReviewResult`. Do not expose the review to the user.

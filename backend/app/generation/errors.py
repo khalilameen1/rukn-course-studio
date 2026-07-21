@@ -81,7 +81,8 @@ def classify_provider_error(exc: Exception) -> str:
     # AnthropicProviderError / UnusableOutputError / schema retries —
     # never leave these as opaque "unknown".
     if (
-        "anthropicprovidererror" in haystack
+        "openaiprovidererror" in haystack
+        or "anthropicprovidererror" in haystack
         or "unusableoutputerror" in haystack
         or "failed validation" in haystack
         or "did not return a tool call" in haystack

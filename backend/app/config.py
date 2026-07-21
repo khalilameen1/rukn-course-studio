@@ -126,21 +126,13 @@ class Settings(BaseSettings):
     # falling back to FakeProvider.
     ai_provider: str = "fake"
 
-    # AnthropicProvider (see app/ai/anthropic_provider.py). `ai_model_name`
-    # is the ONLY place a model name should ever be set - never hardcode a
-    # model string anywhere else.
-    anthropic_api_key: str | None = None
-    # Must be set explicitly when AI_PROVIDER=anthropic (no silent wrong default).
-    ai_model_name: str = ""
-
-    # How long to wait for a single Anthropic API call before giving up
-    # (ANTHROPIC_REQUEST_TIMEOUT_SECONDS env var). Large CourseMap / Final
-    # Master tool payloads can take several minutes at the 128k ceiling —
-    # 120s was aborting valid long generations as timeouts.
-    anthropic_request_timeout_seconds: float = 900.0
-    # Off by default: ephemeral cache_control needs Anthropic prompt-caching
-    # support; enabling without it caused invalid_request → "Unusable response".
-    anthropic_prompt_cache_enabled: bool = False
+    # OpenAI Responses API production provider. Keep the model configurable,
+    # but production Render defaults to the verified flagship slug.
+    openai_api_key: str | None = None
+    ai_model_name: str = "gpt-5.6-sol"
+    # Pro+max calls can take several minutes. The provider has its own bounded
+    # transient retries and the generation job remains resumable/partial-safe.
+    openai_request_timeout_seconds: float = 1800.0
 
     # Auth for this internal MVP (see app/auth/). Admin gets full scopes;
     # optional OPERATOR_* credentials get courses:* only (no standard management).

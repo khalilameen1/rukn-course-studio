@@ -155,8 +155,9 @@ reachable via `/health` — start the backend first if you see "unreachable".
 and optional partial DOCX if a run stops early).
 
 DOCX contains only: course title, module headings, lesson headings, spoken
-transcript. Never: production notes, asset briefs, sources/citations,
-reviews, scores, planning labels, Project/bridge blocks.
+transcript, short learner-facing projects between modules, and their natural
+unlabelled closures. Never: production notes, asset briefs, sources/citations,
+reviews, scores, planning labels, rubrics, evaluator logic, or platform operations.
 
 All map/draft/review/mentor/research/market/evergreen/originality/
 recordability/promise gates stay **internal** and rewrite scripts silently.
@@ -204,7 +205,7 @@ extracted-text copy, and any analysis rows.
 **Sources never define Rukn's language, format, lesson/reel structure, or
 style.** That authority comes only from:
 
-- the complete immutable **RUKN Universal Skill Course Standard v1.3** (all
+- the complete immutable **RUKN Universal Skill Course Standard v1.7** (all
   14 Markdown files, loaded whole and in order for every generation stage),
   and
 - **explicit user instructions** (`user_notes` sources, always passed

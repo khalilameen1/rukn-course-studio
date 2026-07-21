@@ -258,6 +258,8 @@ def _add_module_project(
     )
     if project.brief:
         _add_text_paragraph(document, project.brief, force_rtl=force_rtl)
+    if project.closure:
+        _add_text_paragraph(document, project.closure, force_rtl=force_rtl)
     # inputs/files, rubric, pass criteria, and skills tested are internal
     # project artefacts. Only the spoken project instruction belongs here.
 
@@ -303,15 +305,6 @@ def render_final_course_docx(final_course: FinalCourse) -> DocxDocument:
                 module.module_project,
                 force_rtl=force_rtl,
             )
-
-    if final_course.graduation_project is not None:
-        _add_module_project(
-            document,
-            final_course.graduation_project,
-            force_rtl=force_rtl,
-            heading_level=1,
-            page_break_before=True,
-        )
 
     return document
 

@@ -74,12 +74,12 @@ class CourseThesis(BaseModel):
     mix_type: CourseMixType = CourseMixType.PRACTICAL
     target_theory_ratio: float = 0.25
     target_practice_ratio: float = 0.60
-    target_minutes_min: int = 150
-    target_minutes_max: int = 210
-    hard_max_minutes: int = 240
-    target_lessons_min: int = 35
-    target_lessons_max: int = 55
-    hard_max_lessons: int = 60
+    target_minutes_min: int = 120
+    target_minutes_max: int = 240
+    hard_max_minutes: int = 1000
+    target_lessons_min: int = 0
+    target_lessons_max: int = 180
+    hard_max_lessons: int = 500
     size_basis_capabilities: list[str] = Field(default_factory=list)
     size_derivation: str = "capability_based"
     required_tools: list[str] = Field(default_factory=list)
@@ -95,8 +95,9 @@ class ModuleProject(BaseModel):
     brief: str
     inputs_or_files: list[str] = Field(default_factory=list)
     deliverable_shape: str = ""
-    pass_criteria: list[str] = Field(default_factory=list)
+    pass_criteria: list[str] = Field(default_factory=list)  # internal only; normally empty
     skills_tested: list[str] = Field(default_factory=list)
+    closure: str = ""  # unlabeled spoken bridge after the project instructions
 
     @classmethod
     def from_bridge_text(cls, text: str | None, *, module_title: str = "") -> "ModuleProject | None":
