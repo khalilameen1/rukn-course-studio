@@ -2779,14 +2779,30 @@ def _build_and_review_course_map(
         thesis=thesis,
     )
 
-    progress(PROGRESS_MAP_REBUILD)
-    final_map = _build("final_master", feedback)
+    # Preview / mini requests: one Creator pass after local feedback notes
+    # (no second paid Final Master rebuild) so "Preview map & cost" stays
+    # responsive and does not burn a second Pro+max CourseMap call.
+    if relax:
+        progress(PROGRESS_MAP_REBUILD)
+        final_map = draft_map
+        map_phases = "draft→compress"
+    else:
+        progress(PROGRESS_MAP_REBUILD)
+        final_map = _build("final_master", feedback)
+        map_phases = "draft→master→compress"
     # Attach thesis + ensure blueprints / projects.
     modules = []
-    for module in final_map.modules:
+    module_count = len(final_map.modules)
+    for index, module in enumerate(final_map.modules):
         reels = [ensure_reel_blueprint_defaults(r) for r in module.reels]
         mod = module.model_copy(update={"reels": reels})
-        if mod.module_project is None and not (mod.bridge_project or "").strip():
+        is_final_module = index == module_count - 1
+        # v1.7: final module has no project; earlier modules need one.
+        if (
+            not is_final_module
+            and mod.module_project is None
+            and not (mod.bridge_project or "").strip()
+        ):
             mod = mod.model_copy(
                 update={
                     "module_project": ModuleProject(
@@ -2806,28 +2822,15 @@ def _build_and_review_course_map(
                     )
                 }
             )
+        if is_final_module:
+            mod = mod.model_copy(update={"module_project": None, "bridge_project": None})
         modules.append(mod)
     final_map = final_map.model_copy(
         update={
             "modules": modules,
             "thesis": thesis,
-            "graduation_project": final_map.graduation_project
-            or ModuleProject(
-                name="مشروع التخرج",
-                brief=thesis.final_project or thesis.practical_deliverable,
-                deliverable_shape="مشروع نهائي",
-                pass_criteria=["يغطي نتيجة الكورس"],
-                skills_tested=[
-                    reel.new_skill_or_decision
-                    or reel.distinct_teaching_outcome
-                    for module in modules
-                    for reel in module.reels
-                    if (
-                        reel.new_skill_or_decision
-                        or reel.distinct_teaching_outcome
-                    )
-                ],
-            ),
+            # v1.7: no project after the final module.
+            "graduation_project": None,
         }
     )
 
@@ -2869,7 +2872,7 @@ def _build_and_review_course_map(
     # Keep build_map log entries short (<300 JSON chars) for operator logs.
     meta = {
         "map_builds": map_builds,
-        "map_phases": "draft→master→compress",
+        "map_phases": map_phases,
         "est_min": round(report.total_minutes, 1),
         "merged": len(creport.merged_pairs),
         "lessons": report.lesson_count,

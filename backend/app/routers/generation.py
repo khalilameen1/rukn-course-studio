@@ -583,6 +583,20 @@ def map_preview(
     from app.generation.map_lock import clear_stale_map_locks
 
     clear_stale_map_locks(session)
+
+    # Fail cheaply before claiming the map lock / calling Pro+max.
+    try:
+        get_ai_provider()
+        from app.generation.generation_preflight import generation_preflight
+
+        pre = generation_preflight()
+        if not pre.get("ok"):
+            raise AIProviderConfigError(
+                "; ".join(pre.get("blockers") or ["Map preview preflight failed."])
+            )
+    except AIProviderConfigError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
     try:
         with generation_start_guard(course_id):
             if _get_active_job(session, course_id) is not None:
@@ -604,9 +618,12 @@ def map_preview(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     request_body = body or MapPreviewRequest()
+    from app.ai.anthropic_provider import AnthropicProviderError
+    from app.ai.openai_provider import OpenAIProviderError
+    from app.generation.errors import UnusableOutputError, classify_provider_error
     from app.generation.map_preview import build_map_preview
-    from app.generation.errors import UnusableOutputError
 
+    stats = None
     try:
         updates: dict = {
             "generation_quality_mode": request_body.generation_quality_mode,
@@ -631,11 +648,22 @@ def map_preview(
             web_research_mode=request_body.web_research_mode,
         )
     except UnusableOutputError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        detail = getattr(exc, "public_hint", None) or str(exc)
+        raise HTTPException(status_code=422, detail=detail) from exc
+    except (OpenAIProviderError, AnthropicProviderError) as exc:
+        detail = getattr(exc, "public_hint", None) or str(exc)
+        category = classify_provider_error(exc)
+        status = 503 if category in {"provider_unavailable", "rate_limit", "timeout", "insufficient_quota"} else 422
+        raise HTTPException(status_code=status, detail=detail) from exc
     except AIProviderConfigError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        # Course missing → 404; thesis/map validation → actionable 422.
+        msg = str(exc)
+        status = 404 if "not found" in msg.lower() else 422
+        raise HTTPException(status_code=status, detail=msg) from exc
     finally:
         end_map(course_id, session)
+    if stats is None:
+        raise HTTPException(status_code=500, detail="Map preview failed unexpectedly.")
     return stats.model_dump()

@@ -317,6 +317,7 @@ def test_coverage_flags_missing_checkpoint_for_practical():
         mix_type=CourseMixType.PRACTICAL,
     )
     contract = build_course_quality_contract(_brief(title="تصميم"), course_type="practical")
+    # v1.7: final module may omit a project; a prior module still needs one.
     cmap = CourseMap(
         course_title="C",
         main_thread="t",
@@ -324,23 +325,40 @@ def test_coverage_flags_missing_checkpoint_for_practical():
         modules=[
             ModulePlan(
                 module_id="m1",
-                title="M",
+                title="M1",
                 purpose="p",
                 reels=[
                     ReelPlan(
                         reel_id="r1",
-                        title="L",
+                        title="L1",
                         purpose="p",
-                        distinct_teaching_outcome="outcome",
+                        distinct_teaching_outcome="outcome one",
                         estimated_length="2 minutes",
                     )
                 ],
-            )
+            ),
+            ModulePlan(
+                module_id="m2",
+                title="M2",
+                purpose="p",
+                reels=[
+                    ReelPlan(
+                        reel_id="r2",
+                        title="L2",
+                        purpose="p",
+                        distinct_teaching_outcome="outcome two",
+                        estimated_length="2 minutes",
+                    )
+                ],
+            ),
         ],
     )
     report = evaluate_coverage_matrix(cmap, thesis=thesis, contract=contract)
     assert not report.ok
-    assert any(i.code == IssueCode.CHECKPOINT_MISSING.value for i in report.issues)
+    assert any(
+        i.code == IssueCode.CHECKPOINT_MISSING.value and "m1" in i.detail
+        for i in report.issues
+    )
 
 
 def test_export_blocks_needs_sources_status():

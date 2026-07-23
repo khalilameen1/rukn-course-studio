@@ -137,16 +137,29 @@ def evaluate_coverage_matrix(
             ]
             report.promise_to_lessons[promise] = matching
 
-    # Module checkpoints / projects
+    # Module checkpoints / projects (v1.7: final module has no project;
+    # there is no graduation_project after the last module — the last
+    # non-final module project is the bounded integrated readiness proof.)
     mix = (
         contract.pedagogy.mix_type
         if contract
         else (thesis.mix_type if thesis else CourseMixType.PRACTICAL)
     )
     if mix == CourseMixType.PRACTICAL:
-        for module in course_map.modules:
+        modules = list(course_map.modules)
+        for index, module in enumerate(modules):
+            is_final_module = index == len(modules) - 1
             project = module.module_project
-            if project is None and not (module.bridge_project or "").strip():
+            has_bridge = bool((module.bridge_project or "").strip())
+            if is_final_module:
+                if project is not None or has_bridge:
+                    report.add(
+                        IssueCode.PROJECT_MISALIGNMENT.value,
+                        f"Final module {module.module_id} must not carry a project",
+                        "serious",
+                    )
+                continue
+            if project is None and not has_bridge:
                 report.add(
                     IssueCode.CHECKPOINT_MISSING.value,
                     f"Module {module.module_id} missing checkpoint/project",
@@ -172,13 +185,14 @@ def evaluate_coverage_matrix(
                     f"Module {module.module_id} project is not linked to taught capabilities",
                     "serious",
                 )
-        if not (course_map.graduation_project or (thesis and thesis.final_project)):
+        if len(modules) >= 2 and not report.project_rows:
             report.add(
                 IssueCode.CHECKPOINT_MISSING.value,
-                "Practical course missing graduation/final project",
+                "Practical course missing inter-module readiness project",
                 "serious",
             )
-        elif course_map.graduation_project:
+        # Ignore legacy graduation_project if a model still emits one.
+        if course_map.graduation_project:
             report.project_rows.append(
                 {
                     "module_id": "graduation",
