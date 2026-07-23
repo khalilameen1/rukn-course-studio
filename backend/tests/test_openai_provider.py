@@ -77,6 +77,35 @@ def test_unexpected_kwargs_hint_mentions_redeploy():
     assert "Redeploy" in hint
 
 
+def test_probe_openai_uses_tiny_schema_and_cache_retention(monkeypatch):
+    from app.ai import openai_provider as mod
+
+    captured: dict = {}
+
+    class FakeParsed:
+        output_parsed = mod._OpenAIPing(ok=True)
+
+    def fake_parse(**kwargs):
+        captured.update(kwargs)
+        return FakeParsed()
+
+    class FakeOpenAI:
+        def __init__(self, **_kwargs):
+            self.responses = MagicMock()
+            self.responses.parse = fake_parse
+
+    monkeypatch.setattr(mod, "OpenAI", FakeOpenAI)
+    monkeypatch.setattr(mod, "_PROBE_OK_MONO", None)
+
+    err = mod.probe_openai_responses_api(api_key="sk-test", model_name="gpt-5.6-sol", force=True)
+    assert err is None
+    assert captured["prompt_cache_retention"] == "24h"
+    assert "prompt_cache_options" not in captured
+    assert captured["max_output_tokens"] == 64
+    assert captured["reasoning"] == {"effort": "low"}
+    assert captured["text_format"] is mod._OpenAIPing
+
+
 def test_normalize_repairs_partial_semantic_contract_and_aliases():
     raw = {
         "course_title": "Course",

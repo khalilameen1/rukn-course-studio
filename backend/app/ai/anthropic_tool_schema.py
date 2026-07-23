@@ -29,9 +29,17 @@ def anthropic_tool_input_schema(schema: type) -> dict[str, Any]:
 
 
 def _enforce_course_map_lesson_floor(schema: dict[str, Any]) -> dict[str, Any]:
-    """Ensure each module's ``reels`` array requires at least one lesson."""
+    """Ensure the map has modules and each module has at least one lesson.
+
+    Kept on the Anthropic tool schema only — OpenAI strict Structured Outputs
+    is less tolerant of ``minItems``, so emptiness is enforced in providers.
+    """
     try:
         modules = schema["properties"]["modules"]
+        if isinstance(modules, dict):
+            modules = dict(modules)
+            modules["minItems"] = max(int(modules.get("minItems") or 0), 1)
+            schema["properties"]["modules"] = modules
         reels = modules["items"]["properties"]["reels"]
         if isinstance(reels, dict):
             reels = dict(reels)

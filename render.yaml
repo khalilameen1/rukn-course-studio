@@ -66,6 +66,10 @@ services:
       # Long-running Pro+max architecture/final passes.
       - key: OPENAI_REQUEST_TIMEOUT_SECONDS
         value: "1800"
+      # Emergency spend stop (estimated USD). Stops a run cleanly with PARTIAL
+      # if crossed. Raise for large Premium courses; unset/0 disables.
+      - key: AI_RUNAWAY_HARD_CAP_USD
+        value: "50"
       # The deployed frontend's URL (no trailing slash) - allows it through
       # CORS. See app/config.py `frontend_origin`. Use CORS_ORIGINS instead
       # (JSON array string) if more than one origin is ever needed.

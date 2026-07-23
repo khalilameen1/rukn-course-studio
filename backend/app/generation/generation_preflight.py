@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 from pathlib import Path
@@ -10,8 +11,7 @@ from typing import Any
 from app.ai.factory import get_ai_provider, missing_openai_config
 from app.config import settings
 
-# Strings that are clearly placeholders — never call Anthropic with these.
-# Note: `claude-sonnet-5` is a real Anthropic API ID (Sonnet 5) — allow it.
+# Strings that are clearly placeholders — never call a paid provider with these.
 _BAD_MODEL_MARKERS = (
     "your-model",
     "changeme",
@@ -93,6 +93,14 @@ def generation_preflight() -> dict[str, Any]:
         model_err = validate_ai_model_name(settings.ai_model_name)
         if model_err:
             blockers.append(model_err)
+        # Live probe only after static config looks sane — catches bad keys /
+        # model IDs / client kwargs before CourseMap Pro+max can spend.
+        if not blockers and os.environ.get("RUKN_CREDIT_SAFE_TESTS") != "1":
+            from app.ai.openai_provider import probe_openai_responses_api
+
+            probe_err = probe_openai_responses_api()
+            if probe_err:
+                blockers.append(probe_err)
 
     disk_err = check_storage_disk()
     if disk_err:
@@ -101,6 +109,11 @@ def generation_preflight() -> dict[str, Any]:
     if provider == "fake":
         warnings.append(
             "AI_PROVIDER=fake — runs succeed with placeholder scripts, not real OpenAI generation."
+        )
+    if provider == "openai" and not (settings.ai_runaway_hard_cap_usd or 0):
+        warnings.append(
+            "AI_RUNAWAY_HARD_CAP_USD is unset — a stuck/retrying run can keep spending. "
+            "Set a USD hard cap in Render for bug protection."
         )
 
     return {

@@ -199,14 +199,16 @@ class ModulePlan(BaseModel):
 class CourseMap(BaseModel):
     """Stage 1 output: the full course skeleton before any reel is generated.
 
-    ``modules`` must be non-empty so Anthropic tool schemas advertise
-    ``minItems: 1`` and sparse title-only maps fail validation instead of
-    surviving into a silent Unusable response after the two-pass map.
+    Empty maps are rejected in the OpenAI/Anthropic providers after parse
+    (not via JSON-Schema ``minItems``, which some strict Structured Outputs
+    paths reject). Title-only modules with zero lessons are also rejected.
     """
 
     course_title: str
     main_thread: str
-    modules: list[ModulePlan] = Field(min_length=1)
+    # Required list, but no JSON-Schema minItems (OpenAI strict is picky).
+    # Providers reject empty / lesson-less maps after parse.
+    modules: list[ModulePlan]
     thesis: CourseThesis | None = None
     graduation_project: ModuleProject | None = None
 

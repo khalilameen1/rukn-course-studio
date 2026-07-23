@@ -32,6 +32,16 @@ from app.schemas.generation import CourseMap, FinalCourse, GeneratedReel, Review
 MAX_ATTEMPTS = 3
 ModelT = TypeVar("ModelT", bound=BaseModel)
 
+# In-process probe cache so Generate/readiness clicks do not re-spend every time.
+_PROBE_OK_MONO: float | None = None
+_PROBE_TTL_SECONDS = 300.0
+
+
+class _OpenAIPing(BaseModel):
+    """Tiny structured payload used only by the preflight probe."""
+
+    ok: bool
+
 
 class OpenAIProviderError(RuntimeError):
     """A clean provider failure carrying an optional user-safe hint."""
@@ -39,6 +49,69 @@ class OpenAIProviderError(RuntimeError):
     def __init__(self, message: str, *, public_hint: str | None = None) -> None:
         super().__init__(message)
         self.public_hint = public_hint
+
+
+def probe_openai_responses_api(
+    *,
+    api_key: str | None = None,
+    model_name: str | None = None,
+    force: bool = False,
+) -> str | None:
+    """Cheap live check that Responses.parse kwargs + model work.
+
+    Returns a user-safe error string, or ``None`` when the probe succeeds.
+    Uses a tiny schema and ``reasoning.effort=low`` so a bad deploy/config
+    fails before CourseMap Pro+max can spend real money.
+    """
+    import os
+
+    global _PROBE_OK_MONO
+    if os.environ.get("RUKN_CREDIT_SAFE_TESTS") == "1":
+        return None
+    now = time.monotonic()
+    if (
+        not force
+        and _PROBE_OK_MONO is not None
+        and (now - _PROBE_OK_MONO) < _PROBE_TTL_SECONDS
+    ):
+        return None
+
+    key = api_key or settings.openai_api_key
+    model = (model_name or settings.ai_model_name or "").strip()
+    if not key or not model:
+        return "OpenAI probe skipped — API key or model name missing."
+
+    client = OpenAI(api_key=key, timeout=45.0, max_retries=0)
+    try:
+        response = client.responses.parse(
+            model=model,
+            input=[
+                {
+                    "role": "user",
+                    "content": "Return JSON with ok=true. No other fields.",
+                }
+            ],
+            text_format=_OpenAIPing,
+            reasoning={"effort": "low"},
+            max_output_tokens=64,
+            truncation="disabled",
+            store=False,
+            prompt_cache_key="rukn-preflight-probe",
+            prompt_cache_retention="24h",
+        )
+    except TypeError as exc:
+        return _public_api_hint(exc)
+    except Exception as exc:  # noqa: BLE001
+        return _public_api_hint(exc)
+
+    parsed = getattr(response, "output_parsed", None)
+    if parsed is None or not bool(getattr(parsed, "ok", False)):
+        return (
+            "OpenAI probe returned no usable structured result. "
+            "Check OPENAI_API_KEY / AI_MODEL_NAME=gpt-5.6-sol on Render."
+        )
+    _PROBE_OK_MONO = time.monotonic()
+    return None
 
 
 def _normalize_output(schema: type[BaseModel], data: object) -> object:
