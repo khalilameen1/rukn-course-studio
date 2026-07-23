@@ -4,17 +4,17 @@ Internal tool that generates full DOCX practical-skill courses for Rukn from a
 course brief, admin-managed fixed rules, and optional sources / manual course
 map.
 
-**Current state (MVP):** frontend and backend run locally. A user can create a
-course, upload sources, run generation, and download a final DOCX. Generation
-uses **`FakeProvider` by default** (deterministic placeholder content, no API
-calls). The full internal 8-stage pipeline, validators, source extraction, and
-DOCX export are implemented. Real AI (`AnthropicProvider`) exists in code but
-is **not wired to the API** unless you pass it explicitly in tests or future
-integration work.
+**Current state (MVP):** frontend and backend run locally and on Render. A user
+can create a course, upload sources, run generation, and download a final DOCX.
+Local/default AI is **`FakeProvider`** (deterministic placeholder content, no
+API calls). Production on Render uses **`OpenAIProvider`** with
+**`gpt-5.6-sol`** (`AI_PROVIDER=openai`) via the Responses API, Structured
+Outputs, and RUKN Universal Course Standard **v1.7**. The full internal
+pipeline, validators, source extraction, map preview, lesson-boundary resume,
+and DOCX export are implemented.
 
 See `docs/PRD.md`, `docs/ARCHITECTURE.md`, and `docs/BUILD_PLAN.md` for the
-full product spec and what remains (auth, background jobs, migrations, Phase 7
-hardening).
+full product spec.
 
 ## Repository Structure
 
@@ -512,116 +512,48 @@ cd backend
 default **Balanced**) is a named intent for how generation should approach
 a course. See `app/generation/presets.py`:
 
-| Preset | Intended use | Temperature |
+| Preset | Intended use | Notes |
 |---|---|---|
-| `conservative` | Review/correction passes - accuracy over variety. | 0.2 |
-| `balanced` (default) | Everyday reel/module writing. | 0.45 |
-| `creative` | Generating multiple candidate openings/examples/angles. | 0.75 |
-| `fusion` | Merging a Conservative attempt and a Creative attempt into one (not implemented). | 0.35 |
-| `strict_teleprompter` | Final export/cleanup pass enforcing the teleprompter DOCX contract strictly. | 0.25 |
+| `conservative` | Review/correction passes - accuracy over variety. | Legacy temp 0.2 |
+| `balanced` (default) | Everyday reel/module writing. | Legacy temp 0.45 |
+| `creative` | Generating candidate openings/examples/angles. | Legacy temp 0.75 |
+| `fusion` | Alias of Balanced until dual-attempt merge ships. | Not offered in UI |
+| `strict_teleprompter` | Strict spoken-script-only export cleanup. | Legacy temp 0.25 |
 
-`PRESET_TEMPERATURES` in the same module maps each preset to the
-temperature values above. Every generation run logs which preset was used
-(`{"step": "load_brief", "preset": "..."}` in the job's internal
-`log_json`).
+Production OpenAI (`gpt-5.6-sol`) ignores sampling temperature; stage quality
+comes from `app/generation/model_routing.py` (Pro+max / Pro+xhigh). Preset
+is still logged on each run. `FakeProvider` ignores presets entirely.
 
-- **`FakeProvider`** (default) ignores the preset entirely - its output
-  never changes per preset.
-- **`AnthropicProvider`** actually uses it: `app/generation/orchestrator.py`
-  calls `provider.configure_for_run(brief.generation_preset)` once, right
-  after the course brief loads and before the first AI call, which
-  re-resolves and applies that preset's temperature (see
-  `AnthropicProvider.configure_for_run` in
-  `app/ai/anthropic_provider.py`) for every stage's `messages.create` call
-  for the rest of that run. This hook is deliberately `hasattr`-guarded at
-  the call site (not a method on the `AIProvider` ABC) so `FakeProvider`
-  needs zero changes.
+## Connecting OpenAI (production)
 
-## Connecting a real Anthropic provider
+`AI_PROVIDER=fake` (local default) needs no key and produces deterministic
+placeholder content — safe for all local dev and the automated test suite.
+Production on Render uses `AI_PROVIDER=openai` via `app/ai/openai_provider.py`
+(Responses API + Structured Outputs) and costs real API credits.
 
-`AI_PROVIDER=fake` (the default) needs no key and produces deterministic
-placeholder content - safe for all local dev and the whole automated test
-suite. Switching to `AI_PROVIDER=anthropic` calls the real Claude API via
-`app/ai/anthropic_provider.py` and costs real API credits. Two things to
-know before flipping the switch:
+- **Model.** Set `AI_MODEL_NAME=gpt-5.6-sol` (approved ROKN production model).
+- **Timeout.** `OPENAI_REQUEST_TIMEOUT_SECONDS` (Render default `1800`) bounds
+  long Pro+max architecture/final passes.
+- **Switching back to `fake`** needs zero code changes — set `AI_PROVIDER=fake`
+  and redeploy/restart.
 
-- **Request timeout.** `ANTHROPIC_REQUEST_TIMEOUT_SECONDS` (default `120`,
-  optional) bounds how long a single Anthropic call can hang before
-  failing with a clean, classifiable `timeout` error (see "Generation
-  resilience" below) instead of hanging the whole request indefinitely.
-- **Switching back to `fake` at any time needs zero code changes** - just
-  set `AI_PROVIDER=fake` (and redeploy/restart if in production). Nothing
-  else needs to change.
+### First real test mode (do this once, with a real key)
 
-### First real test mode (do this once, with a real key, before trusting it for anything bigger)
-
-The cheapest, most predictable way to confirm the real provider actually
-works end to end: create a tiny course with a **manual course map**. This
-still makes one `build_course_map` call, but
-`backend/app/prompts/build_course_map.md` instructs the model to convert
-`manual_map_text` "as-is" rather than design its own structure - so a
-short, explicit map keeps the whole run down to exactly one module and two
-lessons (one `build_course_map` call, two `write_single_reel`/review
-cycles, one `final_review`) instead of however large a from-scratch map
-might turn out.
-
-1. Set in `backend/.env` (or the equivalent Render env vars - see
-   "Deploying to Render" below):
+1. Set in `backend/.env` or Render Dashboard:
 
    ```
-   AI_PROVIDER=anthropic
-   ANTHROPIC_API_KEY=<your real key>
-   AI_MODEL_NAME=<check Anthropic's current model list for the exact slug, e.g. something like "claude-sonnet-4-5-..." - do not copy that string verbatim, it is a placeholder, not a verified-current model name>
+   AI_PROVIDER=openai
+   OPENAI_API_KEY=<your real key>
+   AI_MODEL_NAME=gpt-5.6-sol
    ```
 
-   Restart the backend (`uvicorn`) after changing `.env` so it picks up
-   the new values.
+2. Create a tiny course (manual map, one module, two lessons), confirm map
+   preview, generate, and download the Teleprompter DOCX.
 
-2. Create a course with `generation_preset=balanced`, no source uploads,
-   and a short, explicit `manual_map_text` that requests exactly one
-   module with two lessons - either via the UI (Course form's "Manual
-   course map" field) or directly via curl:
+3. Set `AI_PROVIDER=fake` again afterward if you do not want further paid runs.
 
-   ```powershell
-   curl -X POST http://localhost:8000/courses `
-     -H "Authorization: Bearer <your login token>" `
-     -H "Content-Type: application/json" `
-     -d '{
-       "title": "Real Provider Smoke Test",
-       "audience": "internal test",
-       "outcome": "confirm the real Anthropic provider works end to end",
-       "structure_mode": "connected_no_modules",
-       "generation_preset": "balanced",
-       "manual_map_text": "Exactly one module titled '\''Module 1'\'' with exactly two short lessons: Lesson 1 (a 30-second intro) and Lesson 2 (a 30-second wrap-up). Do not add any other modules or lessons."
-     }'
-   ```
-
-   (Get `<your login token>` from `POST /auth/login` with your
-   `ADMIN_USERNAME`/`ADMIN_PASSWORD` first.)
-
-3. Trigger generation for that course - UI's "Generate" button, or:
-
-   ```powershell
-   curl -X POST http://localhost:8000/courses/<course_id>/generate `
-     -H "Authorization: Bearer <your login token>"
-   ```
-
-4. Confirm the job ends `"status": "completed"` (`GET
-   /jobs/{job_id}`) and download the DOCX (`GET
-   /courses/{course_id}/download/latest`) to confirm it reads like a real,
-   teleprompter-ready script for one module/two lessons - not placeholder
-   text.
-
-5. Set `AI_PROVIDER=fake` again afterward if you don't want further runs
-   to spend real credits.
-
-`backend/scripts/smoke_test.py` (see "Production smoke test" below) is a
-**login/auth-only** smoke check - it deliberately never touches
-generation, so it is not a substitute for the steps above and needs no
-changes to support this. There is no automated test that calls the real
-Anthropic API (and there should never be one - see the top of
-`backend/tests/test_anthropic_provider.py`); the steps above are the only
-supported way to validate a real key/model before relying on it.
+There is no automated test that calls the real OpenAI API; the steps above
+are the supported way to validate a real key/model before relying on it.
 
 ## Generation resilience
 
@@ -659,21 +591,16 @@ failure no longer loses already-completed work:
   pattern distinct from a real `course_v{n}.docx` version so it's never
   confused with, or picked up as, a completed version. Download via
   `GET /jobs/{job_id}/download-partial`.
-- **Resume is not implemented.** A `partial` job's per-module review
-  bookkeeping (specifically, whether the two-module repetition review for
-  the current pair of modules already ran) can't be safely reconstructed
-  from `completed_reels_json` alone - a crash between a module's own review
-  and its pairing review would look identical, on resume, to one where the
-  pairing already happened, silently skipping a required check. Rather than
-  ship that, there's no `resume_generation` function and no `/resume`
-  route. **Downloading the partial DOCX is the supported recovery path
-  today.**
-- **Regenerate from scratch is unaffected.** `POST /courses/{course_id}/generate`
-  always starts a brand-new `GenerationJob` row, independent of any
-  existing partial/failed job for the same course - it never blocks on, or
-  mutates, that job's saved state. The frontend labels this "Regenerate
-  from Scratch" once a partial/failed job already exists, to make clear
-  it's a fresh restart, not a continuation.
+- **Continue from saved lessons (lesson-boundary resume).** When a run
+  stops with some (not all) Final Master lessons saved, `POST /generate`
+  with `resume_incomplete=true` starts a **new** job that reuses those
+  scripts and generates only missing `reel_id`s. Module/course gates still
+  re-run forward. Mid-stage checkpoint resume inside a single lesson write
+  is not supported. If every lesson is already saved, use **Finish & export**
+  (no AI tokens). Partial DOCX download remains available.
+- **Regenerate from scratch** is the default when `resume_incomplete` is
+  false / omitted: a brand-new job that does not reuse prior lesson scripts.
+  The UI labels this clearly next to Continue.
 - This persistence work (the incremental flushes, the clean error
   categories, the partial export) is exactly what a future background-job
   upgrade (Celery/RQ/a task queue) would build on - the synchronous
@@ -763,10 +690,10 @@ End-to-end fake generation scenario (no API key, no network):
 | `backend/.env` | `DATABASE_URL` | Highest-priority DB connection string. Leave **unset locally** (defaults to a local SQLite file). In production, set to a Postgres URL (e.g. Render Postgres' "Internal Database URL") - see [Deploying to Render](#deploying-to-render) |
 | `backend/.env` | `SQLITE_DB_PATH` | SQLite-only fallback, used only when `DATABASE_URL` is unset: absolute path to the SQLite file (e.g. Render's persistent disk). Leave unset locally |
 | `backend/.env` | `ENVIRONMENT` | `development` / `production` |
-| `backend/.env` | `AI_PROVIDER` | `fake` (default, no key needed) or `anthropic` |
-| `backend/.env` | `ANTHROPIC_API_KEY` | Only required when `AI_PROVIDER=anthropic` |
-| `backend/.env` | `AI_MODEL_NAME` | Model name for `AnthropicProvider`; only required when `AI_PROVIDER=anthropic` - check Anthropic's current model list for the exact slug |
-| `backend/.env` | `ANTHROPIC_REQUEST_TIMEOUT_SECONDS` | Optional, only relevant when `AI_PROVIDER=anthropic`. How long a single Anthropic API call can run before failing with a clean `timeout` error. Default `120` |
+| `backend/.env` | `AI_PROVIDER` | `fake` (local/default) or `openai` (production) |
+| `backend/.env` | `OPENAI_API_KEY` | Required when `AI_PROVIDER=openai` |
+| `backend/.env` | `AI_MODEL_NAME` | Production model; use `gpt-5.6-sol` |
+| `backend/.env` | `OPENAI_REQUEST_TIMEOUT_SECONDS` | Optional; how long a single OpenAI call can run. Render default `1800` |
 | `backend/.env` | `AUTH_ENABLED` | Defaults to `true` (see [Authentication](#authentication) below) |
 | `backend/.env` | `ADMIN_USERNAME` | The one admin login username |
 | `backend/.env` | `ADMIN_PASSWORD` | The one admin login password |
@@ -824,10 +751,10 @@ credential - only booleans/labels:
 }
 ```
 
-`ai_provider` is the raw `AI_PROVIDER` value (`"fake"` or `"anthropic"` -
+`ai_provider` is the raw `AI_PROVIDER` value (`"fake"` or `"openai"` -
 not a secret). `ai_provider_ready` is `true` for `fake` always, or for
-`anthropic` only once both `ANTHROPIC_API_KEY` and `AI_MODEL_NAME` are
-set - the frontend's course page uses this to show "Anthropic (not fully
+`openai` only once both `OPENAI_API_KEY` and `AI_MODEL_NAME` are
+set - the frontend's course page uses this to show "OpenAI (not fully
 configured)" with a warning badge instead of silently claiming a working
 real provider that isn't actually configured yet.
 
@@ -905,21 +832,20 @@ AUTH_SECRET_KEY=<secret, set in Render Dashboard - any long random string>
 DATABASE_URL=<secret, set in Render Dashboard - the dedicated Postgres database's Internal Database URL>
 STORAGE_DIR=/opt/render/project/src/backend/storage
 FRONTEND_ORIGIN=<secret, set in Render Dashboard - the deployed frontend's URL, once known>
-ANTHROPIC_API_KEY=            # secret - leave blank while AI_PROVIDER=fake
-AI_MODEL_NAME=                # secret - leave blank while AI_PROVIDER=fake
+OPENAI_API_KEY=               # secret - leave blank while AI_PROVIDER=fake
+AI_MODEL_NAME=                # leave blank while AI_PROVIDER=fake; use gpt-5.6-sol in production
 ```
 
-To use the real Anthropic provider instead, change exactly three values
-(everything else above stays the same) - see "Connecting a real Anthropic
-provider" above for what these mean and the First Real Test Mode procedure
-to validate them once set:
+To use the real OpenAI provider (production), change these values
+(everything else above stays the same) - see "Connecting OpenAI (production)"
+above:
 
 ```
-AI_PROVIDER=anthropic
-ANTHROPIC_API_KEY=<secret, set in Render Dashboard - your real Anthropic API key>
-AI_MODEL_NAME=<secret, set in Render Dashboard - check Anthropic's current model list for the exact slug>
-# Optional - defaults to 120 if unset:
-# ANTHROPIC_REQUEST_TIMEOUT_SECONDS=120
+AI_PROVIDER=openai
+OPENAI_API_KEY=<secret, set in Render Dashboard>
+AI_MODEL_NAME=gpt-5.6-sol
+# Optional - Render blueprint default is 1800:
+# OPENAI_REQUEST_TIMEOUT_SECONDS=1800
 # Optional emergency spend kill-switch (USD). Leave empty/unset to disable:
 # AI_RUNAWAY_HARD_CAP_USD=
 # Soft debounce between new generation starts for the same course (seconds):
@@ -945,7 +871,7 @@ Dashboard - never commit real credentials into `render.yaml` or `.env`
 
 ### Backups before real Claude / schema changes
 
-Before enabling `AI_PROVIDER=anthropic` for real runs, or before any manual
+Before enabling `AI_PROVIDER=openai` for real runs, or before any manual
 Postgres schema change:
 
 **Postgres (Option A)** — from a Render Shell on the backend, or any machine
@@ -1015,7 +941,7 @@ canonical standard reset, or storage:
 - **Redeploy previous backend image/commit:** in Render, redeploy the prior
   successful deploy for `rukn-course-studio-backend`, or git-revert to the
   last known-good commit (see `git log`) and push.
-- **Stop Claude spend immediately:** set Render env `AI_PROVIDER=fake`
+- **Stop OpenAI spend immediately:** set Render env `AI_PROVIDER=fake`
   (leave `ANTHROPIC_API_KEY` unchanged) and **restart** the backend service.
   New runs use FakeProvider; no code change required. Optional:
   `AI_RUNAWAY_HARD_CAP_USD` for emergency spend stop mid-run.

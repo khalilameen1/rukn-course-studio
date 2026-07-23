@@ -1,19 +1,17 @@
 """Selects which `AIProvider` implementation the orchestrator uses.
 
 This is the ONLY place that decides between `FakeProvider` and
-`AnthropicProvider` - the orchestrator (app/generation/orchestrator.py)
+`OpenAIProvider` - the orchestrator (app/generation/orchestrator.py)
 just calls `get_ai_provider()` and never constructs a concrete provider
 itself. Selection is driven entirely by `Settings.ai_provider`
 (`AI_PROVIDER` env var, see backend/.env.example):
 
-- `fake` (default) - always available, no configuration required.
-- `anthropic` - requires `ANTHROPIC_API_KEY` and `AI_MODEL_NAME` to both be
-  set. If either is missing, this raises `AIProviderConfigError` instead of
-  silently falling back to `FakeProvider` - a misconfigured "real" run
-  should fail clearly, not quietly produce placeholder content.
+- `fake` (default for local/tests) - always available, no configuration required.
+- `openai` (production) - requires `OPENAI_API_KEY` and `AI_MODEL_NAME`
+  (default `gpt-5.6-sol`). If either is missing, this raises
+  `AIProviderConfigError` instead of silently falling back to `FakeProvider`.
 
-Nothing here is frontend-visible: the frontend never sees provider/model
-names, only the coarse job status (docs/PRD.md FR-8).
+Nothing here is frontend-visible beyond coarse diagnostics readiness.
 """
 
 from app.ai.fake_provider import FakeProvider
@@ -26,14 +24,14 @@ SUPPORTED_PROVIDERS = ("fake", "openai")
 
 class AIProviderConfigError(RuntimeError):
     """Raised when `AI_PROVIDER` is set to a value that cannot actually run
-    (unknown provider, or "anthropic" without its required configuration).
+    (unknown provider, or "openai" without its required configuration).
     Callers (see app/routers/generation.py) should turn this into a clear,
     actionable backend error - never a raw stack trace and never a silent
     fallback to a different provider than the one configured."""
 
 
 def missing_openai_config(config: Settings) -> list[str]:
-    """Env var names still required for `AI_PROVIDER=anthropic` that are
+    """Env var names still required for `AI_PROVIDER=openai` that are
     currently unset.
 
     Shared by `get_ai_provider` below (raises `AIProviderConfigError` if

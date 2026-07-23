@@ -697,7 +697,7 @@ export default function GeneratePanel({
     }
   }
 
-  async function handleGenerate() {
+  async function handleGenerate(opts?: { resumeIncomplete?: boolean }) {
     setStarting(true);
     setError(null);
     setShowTighten(false);
@@ -755,6 +755,15 @@ export default function GeneratePanel({
           `Source ranking:\n${readiness.source_ranking_tips.slice(0, 8).join("\n")}`,
         );
       }
+      if (opts?.resumeIncomplete) {
+        notes.push(
+          "Continue will reuse saved lessons and generate only the missing ones (API spend for the rest).",
+        );
+      } else if (hasUnresolvedIssue) {
+        notes.push(
+          "This starts a full new run from scratch and spends tokens again. Prefer Continue if saved lessons exist.",
+        );
+      }
       if (notes.length > 0) {
         if (!confirm(`${notes.join("\n")}\n\nStart generation anyway?`)) {
           return;
@@ -770,6 +779,7 @@ export default function GeneratePanel({
         web_research_mode: webResearchMode,
         human_override_hard_limits: humanOverrideHardLimits,
         approved_snapshot_fingerprint: mapPreview.snapshot_fingerprint,
+        resume_incomplete: Boolean(opts?.resumeIncomplete),
       });
       updateJob(started);
       if (TERMINAL_STATUSES.has(started.status)) {
@@ -801,6 +811,16 @@ export default function GeneratePanel({
   const justCompleted = job?.status === "completed";
   // Prefer Finish export over a full regenerate when every lesson is already saved.
   const showFullRegenerate = !canFinalizeSaved;
+  const canResumeIncomplete =
+    Boolean(job?.can_resume_incomplete) ||
+    Boolean(
+      job &&
+        hasUnresolvedIssue &&
+        (job.total_lessons_count ?? 0) > 0 &&
+        (job.completed_lessons_count ?? job.completed_reels_count) > 0 &&
+        (job.completed_lessons_count ?? job.completed_reels_count) <
+          (job.total_lessons_count ?? 0),
+    );
 
   return (
     <div className="flex flex-col gap-4">
@@ -962,9 +982,10 @@ export default function GeneratePanel({
       <WriterTestPanel courseId={courseId} />
 
       <div className="flex flex-wrap items-center gap-3">
-        {showFullRegenerate ? (
+        {canResumeIncomplete && showFullRegenerate ? (
           <button
-            onClick={handleGenerate}
+            type="button"
+            onClick={() => handleGenerate({ resumeIncomplete: true })}
             disabled={
               starting ||
               isRunning ||
@@ -975,10 +996,26 @@ export default function GeneratePanel({
             }
             className="btn-primary w-fit"
           >
+            {starting || isRunning ? "Generating…" : "Continue from saved lessons"}
+          </button>
+        ) : null}
+        {showFullRegenerate ? (
+          <button
+            onClick={() => handleGenerate({ resumeIncomplete: false })}
+            disabled={
+              starting ||
+              isRunning ||
+              canceling ||
+              finalizingSaved ||
+              !mapPreview?.can_start_full_generation ||
+              !mapConfirmed
+            }
+            className={canResumeIncomplete ? "btn-secondary w-fit" : "btn-primary w-fit"}
+          >
             {starting || isRunning
               ? "Generating…"
               : hasUnresolvedIssue
-                ? "Start generation again"
+                ? "Regenerate from scratch"
                 : justCompleted
                   ? "Run again"
                   : "Start full course generation"}
@@ -1006,7 +1043,7 @@ export default function GeneratePanel({
         {canFinalizeSaved && showFullRegenerate === false ? (
           <button
             type="button"
-            onClick={handleGenerate}
+            onClick={() => handleGenerate({ resumeIncomplete: false })}
             disabled={starting || isRunning || canceling || finalizingSaved}
             className="btn-secondary w-fit"
           >

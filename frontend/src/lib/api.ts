@@ -526,6 +526,7 @@ export const api = {
       map_preview_confirmed?: boolean;
       human_override_hard_limits?: boolean;
       approved_snapshot_fingerprint?: string;
+      resume_incomplete?: boolean;
     },
   ) =>
     apiFetch<GenerationJob>(`/courses/${courseId}/generate`, {

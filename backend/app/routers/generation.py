@@ -192,14 +192,40 @@ def generate_course(
     stage_state = dict(approved_snapshot.get("STAGE_CONTRACT_STATE") or {})
     stage_state["map_preview_confirmed"] = True
     approved_snapshot["STAGE_CONTRACT_STATE"] = stage_state
-    claimed = generation_jobs.update(
-        session,
-        job_id,
-        run_snapshot_json=approved_snapshot,
-        course_map_json=approved_snapshot.get("CONFIG_INPUTS", {}).get(
+    update_fields: dict = {
+        "run_snapshot_json": approved_snapshot,
+        "course_map_json": approved_snapshot.get("CONFIG_INPUTS", {}).get(
             "APPROVED_MAP"
         ),
-    ) or claimed
+    }
+    resume_source_id: int | None = None
+    if request_body.resume_incomplete:
+        from app.services.resume_incomplete_job import (
+            find_resumable_job,
+            seed_completed_reels_for_resume,
+        )
+
+        source = find_resumable_job(session, course_id)
+        if source is None:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "No stopped run with incomplete saved lessons was found. "
+                    "Use full generation, or Finish & export if every lesson is saved."
+                ),
+            )
+        try:
+            seeded = seed_completed_reels_for_resume(target=claimed, source=source)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        update_fields["completed_reels_json"] = seeded
+        update_fields["completed_reels_count"] = len(seeded)
+        update_fields["last_completed_step"] = f"resume_seed:{len(seeded)}"
+        update_fields["last_progress_message"] = (
+            f"Resuming with {len(seeded)} saved lesson(s); generating the rest."
+        )
+        resume_source_id = source.id
+    claimed = generation_jobs.update(session, job_id, **update_fields) or claimed
 
     record_generate_start(course_id)
     background_tasks.add_task(
@@ -221,7 +247,13 @@ def generate_course(
         dry_run=False,
         confirmed=True,
         success=True,
-        details={"course_id": course_id, "job_id": job_id, "async": True},
+        details={
+            "course_id": course_id,
+            "job_id": job_id,
+            "async": True,
+            "resume_incomplete": bool(request_body.resume_incomplete),
+            "resume_source_job_id": resume_source_id,
+        },
     )
     response.status_code = 201
     # Re-read so response reflects queued/pending claim (worker runs after).

@@ -58,6 +58,9 @@ class GenerateCourseRequest(BaseModel):
     map_preview_confirmed: bool = False
     human_override_hard_limits: bool = False
     approved_snapshot_fingerprint: str | None = None
+    # Continue from saved Final Master lessons on the latest stopped run;
+    # only missing reel_ids are generated. False = full regenerate.
+    resume_incomplete: bool = False
 
 
 class WriterTestTopicIn(BaseModel):
@@ -317,6 +320,25 @@ class GenerationJobRead(BaseModel):
         total = int(self.total_lessons_count or 0)
         done = int(self.completed_reels_count or 0)
         return total > 0 and done >= total
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def can_resume_incomplete(self) -> bool:
+        """UI hint: Continue may reuse saved lessons and generate only missing ones.
+
+        Counter-based. POST /generate with resume_incomplete=true re-checks
+        full integrity before seeding the new job.
+        """
+        if self.output_docx_path:
+            return False
+        status_val = (
+            self.status.value if hasattr(self.status, "value") else str(self.status or "")
+        ).lower()
+        if status_val not in {"partial", "failed", "canceled"}:
+            return False
+        total = int(self.total_lessons_count or 0)
+        done = int(self.completed_reels_count or 0)
+        return total > 0 and done > 0 and done < total
 
     @computed_field  # type: ignore[prop-decorator]
     @property

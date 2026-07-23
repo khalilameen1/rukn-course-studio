@@ -30,7 +30,7 @@ export default function AIUsagePage() {
     <div className="flex flex-col gap-6">
       <PageHeader
         title="AI Usage / Operations"
-        description="Estimated app usage from this product — not your real Anthropic account balance."
+        description="Estimated app usage from this product — not your real OpenAI account balance."
       />
 
       {error ? <ActionError {...error} /> : null}
@@ -76,7 +76,7 @@ export default function AIUsagePage() {
             </div>
             <p className="mt-4 text-xs text-muted">
               These figures are app-side estimates from token counts. They are not live credit
-              remaining from Anthropic.
+              remaining from OpenAI.
             </p>
           </Card>
 

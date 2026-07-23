@@ -40,7 +40,18 @@ def test_every_preset_has_a_temperature():
 
 def test_resolve_generation_settings_returns_preset_and_temperature():
     settings_ = resolve_generation_settings(GenerationPreset.CREATIVE)
-    assert settings_ == {"preset": "creative", "temperature": PRESET_TEMPERATURES[GenerationPreset.CREATIVE]}
+    assert settings_ == {
+        "preset": "creative",
+        "effective_preset": "creative",
+        "temperature": PRESET_TEMPERATURES[GenerationPreset.CREATIVE],
+    }
+
+
+def test_fusion_aliases_to_balanced_settings():
+    settings_ = resolve_generation_settings(GenerationPreset.FUSION)
+    assert settings_["preset"] == "fusion"
+    assert settings_["effective_preset"] == "balanced"
+    assert settings_["temperature"] == PRESET_TEMPERATURES[GenerationPreset.BALANCED]
 
 
 @pytest.fixture()

@@ -11,6 +11,7 @@ export interface GenerationPresetOption {
   helper: string;
 }
 
+/** Presets offered in create/edit forms. Fusion kept for legacy course rows. */
 export const GENERATION_PRESET_OPTIONS: GenerationPresetOption[] = [
   {
     value: "conservative",
@@ -29,8 +30,8 @@ export const GENERATION_PRESET_OPTIONS: GenerationPresetOption[] = [
   },
   {
     value: "fusion",
-    label: "Fusion",
-    helper: "Combines two attempts into one (reserved for future use).",
+    label: "Fusion (uses Balanced)",
+    helper: "Legacy option — currently identical to Balanced.",
   },
   {
     value: "strict_teleprompter",

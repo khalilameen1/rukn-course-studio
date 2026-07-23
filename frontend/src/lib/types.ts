@@ -197,6 +197,7 @@ export interface GenerationJob {
   error_message: string | null;
   stopped_after_label?: string | null;
   can_finalize_from_saved?: boolean;
+  can_resume_incomplete?: boolean;
   can_download_completed?: boolean;
   completed_modules_count: number;
   completed_reels_count: number;

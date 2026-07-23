@@ -1061,6 +1061,28 @@ def run_generation(
         previous_module_curve: ModuleCurve | None = None
         total_modules = len(course_map.modules)
         phrase_ledger = PhraseLedger()
+        # Lesson-boundary resume: reuse Final Master scripts seeded onto this
+        # job (from a prior partial/failed/canceled run). Skip AI write for
+        # those reel_ids; module/course gates still re-run forward.
+        resumed_by_id: dict[str, GeneratedReel] = {}
+        for raw in coerce_json_list(job.completed_reels_json):
+            if not isinstance(raw, dict):
+                continue
+            try:
+                prior = GeneratedReel.model_validate(raw)
+            except Exception:
+                continue
+            if not (prior.reel_id and (prior.script_text or "").strip()):
+                continue
+            resumed_by_id[prior.reel_id] = prior
+        if resumed_by_id:
+            logs.append(
+                {
+                    "step": "resume_incomplete_seed",
+                    "saved_reels": len(resumed_by_id),
+                    "reel_ids": sorted(resumed_by_id.keys())[:40],
+                }
+            )
         # Spoken style calibration from FLOW_REFERENCE only (never as facts).
         flow_texts = [
             (u.course_source.extracted_text or "")
@@ -1149,6 +1171,43 @@ def run_generation(
 
                 lesson_n = reels_done + 1
                 _abort_if_canceled()
+
+                # Reuse a previously saved Final Master for this reel_id.
+                if reel_plan.reel_id in resumed_by_id:
+                    generated = resumed_by_id[reel_plan.reel_id]
+                    phrase_ledger.record_reel(generated)
+                    module_reels.append(generated)
+                    all_reels.append(generated)
+                    reels_done += 1
+                    progress = PROGRESS_AFTER_CONTEXT_AND_MAP + int(
+                        PROGRESS_REEL_GENERATION_SPAN * reels_done / max(total_reels, 1)
+                    )
+                    flush(
+                        current_stage="generating",
+                        progress_percent=progress,
+                        completed_reels_json=[r.model_dump(mode="json") for r in all_reels],
+                        completed_reels_count=reels_done,
+                        total_lessons_count=total_reels,
+                        last_completed_step=f"reel:{reel_plan.reel_id}:resumed",
+                        current_module_index=module_index + 1,
+                        current_lesson_index=reel_index + 1,
+                        last_progress_message=(
+                            f"Reused saved lesson {reels_done}/{total_reels}"
+                        ),
+                    )
+                    logs.append(
+                        {
+                            "step": "reel_resumed",
+                            "id": reel_plan.reel_id,
+                            "attempts": 0,
+                            "flagged": False,
+                            "needs_review": False,
+                            "caught_locally": False,
+                            "quality_mode": quality_mode.value,
+                        }
+                    )
+                    continue
+
                 flush(
                     current_stage="generating",
                     current_module_index=module_index + 1,

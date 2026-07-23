@@ -272,13 +272,18 @@ export default function CourseDetailPage() {
       : null;
   const showReportTab = false; // V1: Teleprompter DOCX only — no report surface
 
-  const providerNeedsAttention = diagnostics?.ai_provider === "anthropic" && !diagnostics.ai_provider_ready;
+  const providerNeedsAttention =
+    diagnostics?.ai_provider === "openai" && !diagnostics.ai_provider_ready;
   const providerLabel =
-    diagnostics?.ai_provider === "anthropic"
+    diagnostics?.ai_provider === "openai"
       ? diagnostics.ai_provider_ready
-        ? "Anthropic"
-        : "Anthropic (not fully configured)"
-      : "Fake provider";
+        ? "OpenAI"
+        : "OpenAI (not fully configured)"
+      : diagnostics?.ai_provider === "fake"
+        ? "Fake provider"
+        : diagnostics?.ai_provider
+          ? String(diagnostics.ai_provider)
+          : "Fake provider";
 
   const sourceCategoryCounts = sources.reduce<Record<SourceCategory, number>>((acc, source) => {
     acc[source.source_category] = (acc[source.source_category] ?? 0) + 1;
