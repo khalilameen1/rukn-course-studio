@@ -76,13 +76,17 @@ def get_ai_provider(config: Settings = settings) -> AIProvider:
                 f"{' and '.join(missing)} to be set (see backend/.env.example). "
                 "Set the missing value(s), or set AI_PROVIDER=fake for tests."
             )
-        from app.generation.generation_preflight import validate_ai_model_name
+        from app.generation.generation_preflight import (
+            normalize_ai_model_name,
+            validate_ai_model_name,
+        )
 
         model_err = validate_ai_model_name(config.ai_model_name)
         if model_err:
             raise AIProviderConfigError(model_err)
         return OpenAIProvider(
-            api_key=config.openai_api_key, model_name=config.ai_model_name
+            api_key=config.openai_api_key,
+            model_name=normalize_ai_model_name(config.ai_model_name),
         )
 
     raise AIProviderConfigError(

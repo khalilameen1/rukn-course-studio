@@ -61,11 +61,17 @@ services:
         value: openai
       - key: OPENAI_API_KEY
         sync: false
+      # Canonical slug. Dashboard aliases gpt-5.6 / gpt-5.6-pro are normalized
+      # to gpt-5.6-sol at runtime (Pro mode is reasoning.mode, not a model ID).
       - key: AI_MODEL_NAME
         value: gpt-5.6-sol
       # Long-running Pro+max architecture/final passes.
       - key: OPENAI_REQUEST_TIMEOUT_SECONDS
         value: "1800"
+      # Emergency spend stop (estimated USD). Stops a run cleanly with PARTIAL
+      # if crossed. Raise for large Premium courses; unset/0 disables.
+      - key: AI_RUNAWAY_HARD_CAP_USD
+        value: "50"
       # The deployed frontend's URL (no trailing slash) - allows it through
       # CORS. See app/config.py `frontend_origin`. Use CORS_ORIGINS instead
       # (JSON array string) if more than one origin is ever needed.

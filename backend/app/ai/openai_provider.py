@@ -15,6 +15,7 @@ from typing import TypeVar
 from openai import OpenAI
 from pydantic import BaseModel, ValidationError
 
+from app.ai.course_map_normalize import normalize_course_map_payload
 from app.ai.provider import (
     AIProvider,
     BuildCourseMapInput,
@@ -31,6 +32,16 @@ from app.schemas.generation import CourseMap, FinalCourse, GeneratedReel, Review
 MAX_ATTEMPTS = 3
 ModelT = TypeVar("ModelT", bound=BaseModel)
 
+# In-process probe cache so Generate/readiness clicks do not re-spend every time.
+_PROBE_OK_MONO: float | None = None
+_PROBE_TTL_SECONDS = 300.0
+
+
+class _OpenAIPing(BaseModel):
+    """Tiny structured payload used only by the preflight probe."""
+
+    ok: bool
+
 
 class OpenAIProviderError(RuntimeError):
     """A clean provider failure carrying an optional user-safe hint."""
@@ -40,40 +51,76 @@ class OpenAIProviderError(RuntimeError):
         self.public_hint = public_hint
 
 
+def probe_openai_responses_api(
+    *,
+    api_key: str | None = None,
+    model_name: str | None = None,
+    force: bool = False,
+) -> str | None:
+    """Cheap live check that Responses.parse kwargs + model work.
+
+    Returns a user-safe error string, or ``None`` when the probe succeeds.
+    Uses a tiny schema and ``reasoning.effort=low`` so a bad deploy/config
+    fails before CourseMap Pro+max can spend real money.
+    """
+    import os
+
+    global _PROBE_OK_MONO
+    if os.environ.get("RUKN_CREDIT_SAFE_TESTS") == "1":
+        return None
+    now = time.monotonic()
+    if (
+        not force
+        and _PROBE_OK_MONO is not None
+        and (now - _PROBE_OK_MONO) < _PROBE_TTL_SECONDS
+    ):
+        return None
+
+    from app.generation.generation_preflight import normalize_ai_model_name
+
+    key = api_key or settings.openai_api_key
+    model = normalize_ai_model_name(model_name or settings.ai_model_name)
+    if not key or not model:
+        return "OpenAI probe skipped — API key or model name missing."
+
+    client = OpenAI(api_key=key, timeout=45.0, max_retries=0)
+    try:
+        response = client.responses.parse(
+            model=model,
+            input=[
+                {
+                    "role": "user",
+                    "content": "Return JSON with ok=true. No other fields.",
+                }
+            ],
+            text_format=_OpenAIPing,
+            reasoning={"effort": "low"},
+            max_output_tokens=64,
+            truncation="disabled",
+            store=False,
+            prompt_cache_key="rukn-preflight-probe",
+            prompt_cache_retention="24h",
+        )
+    except TypeError as exc:
+        return _public_api_hint(exc)
+    except Exception as exc:  # noqa: BLE001
+        return _public_api_hint(exc)
+
+    parsed = getattr(response, "output_parsed", None)
+    if parsed is None or not bool(getattr(parsed, "ok", False)):
+        return (
+            "OpenAI probe returned no usable structured result. "
+            "Check OPENAI_API_KEY / AI_MODEL_NAME=gpt-5.6-sol on Render."
+        )
+    _PROBE_OK_MONO = time.monotonic()
+    return None
+
+
 def _normalize_output(schema: type[BaseModel], data: object) -> object:
     """Repair only harmless aliases/default omissions before final validation."""
-    if schema is not CourseMap or not isinstance(data, dict):
+    if schema is not CourseMap:
         return data
-    out = dict(data)
-    modules = out.get("modules")
-    if not isinstance(modules, list):
-        return out
-    fixed_modules: list[object] = []
-    for module in modules:
-        if not isinstance(module, dict):
-            fixed_modules.append(module)
-            continue
-        mod = dict(module)
-        if "reels" not in mod and isinstance(mod.get("lessons"), list):
-            mod["reels"] = mod.pop("lessons")
-        reels = mod.get("reels")
-        if isinstance(reels, list):
-            fixed_reels: list[object] = []
-            for reel in reels:
-                if not isinstance(reel, dict):
-                    fixed_reels.append(reel)
-                    continue
-                item = dict(reel)
-                if not str(item.get("estimated_length") or "").strip():
-                    item["estimated_length"] = "3 minutes"
-                for field in ("must_cover", "must_avoid", "source_hints"):
-                    if item.get(field) is None:
-                        item[field] = []
-                fixed_reels.append(item)
-            mod["reels"] = fixed_reels
-        fixed_modules.append(mod)
-    out["modules"] = fixed_modules
-    return out
+    return normalize_course_map_payload(data)
 
 
 def _public_schema_hint(schema_name: str, detail: str) -> str:
@@ -82,15 +129,25 @@ def _public_schema_hint(schema_name: str, detail: str) -> str:
         return f"{schema_name} was cut off before completion. Retry generation."
     if "empty" in low or "no lessons" in low:
         return f"{schema_name} contained no usable lessons. Retry generation."
-    return f"{schema_name} did not match the required structure after {MAX_ATTEMPTS} attempts."
+    return (
+        f"{schema_name} did not match the required structure after {MAX_ATTEMPTS} attempts. "
+        "Confirm AI_PROVIDER=openai and AI_MODEL_NAME=gpt-5.6-sol, then retry."
+    )
 
 
 def _public_api_hint(exc: BaseException) -> str:
-    low = str(exc).lower()
+    low = f"{type(exc).__name__} {exc}".lower()
+    if "unexpected keyword" in low or "prompt_cache_options" in low:
+        return (
+            "Backend OpenAI client kwargs are outdated. Redeploy the latest backend and retry."
+        )
     if "api key" in low or "authentication" in low or "401" in low:
         return "OpenAI authentication failed. Check OPENAI_API_KEY in Render."
     if "model" in low and ("not found" in low or "does not exist" in low):
-        return "The configured OpenAI model is unavailable. Check AI_MODEL_NAME in Render."
+        return (
+            "The configured OpenAI model is unavailable. "
+            "Set AI_MODEL_NAME=gpt-5.6-sol in Render."
+        )
     if "context" in low or "too long" in low:
         return "The request exceeded the model context window. Reduce source volume and retry."
     return "OpenAI API rejected or could not complete the request."
@@ -110,12 +167,16 @@ class OpenAIProvider(AIProvider):
             if request_timeout_seconds is not None
             else settings.openai_request_timeout_seconds
         )
+        from app.generation.generation_preflight import normalize_ai_model_name
+
         self._client = OpenAI(
             api_key=api_key or settings.openai_api_key,
             timeout=timeout,
             max_retries=0,
         )
-        self._model_name = model_name or settings.ai_model_name
+        self._model_name = normalize_ai_model_name(
+            model_name or settings.ai_model_name
+        )
         self.last_usage: dict | None = None
 
     def configure_for_run(self, generation_preset: object) -> None:
@@ -240,13 +301,18 @@ class OpenAIProvider(AIProvider):
                     model=model_name,
                     input=attempt_messages,
                     text_format=schema,
-                    reasoning={"mode": reasoning_mode, "effort": reasoning_effort, "summary": "auto", "context": "current_turn"},
-                    text={"verbosity": verbosity},
+                    reasoning={
+                        "mode": reasoning_mode,
+                        "effort": reasoning_effort,
+                        "summary": "auto",
+                    },
+                    verbosity=verbosity,  # type: ignore[arg-type]
                     max_output_tokens=max_output_tokens,
                     truncation="disabled",
                     store=False,
                     prompt_cache_key=f"rukn-v1.7:{stage.value}",
-                    prompt_cache_options={"ttl": "24h"},
+                    # SDK param name is prompt_cache_retention (not prompt_cache_options).
+                    prompt_cache_retention="24h",
                 )
                 usage_totals["response_attempts"] += 1
             except Exception as exc:  # noqa: BLE001

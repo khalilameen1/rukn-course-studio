@@ -265,63 +265,62 @@ def test_diagnostics_reports_fake_provider_as_always_ready(monkeypatch):
     assert body["ai_provider_ready"] is True
 
 
-def test_diagnostics_reports_anthropic_ready_once_configured(monkeypatch):
-    monkeypatch.setattr(settings, "ai_provider", "anthropic")
-    monkeypatch.setattr(settings, "anthropic_api_key", "sk-ant-test-should-never-leak-12345")
-    monkeypatch.setattr(settings, "ai_model_name", "claude-example-model")
+def test_diagnostics_reports_openai_ready_once_configured(monkeypatch):
+    monkeypatch.setattr(settings, "ai_provider", "openai")
+    monkeypatch.setattr(settings, "openai_api_key", "sk-openai-test-should-never-leak-12345")
+    monkeypatch.setattr(settings, "ai_model_name", "gpt-5.6-sol")
 
     response = _full_diagnostics()
 
     body = response.json()
-    assert body["ai_provider"] == "anthropic"
+    assert body["ai_provider"] == "openai"
     assert body["ai_provider_ready"] is True
     # Never leak the key value itself - only the boolean above.
-    assert "sk-ant-test-should-never-leak-12345" not in response.text
-    assert "anthropic_api_key" not in body
+    assert "sk-openai-test-should-never-leak-12345" not in response.text
+    assert "openai_api_key" not in body
 
 
-def test_diagnostics_reports_anthropic_not_ready_when_misconfigured(monkeypatch):
-    monkeypatch.setattr(settings, "ai_provider", "anthropic")
-    monkeypatch.setattr(settings, "anthropic_api_key", None)
-    monkeypatch.setattr(settings, "ai_model_name", "claude-example-model")
+def test_diagnostics_reports_openai_not_ready_when_misconfigured(monkeypatch):
+    monkeypatch.setattr(settings, "ai_provider", "openai")
+    monkeypatch.setattr(settings, "openai_api_key", None)
+    monkeypatch.setattr(settings, "ai_model_name", "gpt-5.6-sol")
 
     response = _full_diagnostics()
 
     body = response.json()
-    assert body["ai_provider"] == "anthropic"
+    assert body["ai_provider"] == "openai"
     assert body["ai_provider_ready"] is False
 
 
-def test_diagnostics_reports_ai_model_name_only_for_anthropic(monkeypatch):
+def test_diagnostics_reports_ai_model_name_only_for_openai(monkeypatch):
     monkeypatch.setattr(settings, "ai_provider", "fake")
-    monkeypatch.setattr(settings, "ai_model_name", "claude-example-model")
+    monkeypatch.setattr(settings, "ai_model_name", "gpt-5.6-sol")
 
     response = _full_diagnostics()
 
     assert response.json()["ai_model_name"] == "fake"
 
-    monkeypatch.setattr(settings, "ai_provider", "anthropic")
-    monkeypatch.setattr(settings, "anthropic_api_key", "sk-ant-test-should-never-leak-99999")
+    monkeypatch.setattr(settings, "ai_provider", "openai")
+    monkeypatch.setattr(settings, "openai_api_key", "sk-openai-test-should-never-leak-99999")
 
     response = _full_diagnostics()
 
-    assert response.json()["ai_model_name"] == "claude-example-model"
+    assert response.json()["ai_model_name"] == "gpt-5.6-sol"
 
 
 def test_diagnostics_provider_health_defaults_to_unknown_with_no_usage_history(monkeypatch):
     """Provider Health (§7): with no `AIUsageEvent` history at all, the
     honest answer is "unknown", never a fabricated "ok" - and this must
     never make a real network call to find out."""
-    monkeypatch.setattr(settings, "ai_provider", "anthropic")
-    monkeypatch.setattr(settings, "anthropic_api_key", "sk-ant-test-should-never-leak-11111")
+    monkeypatch.setattr(settings, "ai_provider", "openai")
+    monkeypatch.setattr(settings, "openai_api_key", "sk-openai-test-should-never-leak-11111")
 
     response = _full_diagnostics()
 
     body = response.json()
     assert body["provider_reachable"] == "unknown"
     assert body["last_successful_request_at"] is None
-    assert "sk-ant-test-should-never-leak-11111" not in response.text
-
+    assert "sk-openai-test-should-never-leak-11111" not in response.text
 
 def test_diagnostics_provider_health_reflects_a_recent_successful_usage_event(tmp_path, monkeypatch):
     import app.db as db_module

@@ -13,7 +13,7 @@ Provider Health (`provider_reachable`, `last_successful_request_at`,
 passive: `provider_reachable` is derived from whether a recent successful
 `AIUsageEvent` exists (see app/models/ai_usage_event.py), never from firing
 a live network probe at Anthropic on every diagnostics request (which
-would be slow, and would itself cost real API credits for `anthropic`).
+would be slow, and would itself cost real API credits for `openai`).
 "unknown" is an honest, acceptable value when there's simply no usage
 history yet - never faked as "ok".
 """
@@ -43,8 +43,8 @@ def _database_backend(database_url: str) -> str:
 
 
 def _ai_provider_ready(config: Settings) -> bool:
-    """True for `fake` (always available) or for `anthropic` once
-    `missing_anthropic_config` (app/ai/factory.py - the same check
+    """True for `fake` (always available) or for `openai` once
+    `missing_openai_config` (app/ai/factory.py - the same check
     `get_ai_provider` uses) reports nothing missing. Never returns the key
     itself - only this boolean, same principle as `admin_password_configured`
     below."""

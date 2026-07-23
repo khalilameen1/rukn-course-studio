@@ -152,7 +152,7 @@ def test_build_prompt_includes_template_and_context():
 
     prompt = provider._build_prompt(PipelineStage.REVIEW_SINGLE_REEL, input_model)
 
-    assert "Task: Review a Completed Reel Draft" in prompt
+    assert "Task: Review one ROKN reel internally" in prompt
     assert '"reel_id": "r1"' in prompt
     assert "rukn-core" in prompt
 
@@ -651,7 +651,7 @@ VALID_FINAL_COURSE = {
             "course_map",
             VALID_COURSE_MAP,
             CourseMap,
-            "Build Course Map",
+            "Build the complete ROKN course map",
         ),
         (
             "write_single_reel",
@@ -661,7 +661,7 @@ VALID_FINAL_COURSE = {
             "generated_reel",
             VALID_GENERATED_REEL,
             GeneratedReel,
-            "Write a Single Reel Script",
+            "Write one final-master-capable ROKN reel draft",
         ),
         (
             "review_single_reel",
@@ -669,7 +669,7 @@ VALID_FINAL_COURSE = {
             "review_result",
             VALID_REVIEW_RESULT,
             ReviewResult,
-            "Review a Completed Reel Draft",
+            "Review one ROKN reel internally",
         ),
         (
             "final_review",
@@ -677,7 +677,7 @@ VALID_FINAL_COURSE = {
             "review_result",
             {"scope": "final", "status": "pass", "actions": []},
             ReviewResult,
-            "Final Full-Course Review",
+            "Final whole-course review",
         ),
         (
             "rebuild_final_course",
@@ -689,7 +689,7 @@ VALID_FINAL_COURSE = {
             "final_course",
             VALID_FINAL_COURSE,
             FinalCourse,
-            "Rebuild the Final Course",
+            "Rebuild the final export-ready ROKN course",
         ),
     ],
 )
