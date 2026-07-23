@@ -98,15 +98,6 @@ function formatElapsed(fromIso: string, toIso?: string | null): string {
   return `${min}m ${rem}s`;
 }
 
-function formatSavedAt(iso: string | null | undefined): string {
-  if (!iso) return "—";
-  try {
-    return new Date(iso).toLocaleTimeString();
-  } catch {
-    return "—";
-  }
-}
-
 /** Current lesson label: never exceeds total (fixes "Lesson 114 of 113"). */
 export function displayCurrentLessonNumber(
   completedLessons: number,
@@ -223,13 +214,7 @@ function ProgressSteps({ job }: { job: GenerationJob }) {
   );
 }
 
-function RunSparkpage({
-  job,
-  onDownloadLatest,
-}: {
-  job: GenerationJob;
-  onDownloadLatest?: () => void;
-}) {
+function RunSparkpage({ job }: { job: GenerationJob }) {
   const conf = job.grounding_confidence ?? "mixed";
   return (
     <div className="nc-progress-card animate-in fade-in duration-500 text-sm">
@@ -248,50 +233,21 @@ function RunSparkpage({
           </span>
         ) : null}
       </div>
-      {job.provenance_summary ? (
-        <p className="mt-3 text-xs text-muted">{job.provenance_summary}</p>
-      ) : null}
-      {job.research_synthesis_summary ? (
-        <p className="mt-1 text-xs text-muted">{job.research_synthesis_summary}</p>
-      ) : null}
-      <CostCockpit job={job} />
       {job.improve_next_tip ? (
-        <p className="mt-3 text-xs text-foreground">
-          Next run: {job.improve_next_tip}
-        </p>
+        <p className="mt-3 text-xs text-foreground">Next run: {job.improve_next_tip}</p>
       ) : null}
-      {onDownloadLatest ? (
-        <button type="button" onClick={onDownloadLatest} className="btn-primary mt-4 w-fit">
-          Download Teleprompter DOCX
-        </button>
-      ) : (
-        <p className="mt-4 text-xs text-muted">
-          Use Download DOCX in the Output panel — your Teleprompter is ready.
-        </p>
-      )}
+      <p className="mt-4 text-xs text-muted">
+        Download the Teleprompter DOCX from the Output panel on the right.
+      </p>
     </div>
   );
 }
 
-function GenerationStatusPanel({
-  job,
-  onDownloadCompleted,
-  onRetryFinalize,
-  downloadingCompleted,
-  finalizingSaved,
-}: {
-  job: GenerationJob;
-  onDownloadCompleted?: () => void;
-  onRetryFinalize?: () => void;
-  downloadingCompleted?: boolean;
-  finalizingSaved?: boolean;
-}) {
+function GenerationStatusPanel({ job }: { job: GenerationJob }) {
   const showStoppedInfo =
     job.status === "partial" || job.status === "failed" || job.status === "canceled";
   const partialAvailable =
     job.partial_docx_available ?? Boolean(job.partial_docx_path);
-  const canDownload =
-    job.can_download_completed ?? Boolean(job.partial_docx_path || job.output_docx_path);
   const canFinalize =
     job.can_finalize_from_saved ??
     ((job.total_lessons_count ?? 0) > 0 &&
@@ -303,7 +259,6 @@ function GenerationStatusPanel({
   const completedLessons =
     job.completed_lessons_count ?? job.completed_reels_count;
   const totalLessons = job.total_lessons_count ?? 0;
-  const currentIndex = progressStepIndex(job.current_stage);
   const isDone = job.status === "completed" || job.current_stage === "done";
   const currentLabel =
     job.cancel_requested && job.status === "running"
@@ -314,20 +269,6 @@ function GenerationStatusPanel({
 
   const allLessonsSaved =
     totalLessons > 0 && completedLessons >= totalLessons && !job.output_docx_path;
-
-  // When stage is partial/failed, progressStepIndex is -1 — infer completed
-  // steps from lesson counts so the UI does not look like "stopped at start".
-  let completedSteps = PROGRESS_STEPS.filter((_, i) => isDone || i < currentIndex).map(
-    (s) => s.label,
-  );
-  if (isTerminal && !isDone && completedLessons > 0) {
-    const throughKey = allLessonsSaved || canFinalize ? "reviewing" : "generating";
-    const inferred = PROGRESS_STEPS.findIndex((s) => s.key === throughKey);
-    completedSteps = PROGRESS_STEPS.filter((_, i) => i <= inferred).map((s) => s.label);
-  }
-  const inProgressStep =
-    !isDone && currentIndex >= 0 ? PROGRESS_STEPS[currentIndex]?.label : currentLabel;
-
   const stoppedStepLabel =
     job.stopped_after_label ||
     (allLessonsSaved ? "All lessons saved" : null) ||
@@ -335,165 +276,81 @@ function GenerationStatusPanel({
   const tips = job.research_tips ?? [];
 
   if (isDone) {
-    return <RunSparkpage job={job} onDownloadLatest={onDownloadCompleted} />;
+    return <RunSparkpage job={job} />;
   }
 
   return (
     <div className="nc-progress-card text-sm">
-      <p className="font-medium text-foreground">Generating course</p>
-      <div className="mt-2 flex flex-wrap items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <StatusBadge label={JOB_STATUS_LABEL[job.status]} tone={JOB_STATUS_TONE[job.status]} />
+        <span className="text-xs text-muted">{job.progress_percent}%</span>
         {job.generation_quality_mode ? (
           <span className="text-xs text-muted">
-            {job.generation_quality_mode === "preview" ? "Preview Spark" : "Premium mixture"}
+            {job.generation_quality_mode === "preview" ? "Preview" : "Premium"}
           </span>
         ) : null}
-        {job.architecture_summary ? (
-          <span className="text-xs text-muted">{job.architecture_summary}</span>
-        ) : null}
       </div>
-      <AgentRoster job={job} />
       <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-border">
         <div
           className="h-full rounded-full bg-accent transition-all"
           style={{ width: `${job.progress_percent}%` }}
         />
       </div>
-      <CostCockpit job={job} />
-      <div className="mt-4 grid gap-3 sm:grid-cols-2">
-        <div>
-          <p className="nc-progress-section-title">Current step</p>
-          <p className="mt-1 text-foreground">{currentLabel}</p>
-          {job.live_eta_summary ? (
-            <p className="mt-1 text-xs text-muted">{job.live_eta_summary}</p>
-          ) : null}
-          {totalLessons > 0 ? (
-            <p className="mt-1 text-xs text-muted">
-              Lesson{" "}
-              {displayCurrentLessonNumber(completedLessons, totalLessons, isTerminal)} of{" "}
-              {totalLessons}
-            </p>
-          ) : null}
-        </div>
-        <div>
-          <p className="nc-progress-section-title">Saved progress</p>
-          <p className="mt-1 text-xs text-muted">
-            {completedLessons} lesson(s) saved · last update {formatSavedAt(job.last_saved_at)}
-          </p>
-        </div>
-      </div>
-      {(job.estimated_usage_summary ||
-        job.budget_warning ||
-        job.sources_run_summary ||
-        job.provenance_summary ||
-        job.research_synthesis_summary ||
-        tips.length > 0) && (
-        <div className="mt-4 rounded-md border border-border bg-surface-muted/40 px-3 py-2 text-xs">
-          <p className="nc-progress-section-title">Run signals</p>
-          {job.estimated_usage_summary ? (
-            <p className="mt-1 text-foreground">{job.estimated_usage_summary}</p>
-          ) : null}
-          {job.estimated_duration_summary ? (
-            <p className="mt-1 text-muted">{job.estimated_duration_summary}</p>
-          ) : null}
-          {job.sources_run_summary ? (
-            <p className="mt-1 text-foreground">Sources: {job.sources_run_summary}</p>
-          ) : null}
-          {job.research_synthesis_summary ? (
-            <p className="mt-1 text-foreground">{job.research_synthesis_summary}</p>
-          ) : null}
-          {job.provenance_summary ? (
-            <p className="mt-1 text-foreground">Provenance: {job.provenance_summary}</p>
-          ) : null}
-          {job.budget_warning ? (
-            <p className="mt-1 text-amber-700 dark:text-amber-400">{job.budget_warning}</p>
-          ) : null}
-          {tips.map((w) => (
-            <p key={w} className="mt-1 text-muted">
-              {w}
-            </p>
-          ))}
-        </div>
+      <p className="mt-3 font-medium text-foreground">{currentLabel}</p>
+      {totalLessons > 0 ? (
+        <p className="mt-1 text-xs text-muted">
+          Lesson {displayCurrentLessonNumber(completedLessons, totalLessons, isTerminal)} of{" "}
+          {totalLessons}
+          {" · "}
+          {completedLessons} saved · {formatElapsed(job.created_at, isTerminal ? job.updated_at : null)}
+          {job.live_eta_summary ? ` · ${job.live_eta_summary}` : ""}
+        </p>
+      ) : (
+        <p className="mt-1 text-xs text-muted">
+          Elapsed {formatElapsed(job.created_at, isTerminal ? job.updated_at : null)}
+          {job.live_eta_summary ? ` · ${job.live_eta_summary}` : ""}
+        </p>
       )}
-      {completedSteps.length > 0 ? (
-        <div className="mt-4">
-          <p className="nc-progress-section-title">Completed</p>
-          <ul className="mt-1 space-y-1 text-xs text-foreground">
-            {completedSteps.map((label) => (
-              <li key={label}>✓ {label}</li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-      {!isTerminal && inProgressStep ? (
-        <div className="mt-3">
-          <p className="nc-progress-section-title">In progress</p>
-          <p className="mt-1 text-xs text-foreground">{inProgressStep}</p>
-        </div>
-      ) : null}
-      <ProgressSteps job={job} />
-      <dl className="mt-3 grid gap-1.5 text-xs text-muted sm:grid-cols-2">
-        <div>
-          <dt className="inline text-foreground">Elapsed: </dt>
-          <dd className="inline">
-            {formatElapsed(job.created_at, isTerminal ? job.updated_at : null)}
-          </dd>
-        </div>
-        <div>
-          <dt className="inline text-foreground">Partial DOCX: </dt>
-          <dd className="inline">{partialAvailable ? "Available" : "Not yet"}</dd>
-        </div>
-      </dl>
+      <CostCockpit job={job} />
       {showStoppedInfo ? (
-        <div className="mt-4 rounded-md border border-border bg-surface-muted/30 px-3 py-3">
-          <p className="text-sm font-medium text-foreground">
-            {canFinalize ? "Recovery ready — finish without regenerating" : "Export blockers"}
-          </p>
-          <p className="mt-1 text-xs text-muted">
-            Stopped after: {stoppedStepLabel} · {completedLessons}
-            {totalLessons > 0 ? `/${totalLessons}` : ""} lesson(s) saved.
+        <div className="mt-3 rounded-md border border-border bg-surface-muted/30 px-3 py-2 text-xs">
+          <p className="font-medium text-foreground">
             {canFinalize
-              ? " All Final Master scripts are on disk. Finish export uses zero AI tokens."
-              : canDownload
-                ? " Download what completed, or start a new generation for the rest."
-                : " Start a new generation when you are ready."}
+              ? "All lessons saved — finish export above (no AI tokens)."
+              : `Stopped after ${stoppedStepLabel} · ${completedLessons}${
+                  totalLessons > 0 ? `/${totalLessons}` : ""
+                } saved.`}
           </p>
+          {partialAvailable ? (
+            <p className="mt-1 text-muted">Partial DOCX is available in the Output panel.</p>
+          ) : null}
           {job.error_message ? (
-            <p className="mt-2 text-xs text-red-600 dark:text-red-400">
+            <p className="mt-2 text-red-600 dark:text-red-400">
               {job.error_category
                 ? `${ERROR_CATEGORY_LABELS[job.error_category] ?? job.error_category}: `
                 : ""}
               {job.error_message}
             </p>
           ) : null}
-          <div className="mt-3 flex flex-wrap gap-2">
-            {canDownload && onDownloadCompleted ? (
-              <button
-                type="button"
-                className="btn-secondary w-fit"
-                disabled={Boolean(downloadingCompleted || finalizingSaved)}
-                onClick={onDownloadCompleted}
-              >
-                {downloadingCompleted
-                  ? "Downloading…"
-                  : job.output_docx_path
-                    ? "Download Teleprompter DOCX"
-                    : "Download completed lessons"}
-              </button>
-            ) : null}
-            {canFinalize && onRetryFinalize ? (
-              <button
-                type="button"
-                className="btn-primary w-fit"
-                disabled={Boolean(finalizingSaved || downloadingCompleted)}
-                onClick={onRetryFinalize}
-              >
-                {finalizingSaved ? "Finishing…" : "Finish & export Teleprompter"}
-              </button>
-            ) : null}
-          </div>
         </div>
       ) : null}
+      <details className="mt-3 text-xs text-muted">
+        <summary className="cursor-pointer font-medium text-foreground">Run details</summary>
+        <div className="mt-2 space-y-3">
+          <AgentRoster job={job} />
+          <ProgressSteps job={job} />
+          {job.estimated_usage_summary ? (
+            <p className="text-foreground">{job.estimated_usage_summary}</p>
+          ) : null}
+          {job.sources_run_summary ? <p>Sources: {job.sources_run_summary}</p> : null}
+          {job.budget_warning ? (
+            <p className="text-amber-700 dark:text-amber-400">{job.budget_warning}</p>
+          ) : null}
+          {tips.map((w) => (
+            <p key={w}>{w}</p>
+          ))}
+        </div>
+      </details>
     </div>
   );
 }
@@ -521,7 +378,6 @@ export default function GeneratePanel({
   const [starting, setStarting] = useState(false);
   const [canceling, setCanceling] = useState(false);
   const [finalizingSaved, setFinalizingSaved] = useState(false);
-  const [downloadingCompleted, setDownloadingCompleted] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [qualityMode, setQualityMode] = useState<GenerationQualityMode>(initialQualityMode);
   const [webResearchMode, setWebResearchMode] =
@@ -532,6 +388,13 @@ export default function GeneratePanel({
   const [mapPreview, setMapPreview] = useState<MapPreviewStats | null>(null);
   const [previewingMap, setPreviewingMap] = useState(false);
   const [mapConfirmed, setMapConfirmed] = useState(false);
+  const [pendingStart, setPendingStart] = useState<{
+    resumeIncomplete: boolean;
+    notes: string[];
+    clarityLow: boolean;
+    tip?: string;
+  } | null>(null);
+  const [showMoreActions, setShowMoreActions] = useState(false);
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pollDelayRef = useRef(POLL_BASE_MS);
 
@@ -616,13 +479,6 @@ export default function GeneratePanel({
 
   async function handleCancel() {
     if (!job) return;
-    if (
-      !confirm(
-        "Stop this generation run? Work already saved may still be available as a partial DOCX.",
-      )
-    ) {
-      return;
-    }
     setCanceling(true);
     setError(null);
     try {
@@ -635,27 +491,6 @@ export default function GeneratePanel({
       setError(formatApiErrorForDisplay(err));
     } finally {
       setCanceling(false);
-    }
-  }
-
-  async function handleDownloadCompleted() {
-    if (!job) return;
-    setDownloadingCompleted(true);
-    setError(null);
-    try {
-      if (job.output_docx_path || job.status === "completed") {
-        await api.downloadLatestDocx(courseId, `course_${courseId}_teleprompter.docx`);
-      } else {
-        await api.downloadPartialDocx(
-          courseId,
-          job.id,
-          `course_${courseId}_job_${job.id}_completed.docx`,
-        );
-      }
-    } catch (err) {
-      setError(formatApiErrorForDisplay(err));
-    } finally {
-      setDownloadingCompleted(false);
     }
   }
 
@@ -697,24 +532,24 @@ export default function GeneratePanel({
     }
   }
 
-  async function handleGenerate(opts?: { resumeIncomplete?: boolean }) {
-    setStarting(true);
+  async function requestGenerate(opts?: { resumeIncomplete?: boolean }) {
     setError(null);
     setShowTighten(false);
+    setPendingStart(null);
     try {
       if (!mapPreview) {
-        setError("عاين الخريطة والتكلفة أولًا قبل بدء التوليد الكامل.");
+        setError("Preview and confirm the course map before starting full generation.");
         return;
       }
       if (!mapPreview.can_start_full_generation) {
         setError(
           (mapPreview.warnings ?? []).join(" ") ||
-            "الخريطة فيها مشاكل جودة — لا يمكن بدء التوليد الكامل.",
+            "Map quality issues block full generation.",
         );
         return;
       }
       if (!mapConfirmed) {
-        setError("أكد معاينة الخريطة قبل بدء التوليد الكامل.");
+        setError("Confirm the map preview before starting full generation.");
         return;
       }
 
@@ -731,20 +566,10 @@ export default function GeneratePanel({
       const clarityLow =
         readiness.premium_recommended === false ||
         (readiness.brief_clarity?.clarity_score ?? 100) < 55;
-      if (clarityLow && qualityMode === "premium") {
-        setShowTighten(true);
-        const tip =
-          readiness.mission_brief?.tighten_brief_suggestion ||
-          readiness.brief_clarity?.message ||
-          "Brief clarity is low for Premium.";
-        const choice = confirm(
-          `${tip}\n\nOK = switch to Preview Spark and start\nCancel = stay and edit the brief first`,
-        );
-        if (!choice) {
-          return;
-        }
-        setQualityMode("preview");
-      }
+      const tip =
+        readiness.mission_brief?.tighten_brief_suggestion ||
+        readiness.brief_clarity?.message ||
+        undefined;
 
       const notes: string[] = [...(readiness.warnings ?? [])];
       if (readiness.mission_brief?.one_liner) {
@@ -752,26 +577,53 @@ export default function GeneratePanel({
       }
       if (readiness.source_ranking_tips?.length) {
         notes.push(
-          `Source ranking:\n${readiness.source_ranking_tips.slice(0, 8).join("\n")}`,
+          `Source ranking: ${readiness.source_ranking_tips.slice(0, 4).join(" · ")}`,
         );
       }
       if (opts?.resumeIncomplete) {
         notes.push(
-          "Continue will reuse saved lessons and generate only the missing ones (API spend for the rest).",
+          "Continue reuses saved lessons and spends API tokens only on the missing ones.",
         );
-      } else if (hasUnresolvedIssue) {
+      } else if (
+        job &&
+        (job.status === "partial" || job.status === "failed" || job.status === "canceled")
+      ) {
         notes.push(
-          "This starts a full new run from scratch and spends tokens again. Prefer Continue if saved lessons exist.",
+          "Full regenerate starts from scratch and spends tokens again.",
         );
-      }
-      if (notes.length > 0) {
-        if (!confirm(`${notes.join("\n")}\n\nStart generation anyway?`)) {
-          return;
-        }
       }
 
-      const modeToUse =
-        clarityLow && qualityMode === "premium" ? "preview" : qualityMode;
+      if (notes.length > 0 || (clarityLow && qualityMode === "premium")) {
+        if (clarityLow && qualityMode === "premium") setShowTighten(true);
+        setPendingStart({
+          resumeIncomplete: Boolean(opts?.resumeIncomplete),
+          notes,
+          clarityLow: clarityLow && qualityMode === "premium",
+          tip,
+        });
+        return;
+      }
+
+      await runGenerate({
+        resumeIncomplete: Boolean(opts?.resumeIncomplete),
+        forcePreview: false,
+      });
+    } catch (err) {
+      setError(formatApiErrorForDisplay(err));
+    }
+  }
+
+  async function runGenerate(opts: {
+    resumeIncomplete: boolean;
+    forcePreview: boolean;
+  }) {
+    if (!mapPreview) return;
+    setStarting(true);
+    setError(null);
+    setPendingStart(null);
+    try {
+      const modeToUse = opts.forcePreview ? "preview" : qualityMode;
+      if (opts.forcePreview) setQualityMode("preview");
 
       const started = await api.generateCourse(courseId, {
         generation_quality_mode: modeToUse,
@@ -779,7 +631,7 @@ export default function GeneratePanel({
         web_research_mode: webResearchMode,
         human_override_hard_limits: humanOverrideHardLimits,
         approved_snapshot_fingerprint: mapPreview.snapshot_fingerprint,
-        resume_incomplete: Boolean(opts?.resumeIncomplete),
+        resume_incomplete: opts.resumeIncomplete,
       });
       updateJob(started);
       if (TERMINAL_STATUSES.has(started.status)) {
@@ -809,8 +661,6 @@ export default function GeneratePanel({
     ? job.status === "partial" || job.status === "failed" || job.status === "canceled"
     : false;
   const justCompleted = job?.status === "completed";
-  // Prefer Finish export over a full regenerate when every lesson is already saved.
-  const showFullRegenerate = !canFinalizeSaved;
   const canResumeIncomplete =
     Boolean(job?.can_resume_incomplete) ||
     Boolean(
@@ -825,17 +675,14 @@ export default function GeneratePanel({
   return (
     <div className="flex flex-col gap-4">
       {mission && !isRunning ? (
-        <div className="rounded-md border border-border bg-surface-muted/30 px-3 py-3 text-sm">
-          <p className="text-xs uppercase tracking-wide text-muted">Mission</p>
-          <p className="mt-1 font-medium text-foreground">{mission.headline}</p>
-          <p className="mt-1 text-xs text-muted">{mission.promise}</p>
-          <p className="mt-1 text-xs text-muted">{mission.grounding}</p>
-          <p className="mt-2 text-xs text-foreground">
-            Clarity {mission.clarity_score ?? "—"}/100 · {mission.confidence ?? "—"}
+        <div className="rounded-md border border-border bg-surface-muted/30 px-3 py-2 text-sm">
+          <p className="font-medium text-foreground">{mission.headline}</p>
+          <p className="mt-1 text-xs text-muted">
+            Clarity {mission.clarity_score ?? "—"}/100
             {mission.premium_recommended === false ? " · Premium not recommended yet" : ""}
           </p>
           {(showTighten || mission.tighten_brief_suggestion) && mission.tighten_brief_suggestion ? (
-            <p className="mt-2 text-xs text-amber-800 dark:text-amber-300">
+            <p className="mt-1 text-xs text-amber-800 dark:text-amber-300">
               Tighten: {mission.tighten_brief_suggestion}
             </p>
           ) : null}
@@ -979,76 +826,163 @@ export default function GeneratePanel({
         )}
       </div>
 
-      <WriterTestPanel courseId={courseId} />
+      <details className="rounded-md border border-border px-3 py-2 text-sm">
+        <summary className="cursor-pointer font-medium text-foreground">
+          Advanced: Writer Test (3 sample lessons)
+        </summary>
+        <div className="mt-3">
+          <WriterTestPanel courseId={courseId} />
+        </div>
+      </details>
 
-      <div className="flex flex-wrap items-center gap-3">
-        {canResumeIncomplete && showFullRegenerate ? (
-          <button
-            type="button"
-            onClick={() => handleGenerate({ resumeIncomplete: true })}
-            disabled={
-              starting ||
-              isRunning ||
-              canceling ||
-              finalizingSaved ||
-              !mapPreview?.can_start_full_generation ||
-              !mapConfirmed
-            }
-            className="btn-primary w-fit"
-          >
-            {starting || isRunning ? "Generating…" : "Continue from saved lessons"}
-          </button>
-        ) : null}
-        {showFullRegenerate ? (
-          <button
-            onClick={() => handleGenerate({ resumeIncomplete: false })}
-            disabled={
-              starting ||
-              isRunning ||
-              canceling ||
-              finalizingSaved ||
-              !mapPreview?.can_start_full_generation ||
-              !mapConfirmed
-            }
-            className={canResumeIncomplete ? "btn-secondary w-fit" : "btn-primary w-fit"}
-          >
-            {starting || isRunning
-              ? "Generating…"
-              : hasUnresolvedIssue
-                ? "Regenerate from scratch"
+      {pendingStart ? (
+        <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-3 text-sm text-amber-950 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-100">
+          <p className="font-medium">Confirm before starting</p>
+          {pendingStart.clarityLow ? (
+            <p className="mt-2 text-xs">
+              {pendingStart.tip || "Brief clarity is low for Premium."} You can switch to
+              Preview Spark, or keep Premium.
+            </p>
+          ) : null}
+          {pendingStart.notes.length > 0 ? (
+            <ul className="mt-2 list-disc space-y-1 pl-4 text-xs">
+              {pendingStart.notes.map((note) => (
+                <li key={note}>{note}</li>
+              ))}
+            </ul>
+          ) : null}
+          <div className="mt-3 flex flex-wrap gap-2">
+            {pendingStart.clarityLow ? (
+              <button
+                type="button"
+                className="btn-primary w-fit"
+                disabled={starting}
+                onClick={() =>
+                  runGenerate({
+                    resumeIncomplete: pendingStart.resumeIncomplete,
+                    forcePreview: true,
+                  })
+                }
+              >
+                Switch to Preview & start
+              </button>
+            ) : null}
+            <button
+              type="button"
+              className={pendingStart.clarityLow ? "btn-secondary w-fit" : "btn-primary w-fit"}
+              disabled={starting}
+              onClick={() =>
+                runGenerate({
+                  resumeIncomplete: pendingStart.resumeIncomplete,
+                  forcePreview: false,
+                })
+              }
+            >
+              {pendingStart.clarityLow ? "Keep Premium & start" : "Start now"}
+            </button>
+            <button
+              type="button"
+              className="btn-secondary w-fit"
+              disabled={starting}
+              onClick={() => setPendingStart(null)}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      <div className="flex flex-col gap-2">
+        <div className="flex flex-wrap items-center gap-3">
+          {canFinalizeSaved ? (
+            <button
+              type="button"
+              onClick={handleRetryFinalize}
+              disabled={finalizingSaved || starting || canceling || isRunning}
+              className="btn-primary w-fit"
+            >
+              {finalizingSaved ? "Finishing…" : "Finish & export Teleprompter"}
+            </button>
+          ) : canResumeIncomplete ? (
+            <button
+              type="button"
+              onClick={() => requestGenerate({ resumeIncomplete: true })}
+              disabled={
+                starting ||
+                isRunning ||
+                canceling ||
+                finalizingSaved ||
+                !mapPreview?.can_start_full_generation ||
+                !mapConfirmed
+              }
+              className="btn-primary w-fit"
+            >
+              {starting || isRunning ? "Generating…" : "Continue from saved lessons"}
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => requestGenerate({ resumeIncomplete: false })}
+              disabled={
+                starting ||
+                isRunning ||
+                canceling ||
+                finalizingSaved ||
+                !mapPreview?.can_start_full_generation ||
+                !mapConfirmed
+              }
+              className="btn-primary w-fit"
+            >
+              {starting || isRunning
+                ? "Generating…"
                 : justCompleted
                   ? "Run again"
                   : "Start full course generation"}
-          </button>
-        ) : (
-          <button
-            type="button"
-            onClick={handleRetryFinalize}
-            disabled={finalizingSaved || starting || canceling}
-            className="btn-primary w-fit"
-          >
-            {finalizingSaved ? "Finishing…" : "Finish & export Teleprompter"}
-          </button>
-        )}
-        {isRunning ? (
-          <button
-            type="button"
-            onClick={handleCancel}
-            disabled={canceling || starting}
-            className="btn-secondary w-fit"
-          >
-            {canceling ? "Stopping…" : "Stop generation"}
-          </button>
+            </button>
+          )}
+          {isRunning ? (
+            <button
+              type="button"
+              onClick={handleCancel}
+              disabled={canceling || starting}
+              className="btn-secondary w-fit"
+            >
+              {canceling ? "Stopping…" : "Stop"}
+            </button>
+          ) : null}
+          {!isRunning && (canResumeIncomplete || canFinalizeSaved || hasUnresolvedIssue) ? (
+            <button
+              type="button"
+              className="text-xs text-muted underline-offset-2 hover:underline"
+              onClick={() => setShowMoreActions((v) => !v)}
+            >
+              {showMoreActions ? "Hide other actions" : "Other actions"}
+            </button>
+          ) : null}
+        </div>
+        {showMoreActions && !isRunning ? (
+          <div className="flex flex-wrap gap-2">
+            {(canResumeIncomplete || canFinalizeSaved || hasUnresolvedIssue) ? (
+              <button
+                type="button"
+                onClick={() => requestGenerate({ resumeIncomplete: false })}
+                disabled={
+                  starting ||
+                  finalizingSaved ||
+                  !mapPreview?.can_start_full_generation ||
+                  !mapConfirmed
+                }
+                className="btn-secondary w-fit"
+              >
+                Regenerate from scratch
+              </button>
+            ) : null}
+          </div>
         ) : null}
-        {canFinalizeSaved && showFullRegenerate === false ? (
-          <button
-            type="button"
-            onClick={() => handleGenerate({ resumeIncomplete: false })}
-            disabled={starting || isRunning || canceling || finalizingSaved}
-            className="btn-secondary w-fit"
-          >
-            Start new generation instead
-          </button>
+        {!mapConfirmed && (canResumeIncomplete || !canFinalizeSaved) && !isRunning ? (
+          <p className="text-xs text-muted">
+            Preview & confirm the map once, then use the primary action above.
+          </p>
         ) : null}
       </div>
 
@@ -1056,20 +990,11 @@ export default function GeneratePanel({
 
       {!job && !starting && !error ? (
         <p className="text-sm text-muted">
-          Start generation to produce the Teleprompter DOCX. Progress updates live while the run is
-          active.
+          Preview the map, then start generation. Progress updates live while the run is active.
         </p>
       ) : null}
 
-      {job ? (
-        <GenerationStatusPanel
-          job={job}
-          onDownloadCompleted={handleDownloadCompleted}
-          onRetryFinalize={handleRetryFinalize}
-          downloadingCompleted={downloadingCompleted}
-          finalizingSaved={finalizingSaved}
-        />
-      ) : null}
+      {job ? <GenerationStatusPanel job={job} /> : null}
     </div>
   );
 }
