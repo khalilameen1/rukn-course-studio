@@ -207,15 +207,25 @@ class OpenAIProvider(AIProvider):
         spec = get_prompt_spec(stage)
         messages = self._build_messages(stage, input_model)
         overrides = resolve_stage_overrides(stage)
+        reasoning_mode = str(overrides.get("reasoning_mode") or "pro")
+        reasoning_effort = str(overrides.get("reasoning_effort") or "xhigh")
+        max_output_tokens = int(overrides.get("max_output_tokens") or 32_000)
+        verbosity = str(overrides.get("verbosity") or "medium")
+        # Preview / map-cost clicks must not spend Pro+max twice by default.
+        quality = str(getattr(input_model, "generation_quality_mode", "") or "").lower()
+        if quality == "preview" and stage == PipelineStage.BUILD_COURSE_MAP:
+            reasoning_effort = "high"
+            max_output_tokens = min(max_output_tokens, 48_000)
+            verbosity = "medium"
         return self._call_structured(
             messages=messages,
             schema=schema,
             schema_name=spec.tool_name,
             model_name=str(overrides.get("model") or self._model_name),
-            reasoning_mode=str(overrides.get("reasoning_mode") or "pro"),
-            reasoning_effort=str(overrides.get("reasoning_effort") or "xhigh"),
-            max_output_tokens=int(overrides.get("max_output_tokens") or 32_000),
-            verbosity=str(overrides.get("verbosity") or "medium"),
+            reasoning_mode=reasoning_mode,
+            reasoning_effort=reasoning_effort,
+            max_output_tokens=max_output_tokens,
+            verbosity=verbosity,
             stage=stage,
         )
 
