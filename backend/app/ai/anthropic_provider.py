@@ -29,6 +29,7 @@ import anthropic
 import httpx
 from pydantic import BaseModel, ValidationError
 
+from app.ai.course_map_normalize import normalize_course_map_payload
 from app.ai.provider import (
     AIProvider,
     BuildCourseMapInput,
@@ -181,38 +182,9 @@ def _create_anthropic_client(*, api_key: str | None, timeout: float):
 
 def _normalize_tool_input(schema: type[BaseModel], data: object) -> object:
     """Fix common CourseMap alias / missing-field mistakes before Pydantic."""
-    if schema is not CourseMap or not isinstance(data, dict):
+    if schema is not CourseMap:
         return data
-    out = dict(data)
-    modules = out.get("modules")
-    if not isinstance(modules, list):
-        return out
-    fixed_modules: list[object] = []
-    for mod in modules:
-        if not isinstance(mod, dict):
-            fixed_modules.append(mod)
-            continue
-        m = dict(mod)
-        if "reels" not in m and isinstance(m.get("lessons"), list):
-            m["reels"] = m.pop("lessons")
-        reels = m.get("reels")
-        if isinstance(reels, list):
-            fixed_reels: list[object] = []
-            for reel in reels:
-                if not isinstance(reel, dict):
-                    fixed_reels.append(reel)
-                    continue
-                r = dict(reel)
-                if not str(r.get("estimated_length") or "").strip():
-                    r["estimated_length"] = "3 minutes"
-                for list_field in ("must_cover", "must_avoid", "source_hints"):
-                    if r.get(list_field) is None:
-                        r[list_field] = []
-                fixed_reels.append(r)
-            m["reels"] = fixed_reels
-        fixed_modules.append(m)
-    out["modules"] = fixed_modules
-    return out
+    return normalize_course_map_payload(data)
 
 
 def _public_schema_hint(schema_name: str, last_error: str) -> str:
@@ -229,7 +201,7 @@ def _public_schema_hint(schema_name: str, last_error: str) -> str:
         )
     return (
         f"{schema_name} shape unusable after {MAX_ATTEMPTS} tries. "
-        "Confirm AI_MODEL_NAME=claude-sonnet-5 and retry; try Preview if Premium keeps failing."
+        "Confirm AI_PROVIDER=openai and AI_MODEL_NAME=gpt-5.6-sol on Render, then retry."
     )
 
 
@@ -245,10 +217,10 @@ class AnthropicProvider(AIProvider):
         timeout = (
             request_timeout_seconds
             if request_timeout_seconds is not None
-            else settings.anthropic_request_timeout_seconds
+            else float(getattr(settings, "anthropic_request_timeout_seconds", 900.0))
         )
         self._client = _create_anthropic_client(
-            api_key=api_key or settings.anthropic_api_key,
+            api_key=api_key or getattr(settings, "anthropic_api_key", None),
             timeout=timeout,
         )
         # Single source of truth for the model name: settings.ai_model_name
@@ -432,8 +404,11 @@ class AnthropicProvider(AIProvider):
         temperature = overrides.get("temperature", self._temperature)
         from app.generation.model_routing import model_output_max_tokens
 
+        # OpenAI routing uses max_output_tokens; accept either key so map
+        # builds keep the full model ceiling after the provider migration.
+        requested_max = overrides.get("max_tokens", overrides.get("max_output_tokens", self._max_tokens))
         max_tokens = min(
-            int(overrides.get("max_tokens", self._max_tokens)),
+            int(requested_max),
             model_output_max_tokens(model_name),
         )
 

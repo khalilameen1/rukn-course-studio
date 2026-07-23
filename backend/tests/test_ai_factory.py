@@ -9,14 +9,14 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import SQLModel, create_engine
 
-from app.ai.anthropic_provider import AnthropicProvider
 from app.ai.fake_provider import FakeProvider
-from app.ai.factory import AIProviderConfigError, get_ai_provider, missing_anthropic_config
+from app.ai.factory import AIProviderConfigError, get_ai_provider, missing_openai_config
+from app.ai.openai_provider import OpenAIProvider
 from app.config import Settings
 
 
 def _settings(**overrides) -> Settings:
-    defaults = dict(ai_provider="fake", anthropic_api_key=None, ai_model_name="claude-sonnet-5")
+    defaults = dict(ai_provider="fake", openai_api_key=None, ai_model_name="gpt-5.6-sol")
     defaults.update(overrides)
     return Settings(**defaults)
 
@@ -28,66 +28,60 @@ def test_default_provider_is_fake():
 
 
 def test_fake_provider_needs_no_api_key_or_model_name():
-    provider = get_ai_provider(_settings(ai_provider="fake", anthropic_api_key=None, ai_model_name=""))
+    provider = get_ai_provider(_settings(ai_provider="fake", openai_api_key=None, ai_model_name=""))
 
     assert isinstance(provider, FakeProvider)
 
 
-def test_anthropic_selected_when_key_and_model_configured():
+def test_openai_selected_when_key_and_model_configured():
     provider = get_ai_provider(
-        _settings(ai_provider="anthropic", anthropic_api_key="test-key", ai_model_name="claude-sonnet-5")
+        _settings(ai_provider="openai", openai_api_key="test-key", ai_model_name="gpt-5.6-sol")
     )
 
-    assert isinstance(provider, AnthropicProvider)
-    assert provider._model_name == "claude-sonnet-5"
+    assert isinstance(provider, OpenAIProvider)
+    assert provider._model_name == "gpt-5.6-sol"
 
 
-def test_anthropic_without_api_key_fails_clearly():
-    with pytest.raises(AIProviderConfigError, match="ANTHROPIC_API_KEY"):
-        get_ai_provider(_settings(ai_provider="anthropic", anthropic_api_key=None))
+def test_openai_without_api_key_fails_clearly():
+    with pytest.raises(AIProviderConfigError, match="OPENAI_API_KEY"):
+        get_ai_provider(_settings(ai_provider="openai", openai_api_key=None))
 
 
-def test_anthropic_without_model_name_fails_clearly():
+def test_openai_without_model_name_fails_clearly():
     with pytest.raises(AIProviderConfigError, match="AI_MODEL_NAME"):
         get_ai_provider(
-            _settings(ai_provider="anthropic", anthropic_api_key="test-key", ai_model_name="")
+            _settings(ai_provider="openai", openai_api_key="test-key", ai_model_name="")
         )
 
 
-def test_anthropic_without_api_key_and_model_name_lists_both_missing():
-    """Both env vars missing at once should produce one clear, actionable
-    message naming both - not just whichever happens to be checked first."""
+def test_openai_without_api_key_and_model_name_lists_both_missing():
     with pytest.raises(AIProviderConfigError) as exc_info:
-        get_ai_provider(_settings(ai_provider="anthropic", anthropic_api_key=None, ai_model_name=""))
+        get_ai_provider(_settings(ai_provider="openai", openai_api_key=None, ai_model_name=""))
 
     message = str(exc_info.value)
-    assert "ANTHROPIC_API_KEY" in message
+    assert "OPENAI_API_KEY" in message
     assert "AI_MODEL_NAME" in message
 
 
-def test_missing_anthropic_config_reports_both_when_unset():
-    """Shared helper (also used by app/auth/diagnostics.py's
-    ai_provider_ready) must report exactly the env vars that are missing."""
-    missing = missing_anthropic_config(
-        _settings(ai_provider="anthropic", anthropic_api_key=None, ai_model_name="")
+def test_missing_openai_config_reports_both_when_unset():
+    missing = missing_openai_config(
+        _settings(ai_provider="openai", openai_api_key=None, ai_model_name="")
     )
 
-    assert set(missing) == {"ANTHROPIC_API_KEY", "AI_MODEL_NAME"}
+    assert set(missing) == {"OPENAI_API_KEY", "AI_MODEL_NAME"}
 
 
-def test_missing_anthropic_config_empty_when_both_set():
-    missing = missing_anthropic_config(
-        _settings(ai_provider="anthropic", anthropic_api_key="k", ai_model_name="m")
+def test_missing_openai_config_empty_when_both_set():
+    missing = missing_openai_config(
+        _settings(ai_provider="openai", openai_api_key="k", ai_model_name="gpt-5.6-sol")
     )
 
     assert missing == []
 
 
-def test_anthropic_error_never_falls_back_to_fake():
-    """A misconfigured 'anthropic' request must fail loudly, not silently
-    produce fake/placeholder content."""
+def test_openai_error_never_falls_back_to_fake():
     with pytest.raises(AIProviderConfigError):
-        get_ai_provider(_settings(ai_provider="anthropic", anthropic_api_key=None))
+        get_ai_provider(_settings(ai_provider="openai", openai_api_key=None))
 
 
 def test_unknown_provider_fails_clearly():
@@ -95,16 +89,27 @@ def test_unknown_provider_fails_clearly():
         get_ai_provider(_settings(ai_provider="something-else"))
 
 
+def test_anthropic_provider_no_longer_selected():
+    with pytest.raises(AIProviderConfigError, match="Unknown AI_PROVIDER"):
+        get_ai_provider(
+            _settings(
+                ai_provider="anthropic",
+                openai_api_key="k",
+                ai_model_name="claude-sonnet-5",
+            )
+        )
+
+
 def test_provider_name_is_case_and_whitespace_insensitive():
     provider = get_ai_provider(
         _settings(
-            ai_provider=" ANTHROPIC ",
-            anthropic_api_key="k",
-            ai_model_name="claude-sonnet-5",
+            ai_provider=" OPENAI ",
+            openai_api_key="k",
+            ai_model_name="gpt-5.6-sol",
         )
     )
 
-    assert isinstance(provider, AnthropicProvider)
+    assert isinstance(provider, OpenAIProvider)
 
 
 def test_get_ai_provider_uses_module_level_settings_by_default(monkeypatch):
@@ -117,19 +122,17 @@ def test_get_ai_provider_uses_module_level_settings_by_default(monkeypatch):
     assert isinstance(provider, FakeProvider)
 
 
-def test_map_preview_returns_clear_503_when_anthropic_misconfigured(tmp_path, monkeypatch):
-    """API-level check for requirement 3: a misconfigured real provider must
-    fail with a clear backend error (not a raw 500 stack trace, not a
-    silent fallback that generates fake content anyway)."""
+def test_map_preview_returns_clear_503_when_openai_misconfigured(tmp_path, monkeypatch):
     import app.db as db_module
+
     engine = create_engine(f"sqlite:///{tmp_path / 'factory_api_test.db'}")
     SQLModel.metadata.create_all(engine)
     monkeypatch.setattr(db_module, "engine", engine)
 
     import app.ai.factory as factory_module
 
-    monkeypatch.setattr(factory_module.settings, "ai_provider", "anthropic")
-    monkeypatch.setattr(factory_module.settings, "anthropic_api_key", None)
+    monkeypatch.setattr(factory_module.settings, "ai_provider", "openai")
+    monkeypatch.setattr(factory_module.settings, "openai_api_key", None)
 
     from app.main import app
 
@@ -152,4 +155,4 @@ def test_map_preview_returns_clear_503_when_anthropic_misconfigured(tmp_path, mo
     generate_response = client.post(f"/courses/{course_id}/map-preview")
 
     assert generate_response.status_code == 503
-    assert "ANTHROPIC_API_KEY" in generate_response.json()["detail"]
+    assert "OPENAI_API_KEY" in generate_response.json()["detail"]

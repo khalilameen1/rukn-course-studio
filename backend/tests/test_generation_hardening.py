@@ -1,5 +1,7 @@
 """Generation hardening: preflight, boot safety, context trim, safe flush."""
 
+import pytest
+
 from app.ai.factory import AIProviderConfigError, get_ai_provider
 from app.config import Settings
 from app.generation.boot_safety import CRITICAL_JOB_COLUMNS, verify_generation_job_columns
@@ -9,42 +11,41 @@ from app.generation.generation_preflight import (
     generation_preflight,
     validate_ai_model_name,
 )
+from app.generation.model_routing import MODEL_ROUTING_OVERRIDES, resolve_stage_overrides
 from app.generation.prompt_compiler import SourceExcerpt
 from app.generation.safe_flush import OPTIONAL_JOB_FLUSH_KEYS, safe_job_flush
-from app.generation.model_routing import MODEL_ROUTING_OVERRIDES, resolve_stage_overrides
 from app.prompts.prompt_registry import PipelineStage
-import pytest
 
 
 def test_validate_rejects_bad_model_slug():
     assert validate_ai_model_name("") is not None
     assert validate_ai_model_name("changeme") is not None
-    assert validate_ai_model_name("claude-sonnet-5") is None  # official Sonnet 5 ID
-    assert validate_ai_model_name("claude-sonnet-4-5-20250929") is None
+    assert validate_ai_model_name("claude-sonnet-5") is not None
+    assert validate_ai_model_name("gpt-5.6-sol") is None
+    assert validate_ai_model_name("gpt-5.6") is None
 
 
-def test_get_ai_provider_rejects_bad_anthropic_model():
+def test_get_ai_provider_rejects_bad_openai_model():
     cfg = Settings(
-        ai_provider="anthropic",
-        anthropic_api_key="sk-test",
+        ai_provider="openai",
+        openai_api_key="sk-test",
         ai_model_name="changeme",
     )
     with pytest.raises(AIProviderConfigError):
         get_ai_provider(cfg)
 
 
-def test_get_ai_provider_accepts_sonnet_5():
+def test_get_ai_provider_accepts_gpt_56_sol():
     cfg = Settings(
-        ai_provider="anthropic",
-        anthropic_api_key="sk-test",
-        ai_model_name="claude-sonnet-5",
+        ai_provider="openai",
+        openai_api_key="sk-test",
+        ai_model_name="gpt-5.6-sol",
     )
     provider = get_ai_provider(cfg)
-    assert provider._model_name == "claude-sonnet-5"
+    assert provider._model_name == "gpt-5.6-sol"
 
 
 def test_generation_preflight_fake_ok():
-    # Uses process settings — fake should be ok in tests.
     result = generation_preflight()
     assert "ok" in result
     assert "blockers" in result
@@ -92,17 +93,19 @@ def test_safe_flush_retries_without_optional_columns():
     )
     assert result == {"ok": True}
     assert len(calls) == 2
+    # Any optional-column failure drops *all* optional keys on retry.
     assert "provenance_summary" not in calls[1]
     assert "architecture_summary" not in calls[1]
     assert calls[1]["status"] == "running"
     assert "provenance_summary" in OPTIONAL_JOB_FLUSH_KEYS
+    assert "architecture_summary" in OPTIONAL_JOB_FLUSH_KEYS
 
 
 def test_map_stage_has_higher_max_tokens():
     from app.generation.model_routing import MODEL_OUTPUT_MAX_TOKENS
 
     ov = resolve_stage_overrides(PipelineStage.BUILD_COURSE_MAP)
-    # No soft product cap: every map call uses the model output ceiling.
+    assert ov.get("max_output_tokens", 0) == MODEL_OUTPUT_MAX_TOKENS
     assert ov.get("max_tokens", 0) == MODEL_OUTPUT_MAX_TOKENS
     assert PipelineStage.BUILD_COURSE_MAP in MODEL_ROUTING_OVERRIDES
 
@@ -124,3 +127,8 @@ def test_critical_job_columns_list_includes_genspark_fields():
         "improve_next_tip",
     ):
         assert name in CRITICAL_JOB_COLUMNS
+
+
+def test_verify_generation_job_columns_helper_importable():
+    # Smoke: the helper remains importable for boot checks.
+    assert callable(verify_generation_job_columns)

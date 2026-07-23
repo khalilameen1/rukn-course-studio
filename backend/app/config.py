@@ -120,10 +120,9 @@ class Settings(BaseSettings):
 
     # Which AIProvider implementation the orchestrator uses by default - see
     # app/ai/factory.py `get_ai_provider`. "fake" (the default) needs no
-    # further configuration. "anthropic" additionally requires
-    # ANTHROPIC_API_KEY (and, in practice, AI_MODEL_NAME) to be set, or
-    # get_ai_provider raises a clear config error instead of silently
-    # falling back to FakeProvider.
+    # further configuration. "openai" requires OPENAI_API_KEY and
+    # AI_MODEL_NAME (gpt-5.6-sol), or get_ai_provider raises a clear config
+    # error instead of silently falling back to FakeProvider.
     ai_provider: str = "fake"
 
     # OpenAI Responses API production provider. Keep the model configurable,
@@ -133,6 +132,12 @@ class Settings(BaseSettings):
     # Pro+max calls can take several minutes. The provider has its own bounded
     # transient retries and the generation job remains resumable/partial-safe.
     openai_request_timeout_seconds: float = 1800.0
+
+    # Legacy Anthropic fields kept so leftover provider/tests and old Render
+    # env vars do not AttributeError. Factory no longer selects Anthropic.
+    anthropic_api_key: str | None = None
+    anthropic_request_timeout_seconds: float = 900.0
+    anthropic_prompt_cache_enabled: bool = False
 
     # Auth for this internal MVP (see app/auth/). Admin gets full scopes;
     # optional OPERATOR_* credentials get courses:* only (no standard management).
