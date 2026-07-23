@@ -76,8 +76,10 @@ def probe_openai_responses_api(
     ):
         return None
 
+    from app.generation.generation_preflight import normalize_ai_model_name
+
     key = api_key or settings.openai_api_key
-    model = (model_name or settings.ai_model_name or "").strip()
+    model = normalize_ai_model_name(model_name or settings.ai_model_name)
     if not key or not model:
         return "OpenAI probe skipped — API key or model name missing."
 
@@ -165,12 +167,16 @@ class OpenAIProvider(AIProvider):
             if request_timeout_seconds is not None
             else settings.openai_request_timeout_seconds
         )
+        from app.generation.generation_preflight import normalize_ai_model_name
+
         self._client = OpenAI(
             api_key=api_key or settings.openai_api_key,
             timeout=timeout,
             max_retries=0,
         )
-        self._model_name = model_name or settings.ai_model_name
+        self._model_name = normalize_ai_model_name(
+            model_name or settings.ai_model_name
+        )
         self.last_usage: dict | None = None
 
     def configure_for_run(self, generation_preset: object) -> None:

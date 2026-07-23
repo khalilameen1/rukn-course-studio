@@ -18,11 +18,16 @@ from app.prompts.prompt_registry import PipelineStage
 
 
 def test_validate_rejects_bad_model_slug():
+    from app.generation.generation_preflight import normalize_ai_model_name
+
     assert validate_ai_model_name("") is not None
     assert validate_ai_model_name("changeme") is not None
     assert validate_ai_model_name("claude-sonnet-5") is not None
     assert validate_ai_model_name("gpt-5.6-sol") is None
     assert validate_ai_model_name("gpt-5.6") is None
+    assert validate_ai_model_name("gpt-5.6-pro") is None
+    assert normalize_ai_model_name("gpt-5.6-pro") == "gpt-5.6-sol"
+    assert normalize_ai_model_name("gpt-5.6") == "gpt-5.6-sol"
 
 
 def test_get_ai_provider_rejects_bad_openai_model():
@@ -40,6 +45,16 @@ def test_get_ai_provider_accepts_gpt_56_sol():
         ai_provider="openai",
         openai_api_key="sk-test",
         ai_model_name="gpt-5.6-sol",
+    )
+    provider = get_ai_provider(cfg)
+    assert provider._model_name == "gpt-5.6-sol"
+
+
+def test_get_ai_provider_normalizes_gpt_56_pro_alias():
+    cfg = Settings(
+        ai_provider="openai",
+        openai_api_key="sk-test",
+        ai_model_name="gpt-5.6-pro",
     )
     provider = get_ai_provider(cfg)
     assert provider._model_name == "gpt-5.6-sol"

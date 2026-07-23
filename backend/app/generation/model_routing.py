@@ -20,6 +20,7 @@ UNKNOWN_MODEL_OUTPUT_MAX_TOKENS = 8_192
 # Prefer exact production slug first; substring markers cover dated Anthropic IDs.
 _MODEL_OUTPUT_LIMITS: tuple[tuple[str, int], ...] = (
     ("gpt-5.6-sol", MODEL_OUTPUT_MAX_TOKENS),
+    ("gpt-5.6-pro", MODEL_OUTPUT_MAX_TOKENS),
     ("gpt-5.6", MODEL_OUTPUT_MAX_TOKENS),
     ("claude-sonnet-5", MODEL_OUTPUT_MAX_TOKENS),
     ("claude-fable-5", MODEL_OUTPUT_MAX_TOKENS),

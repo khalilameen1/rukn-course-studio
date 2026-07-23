@@ -21,7 +21,23 @@ _BAD_MODEL_MARKERS = (
     ">",
 )
 
-_MODEL_OK = re.compile(r"^gpt-5\.6(?:-sol)?$", re.I)
+# Canonical production slug plus common Render/dashboard aliases.
+# ``gpt-5.6-pro`` is NOT a separate OpenAI model ID — Pro is
+# ``reasoning.mode=pro`` on gpt-5.6-sol (see model_routing).
+_MODEL_OK = re.compile(r"^gpt-5\.6(?:-sol|-pro)?$", re.I)
+
+_MODEL_ALIASES: dict[str, str] = {
+    "gpt-5.6": "gpt-5.6-sol",
+    "gpt-5.6-pro": "gpt-5.6-sol",
+}
+
+
+def normalize_ai_model_name(model_name: str | None) -> str:
+    """Map approved aliases to the canonical OpenAI slug used for API calls."""
+    name = (model_name or "").strip()
+    if not name:
+        return ""
+    return _MODEL_ALIASES.get(name.lower(), name)
 
 
 def validate_ai_model_name(model_name: str | None) -> str | None:
@@ -38,7 +54,7 @@ def validate_ai_model_name(model_name: str | None) -> str | None:
     if not _MODEL_OK.match(name):
         return (
             f"AI_MODEL_NAME '{name}' is not the approved ROKN model "
-            "(expected gpt-5.6-sol or alias gpt-5.6)."
+            "(expected gpt-5.6-sol; aliases gpt-5.6 and gpt-5.6-pro are accepted)."
         )
     return None
 
