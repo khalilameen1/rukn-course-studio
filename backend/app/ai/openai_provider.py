@@ -51,6 +51,56 @@ class OpenAIProviderError(RuntimeError):
         self.public_hint = public_hint
 
 
+def _parse_kwargs(
+    *,
+    model_name: str,
+    messages: list[dict],
+    schema: type[BaseModel],
+    reasoning: dict,
+    verbosity: str | None,
+    max_output_tokens: int,
+    prompt_cache_key: str | None,
+    include_verbosity: bool = True,
+) -> dict:
+    """Build Responses.parse kwargs compatible with GPT-5.6 Sol.
+
+    Do **not** send ``prompt_cache_retention`` — it is for pre-5.6 models and
+    GPT-5.6 rejects / ignores the old 24h retention field. Prefer omitting
+    optional cache TTL rather than sending a deprecated value that 400s.
+    """
+    kwargs: dict = {
+        "model": model_name,
+        "input": messages,
+        "text_format": schema,
+        "reasoning": reasoning,
+        "max_output_tokens": max_output_tokens,
+        "truncation": "disabled",
+        "store": False,
+    }
+    if include_verbosity and verbosity:
+        kwargs["verbosity"] = verbosity
+    if prompt_cache_key:
+        kwargs["prompt_cache_key"] = prompt_cache_key
+    return kwargs
+
+
+def _is_retryable_param_error(exc: BaseException) -> bool:
+    hay = f"{type(exc).__name__} {exc}".lower()
+    return any(
+        marker in hay
+        for marker in (
+            "prompt_cache_retention",
+            "prompt_cache_options",
+            "unknown parameter",
+            "unsupported parameter",
+            "invalid_request",
+            "reasoning.mode",
+            "'mode'",
+            "verbosity",
+        )
+    )
+
+
 def probe_openai_responses_api(
     *,
     api_key: str | None = None,
@@ -84,22 +134,24 @@ def probe_openai_responses_api(
         return "OpenAI probe skipped — API key or model name missing."
 
     client = OpenAI(api_key=key, timeout=45.0, max_retries=0)
+    messages = [
+        {
+            "role": "user",
+            "content": "Return JSON with ok=true. No other fields.",
+        }
+    ]
     try:
         response = client.responses.parse(
-            model=model,
-            input=[
-                {
-                    "role": "user",
-                    "content": "Return JSON with ok=true. No other fields.",
-                }
-            ],
-            text_format=_OpenAIPing,
-            reasoning={"effort": "low"},
-            max_output_tokens=64,
-            truncation="disabled",
-            store=False,
-            prompt_cache_key="rukn-preflight-probe",
-            prompt_cache_retention="24h",
+            **_parse_kwargs(
+                model_name=model,
+                messages=messages,
+                schema=_OpenAIPing,
+                reasoning={"effort": "low"},
+                verbosity=None,
+                max_output_tokens=64,
+                prompt_cache_key=None,
+                include_verbosity=False,
+            )
         )
     except TypeError as exc:
         return _public_api_hint(exc)
@@ -137,19 +189,33 @@ def _public_schema_hint(schema_name: str, detail: str) -> str:
 
 def _public_api_hint(exc: BaseException) -> str:
     low = f"{type(exc).__name__} {exc}".lower()
-    if "unexpected keyword" in low or "prompt_cache_options" in low:
+    if "prompt_cache_retention" in low or "prompt_cache_options" in low:
+        return (
+            "OpenAI rejected a deprecated cache parameter. "
+            "Redeploy the latest backend (GPT-5.6 cache fix) and retry."
+        )
+    if "unexpected keyword" in low:
         return (
             "Backend OpenAI client kwargs are outdated. Redeploy the latest backend and retry."
         )
     if "api key" in low or "authentication" in low or "401" in low:
         return "OpenAI authentication failed. Check OPENAI_API_KEY in Render."
-    if "model" in low and ("not found" in low or "does not exist" in low):
+    if "model" in low and (
+        "not found" in low or "does not exist" in low or "invalid model" in low
+    ):
         return (
             "The configured OpenAI model is unavailable. "
-            "Set AI_MODEL_NAME=gpt-5.6-sol in Render."
+            "Set AI_MODEL_NAME=gpt-5.6-sol in Render (not gpt-5.6-pro as a model id)."
         )
+    if "insufficient_quota" in low or "billing" in low or "credit" in low:
+        return "OpenAI account is out of credits or billing is blocked."
     if "context" in low or "too long" in low:
         return "The request exceeded the model context window. Reduce source volume and retry."
+    if "invalid_request" in low or "badrequesterror" in low:
+        return (
+            "OpenAI rejected the request parameters. "
+            "Redeploy the latest backend and confirm AI_MODEL_NAME=gpt-5.6-sol."
+        )
     return "OpenAI API rejected or could not complete the request."
 
 
@@ -293,6 +359,7 @@ class OpenAIProvider(AIProvider):
             "response_attempts": 0,
         }
 
+        use_reasoning_mode = True
         for attempt in range(1, MAX_ATTEMPTS + 1):
             attempt_messages = list(messages)
             if attempt > 1:
@@ -305,24 +372,24 @@ class OpenAIProvider(AIProvider):
                         ),
                     }
                 )
+            reasoning_payload: dict = {
+                "effort": reasoning_effort,
+                "summary": "auto",
+            }
+            if use_reasoning_mode and reasoning_mode:
+                reasoning_payload["mode"] = reasoning_mode
             try:
                 usage_totals["request_attempts"] += 1
                 response = self._client.responses.parse(
-                    model=model_name,
-                    input=attempt_messages,
-                    text_format=schema,
-                    reasoning={
-                        "mode": reasoning_mode,
-                        "effort": reasoning_effort,
-                        "summary": "auto",
-                    },
-                    verbosity=verbosity,  # type: ignore[arg-type]
-                    max_output_tokens=max_output_tokens,
-                    truncation="disabled",
-                    store=False,
-                    prompt_cache_key=f"rukn-v1.7:{stage.value}",
-                    # SDK param name is prompt_cache_retention (not prompt_cache_options).
-                    prompt_cache_retention="24h",
+                    **_parse_kwargs(
+                        model_name=model_name,
+                        messages=attempt_messages,
+                        schema=schema,
+                        reasoning=reasoning_payload,
+                        verbosity=verbosity,
+                        max_output_tokens=max_output_tokens,
+                        prompt_cache_key=f"rukn-v1.7:{stage.value}",
+                    )
                 )
                 usage_totals["response_attempts"] += 1
             except Exception as exc:  # noqa: BLE001
@@ -332,6 +399,13 @@ class OpenAIProvider(AIProvider):
                     for marker in ("429", "rate limit", "timeout", "temporarily", "503")
                 ):
                     time.sleep(1.5 * attempt)
+                    last_error = str(exc)
+                    continue
+                # GPT-5.6 may reject reasoning.mode on some accounts — retry once without it.
+                if use_reasoning_mode and _is_retryable_param_error(exc) and (
+                    "mode" in hay or "reasoning" in hay
+                ):
+                    use_reasoning_mode = False
                     last_error = str(exc)
                     continue
                 raise OpenAIProviderError(
